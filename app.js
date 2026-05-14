@@ -26,6 +26,10 @@ const PAGE_META = {
   macro: ["Macro Reference", "宏观指标"],
 };
 
+const pageState = {
+  picks: { strategy: null, date: null, latestDate: null },
+};
+
 const dom = {
   app: document.querySelector("#app"),
   apiMode: document.querySelector("#apiMode"),
@@ -107,6 +111,25 @@ async function requestJson(url) {
   return response.json();
 }
 
+function queryString(params = {}) {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== null && value !== undefined && value !== "") search.set(key, value);
+  });
+  const text = search.toString();
+  return text ? `?${text}` : "";
+}
+
+function picksQueryParams() {
+  return { strategy: pageState.picks.strategy, date: pageState.picks.date };
+}
+
+function pageEndpoint(config) {
+  const endpoint = typeof config.endpoint === "function" ? config.endpoint() : config.endpoint;
+  if (endpoint === "/api/v1/strategies/picks") return `${endpoint}${queryString(picksQueryParams())}`;
+  return endpoint;
+}
+
 async function sendJson(path, options = {}) {
   const response = await fetch(joinUrl(API_BASE, path), {
     cache: "no-store",
@@ -180,8 +203,7 @@ function readonlyNote(text = "只读展示") {
 
 async function fetchPayload(config) {
   if (!config.endpoint) throw new Error("页面未配置数据接口");
-  const endpoint = typeof config.endpoint === "function" ? config.endpoint() : config.endpoint;
-  const payload = await requestJson(joinUrl(API_BASE, endpoint));
+  const payload = await requestJson(joinUrl(API_BASE, pageEndpoint(config)));
   const mode = payload.meta?.source === "cache" ? "cache" : "live";
   return { payload, mode };
 }
@@ -234,6 +256,28 @@ function actionTone(action) {
 
 function riskLabel(risk) {
   return ({ low: "低", mid: "中", high: "高" })[risk] || risk || "--";
+}
+
+function hkDateString(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Hong_Kong", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function shiftDate(dateText, days) {
+  const base = dateText && /^\d{4}-\d{2}-\d{2}$/.test(dateText) ? new Date(`${dateText}T00:00:00Z`) : new Date(`${hkDateString()}T00:00:00Z`);
+  base.setUTCDate(base.getUTCDate() + days);
+  return base.toISOString().slice(0, 10);
+}
+
+function pickStrategyValue(item) {
+  if (item && typeof item === "object") return item.id || item.key || item.value || item.label || item.name || "";
+  return item || "";
+}
+
+function pickStrategyLabel(item) {
+  if (item && typeof item === "object") return item.label || item.name || item.id || item.key || "";
+  return item || "";
 }
 
 function riskTone(risk) {
@@ -917,11 +961,52 @@ function bindWatchlistInteractions() {
   });
 }
 
+function picksEmptyMessage(data = {}) {
+  const reason = data.empty_reason;
+  if (reason === "api_no_data") return data.empty_message || "接口暂无可用选股数据";
+  if (reason === "date_no_picks") return data.empty_message || "该日期无选股";
+  if (reason === "filter_no_match") return data.empty_message || "筛选条件无匹配";
+  return "暂无选股结果";
+}
+
+function bindPicksControls(payload) {
+  const data = payload.data || {};
+  document.querySelectorAll("[data-pick-strategy]").forEach((button) => {
+    button.addEventListener("click", () => {
+      pageState.picks.strategy = button.dataset.pickStrategy || null;
+      dom.refreshButton?.click();
+    });
+  });
+  document.querySelector("[data-pick-date='prev']")?.addEventListener("click", () => {
+    pageState.picks.date = shiftDate(pageState.picks.date || data.trade_date || pageState.picks.latestDate, -1);
+    dom.refreshButton?.click();
+  });
+  document.querySelector("[data-pick-date='today']")?.addEventListener("click", () => {
+    pageState.picks.date = hkDateString();
+    dom.refreshButton?.click();
+  });
+  document.querySelector("[data-pick-export]")?.addEventListener("click", () => {
+    const url = joinUrl(API_BASE, `/api/v1/strategies/picks/export${queryString(picksQueryParams())}`);
+    window.location.href = url;
+  });
+}
+
 function renderPicks(payload) {
-  const { strategy_label = "", trade_date = "", strategies = [], items = [] } = payload.data || {};
+  const data = payload.data || {};
+  const { strategy = "", strategy_label = "", trade_date = "", strategies = [], items = [] } = data;
+  pageState.picks.latestDate = payload.meta?.trade_date || trade_date || pageState.picks.latestDate;
+  if (!pageState.picks.strategy && strategy) pageState.picks.strategy = strategy;
+  if (!pageState.picks.date && trade_date) pageState.picks.date = trade_date;
+  const activeStrategy = pageState.picks.strategy || strategy || strategy_label;
+  const strategyTabs = strategies.length ? strategies : [strategy_label || strategy || "当前策略"];
   dom.app.innerHTML = `
-    <section class="strategy-toolbar"><div class="mini-tabs readonly-tabs">${strategies.map((name) => `<span class="readonly-tab ${name === strategy_label ? "active" : ""}">${escapeHtml(name)}</span>`).join("")}${readonlyNote("策略筛选只读展示")}</div><div class="toolbar"><span class="readonly-note">日期切换只读展示</span><button class="ghost-button" type="button" data-export-picks>导出 CSV ↓</button><span class="action-status" data-action-status></span></div></section>
-    <div class="section-heading"><h2>今日选股结果</h2><span>${escapeHtml(trade_date)} · 共 ${items.length} 只</span></div>
+    <section class="strategy-toolbar"><div class="mini-tabs">${strategyTabs.map((item) => {
+      const value = pickStrategyValue(item);
+      const label = pickStrategyLabel(item);
+      const active = value === activeStrategy || label === strategy_label || label === activeStrategy;
+      return `<button type="button" data-pick-strategy="${escapeHtml(value)}" class="${active ? "active" : ""}">${escapeHtml(label)}</button>`;
+    }).join("")}</div><div class="toolbar"><button class="ghost-button" type="button" data-pick-date="prev">← 昨日</button><button class="primary-button" type="button" data-pick-date="today">今日 →</button><button class="ghost-button" type="button" data-pick-export>导出 CSV ↓</button></div></section>
+    <div class="section-heading"><h2>今日选股结果</h2><span>${escapeHtml(trade_date || pageState.picks.date || "--")} · 共 ${items.length} 只</span></div>
     <section class="pick-grid">
       ${items.length ? items.map((pick) => {
         const isFresh = pick.is_new ?? pick.fresh;
@@ -930,25 +1015,10 @@ function renderPicks(payload) {
         const target = pick.take_profit ?? pick.target;
         const tags = pick.tags || [];
         return `<article class="pick-card ${isFresh ? "fresh" : ""}"><div class="inline-between"><div><strong>${escapeHtml(pick.symbol)}</strong><span>${escapeHtml(pick.name)}</span></div><div class="mini-ring" style="--score:${pick.score}%;"><span>${intText(pick.score)}</span></div></div>${factorBars(pick.factors)}<div class="trade-levels"><div><span>Entry</span><strong>${fixedText(entry, 2)}</strong></div><div><span>Stop</span><strong>${fixedText(stop, 2)}</strong></div><div><span>Target</span><strong>${fixedText(target, 2)}</strong></div></div><div class="tag-row">${tags.map((item) => tag(item, item === "持仓中" || pick.in_portfolio ? "positive" : "blue")).join("")}</div></article>`;
-      }).join("") : `<div class="empty-state">暂无选股结果</div>`}
+      }).join("") : `<div class="empty-state">${escapeHtml(picksEmptyMessage(data))}</div>`}
     </section>
   `;
-  bindPicksInteractions();
-}
-
-function bindPicksInteractions() {
-  document.querySelector("[data-export-picks]")?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    const payload = await postAction(button, "/api/v1/strategies/picks/export", {}, "导出成功");
-    const csv = payload?.data?.csv;
-    if (!csv) return;
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = payload.data.filename || "picks.csv";
-    link.click();
-    URL.revokeObjectURL(link.href);
-  });
+  bindPicksControls(payload);
 }
 
 function renderHoldings(payload) {
