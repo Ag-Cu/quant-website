@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import hmac
+import math
 import os
 import re
 import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
@@ -30,6 +31,7 @@ EXPORT_DIR = BACKEND_DIR / "exports"
 ETF_STRATEGY_PATH = BACKEND_DIR / "strategies" / "etf.json"
 JOINQUANT_SIGNAL_LOG_PATH = BACKEND_DIR / "strategies" / "joinquant-signals.jsonl"
 JOINQUANT_FULL_LOG_PATH = BACKEND_DIR / "strategies" / "joinquant-full-logs.jsonl"
+PERFORMANCE_NAV_PATH = BACKEND_DIR / "performance" / "net-values.json"
 MAX_STRATEGY_LOG_LINES = 300
 STATIC_PAGES = {
     "/": "index.html",
@@ -102,10 +104,10 @@ ENDPOINTS: dict[str, EndpointSpec] = {
     ),
     "/api/v1/performance": EndpointSpec(
         "/api/v1/performance",
-        "performance/overview",
+        "performance/net-values",
         "daily",
         86_400,
-        "历史绩效曲线，收盘后由回测和归因任务更新。",
+        "历史绩效曲线，收盘后由回测和实盘净值任务更新。",
     ),
     "/api/v1/market/heatmap": EndpointSpec(
         "/api/v1/market/heatmap",
@@ -1083,6 +1085,249 @@ def portfolio_holdings() -> dict[str, Any]:
     return get_payload("/api/v1/portfolio/holdings")
 
 
+def parse_query_date(value: str | None, field_name: str) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"{field_name} 必须是 YYYY-MM-DD 格式") from exc
+
+
+def parse_row_date(row: dict[str, Any]) -> date | None:
+    raw = row.get("date") or row.get("trade_date") or row.get("day")
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(str(raw)[:10])
+    except ValueError:
+        return None
+
+
+def numeric(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return number
+
+
+def nav_value(row: dict[str, Any]) -> float | None:
+    for key in ("nav", "net_value", "value", "equity", "portfolio_value"):
+        value = numeric(row.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def normalize_nav_curve(rows: list[Any], start_date: date | None, end_date: date) -> list[dict[str, Any]]:
+    dated_rows: list[tuple[date, float]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        row_date = parse_row_date(row)
+        value = nav_value(row)
+        if row_date is None or value is None:
+            continue
+        if row_date > end_date:
+            continue
+        if start_date and row_date < start_date:
+            continue
+        dated_rows.append((row_date, value))
+    dated_rows.sort(key=lambda item: item[0])
+    if not dated_rows:
+        return []
+    base = dated_rows[0][1] or 1
+    return [
+        {
+            "date": row_date.isoformat(),
+            "value": round(value, 4),
+            "return_pct": round((value / base - 1) * 100, 4),
+        }
+        for row_date, value in dated_rows
+    ]
+
+
+def month_key(row: dict[str, Any]) -> date | None:
+    if row.get("year") is not None and row.get("month") is not None:
+        try:
+            return date(int(row["year"]), int(row["month"]), 1)
+        except (TypeError, ValueError):
+            return None
+    row_date = parse_row_date(row)
+    if row_date:
+        return row_date.replace(day=1)
+    return None
+
+
+def monthly_returns_from_curve(curve: list[dict[str, Any]], start_date: date | None, end_date: date) -> list[dict[str, Any]]:
+    values_by_month: dict[tuple[int, int], tuple[float, float]] = {}
+    for row in curve:
+        row_date = parse_row_date(row)
+        value = nav_value(row)
+        if row_date is None or value is None:
+            continue
+        key = (row_date.year, row_date.month)
+        first, _last = values_by_month.get(key, (value, value))
+        values_by_month[key] = (first, value)
+    result: list[dict[str, Any]] = []
+    for (year, month), (first, last) in sorted(values_by_month.items()):
+        current_month = date(year, month, 1)
+        if start_date and current_month < date(start_date.year, start_date.month, 1):
+            continue
+        if current_month > date(end_date.year, end_date.month, 1):
+            continue
+        result.append({"year": year, "month": month, "return_pct": round((last / (first or 1) - 1) * 100, 4)})
+    return result
+
+
+def crop_monthly_returns(rows: list[Any], start_date: date | None, end_date: date) -> list[dict[str, Any]]:
+    cropped = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        current_month = month_key(row)
+        if current_month is None:
+            continue
+        if start_date and current_month < date(start_date.year, start_date.month, 1):
+            continue
+        if current_month > date(end_date.year, end_date.month, 1):
+            continue
+        cropped.append(row)
+    return cropped
+
+
+def period_returns(curve: list[dict[str, Any]]) -> list[float]:
+    values = [nav_value(row) for row in curve]
+    clean = [value for value in values if value is not None]
+    return [(clean[index] / clean[index - 1] - 1) for index in range(1, len(clean)) if clean[index - 1]]
+
+
+def build_drawdowns(curve: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    peak_value: float | None = None
+    peak_date = ""
+    active_start = ""
+    worst_drawdown = 0.0
+    worst_date = ""
+    drawdowns: list[dict[str, Any]] = []
+    for row in curve:
+        value = nav_value(row)
+        row_date = str(row.get("date") or "")
+        if value is None:
+            continue
+        if peak_value is None or value >= peak_value:
+            if active_start and worst_drawdown < 0:
+                drawdowns.append({"start": active_start, "end": worst_date or row_date, "max_drawdown_pct": round(worst_drawdown * 100, 4)})
+            peak_value = value
+            peak_date = row_date
+            active_start = ""
+            worst_drawdown = 0.0
+            worst_date = ""
+            continue
+        drawdown = value / peak_value - 1
+        if not active_start:
+            active_start = peak_date
+        if drawdown < worst_drawdown:
+            worst_drawdown = drawdown
+            worst_date = row_date
+    if active_start and worst_drawdown < 0:
+        drawdowns.append({"start": active_start, "end": worst_date, "max_drawdown_pct": round(worst_drawdown * 100, 4)})
+    return drawdowns[-5:]
+
+
+def calculate_metrics(curve: list[dict[str, Any]], benchmark_curve: list[dict[str, Any]]) -> dict[str, Any]:
+    values = [nav_value(row) for row in curve]
+    clean_values = [value for value in values if value is not None]
+    returns = period_returns(curve)
+    benchmark_returns = period_returns(benchmark_curve)
+    if len(clean_values) < 2:
+        return {}
+    first_date = parse_row_date(curve[0])
+    last_date = parse_row_date(curve[-1])
+    days = max(1, (last_date - first_date).days) if first_date and last_date else max(1, len(clean_values) - 1)
+    total_return = clean_values[-1] / clean_values[0] - 1 if clean_values[0] else 0
+    annual_return = (1 + total_return) ** (365 / days) - 1 if total_return > -1 else -1
+    avg_return = sum(returns) / len(returns) if returns else 0
+    variance = sum((item - avg_return) ** 2 for item in returns) / max(1, len(returns) - 1) if len(returns) > 1 else 0
+    sharpe = (avg_return / math.sqrt(variance) * math.sqrt(252)) if variance > 0 else None
+    max_drawdown = min((row["max_drawdown_pct"] for row in build_drawdowns(curve)), default=0)
+    wins = [item for item in returns if item > 0]
+    losses = [item for item in returns if item < 0]
+    avg_win = sum(wins) / len(wins) if wins else 0
+    avg_loss = abs(sum(losses) / len(losses)) if losses else 0
+    beta = None
+    alpha = None
+    if returns and benchmark_returns:
+        paired = list(zip(returns[-len(benchmark_returns):], benchmark_returns[-len(returns):]))
+        if len(paired) > 1:
+            strategy_part = [item[0] for item in paired]
+            benchmark_part = [item[1] for item in paired]
+            bm_avg = sum(benchmark_part) / len(benchmark_part)
+            st_avg = sum(strategy_part) / len(strategy_part)
+            bm_var = sum((item - bm_avg) ** 2 for item in benchmark_part)
+            cov = sum((strategy_part[index] - st_avg) * (benchmark_part[index] - bm_avg) for index in range(len(paired)))
+            if bm_var:
+                beta = cov / bm_var
+                benchmark_total = (benchmark_curve[-1]["value"] / benchmark_curve[0]["value"] - 1) if benchmark_curve and benchmark_curve[0].get("value") else 0
+                alpha = total_return - beta * benchmark_total
+    return {
+        "annual_return_pct": round(annual_return * 100, 4),
+        "max_drawdown_pct": round(max_drawdown, 4),
+        "sharpe": None if sharpe is None else round(sharpe, 4),
+        "calmar": round((annual_return * 100) / abs(max_drawdown), 4) if max_drawdown else None,
+        "win_rate_pct": round(len(wins) / len(returns) * 100, 4) if returns else None,
+        "profit_loss_ratio": round(avg_win / avg_loss, 4) if avg_loss else None,
+        "beta": None if beta is None else round(beta, 4),
+        "alpha_pct": None if alpha is None else round(alpha * 100, 4),
+    }
+
+
+def build_performance_payload(strategy: str | None, benchmark: str | None, start: str | None, to: str | None) -> dict[str, Any]:
+    source = load_json(PERFORMANCE_NAV_PATH)
+    meta = source.get("meta") if isinstance(source.get("meta"), dict) else {}
+    data = source.get("data") if isinstance(source.get("data"), dict) else {}
+    strategies = data.get("strategies") if isinstance(data.get("strategies"), dict) else {}
+    benchmarks = data.get("benchmarks") if isinstance(data.get("benchmarks"), dict) else {}
+    if not strategies:
+        raise HTTPException(status_code=503, detail="暂无策略净值数据")
+    strategy_id = strategy if strategy in strategies else str(data.get("default_strategy") or next(iter(strategies)))
+    strategy_data = strategies[strategy_id] if isinstance(strategies[strategy_id], dict) else {}
+    benchmark_disabled = benchmark is not None and benchmark.lower() in {"", "none", "off", "false"}
+    benchmark_id = "" if benchmark_disabled else benchmark if benchmark in benchmarks else str(data.get("default_benchmark") or next(iter(benchmarks), ""))
+    benchmark_data = benchmarks.get(benchmark_id, {}) if benchmark_id else {}
+    query_start = parse_query_date(start, "from")
+    query_to = parse_query_date(to, "to")
+    today = now_hk().date()
+    source_trade_date = parse_query_date(str(meta.get("trade_date") or "") or None, "trade_date") or today
+    end_date = min(query_to or source_trade_date, source_trade_date, today)
+    if query_start and query_start > end_date:
+        raise HTTPException(status_code=422, detail="from 不能晚于 to 或数据日期")
+    raw_equity = strategy_data.get("nav") if isinstance(strategy_data.get("nav"), list) else []
+    raw_benchmark = benchmark_data.get("nav") if isinstance(benchmark_data.get("nav"), list) else []
+    equity_curve = normalize_nav_curve(raw_equity, query_start, end_date)
+    benchmark_curve = normalize_nav_curve(raw_benchmark, query_start, end_date) if benchmark_id else []
+    monthly_source = strategy_data.get("monthly_returns") if isinstance(strategy_data.get("monthly_returns"), list) else None
+    monthly_returns = crop_monthly_returns(monthly_source, query_start, end_date) if monthly_source is not None else monthly_returns_from_curve(equity_curve, query_start, end_date)
+    payload = normalize_payload(source, ENDPOINTS["/api/v1/performance"], "net_values", PERFORMANCE_NAV_PATH)
+    payload["meta"]["query"] = {"strategy": strategy_id, "benchmark": benchmark_id or None, "from": start, "to": to, "effective_to": end_date.isoformat()}
+    payload["data"] = {
+        "strategy": strategy_id,
+        "strategy_label": strategy_data.get("label") or strategy_id,
+        "benchmark": benchmark_data.get("label") or benchmark_id,
+        "benchmark_id": benchmark_id,
+        "strategies": [{"id": key, "label": value.get("label") or key} for key, value in strategies.items() if isinstance(value, dict)],
+        "benchmarks": [{"id": key, "label": value.get("label") or key} for key, value in benchmarks.items() if isinstance(value, dict)],
+        "equity_curve": equity_curve,
+        "benchmark_curve": benchmark_curve,
+        "drawdowns": build_drawdowns(equity_curve),
+        "metrics": calculate_metrics(equity_curve, benchmark_curve),
+        "monthly_returns": monthly_returns,
+        "annotations": strategy_data.get("annotations") if isinstance(strategy_data.get("annotations"), list) else [],
+    }
+    return payload
+
 @app.get("/api/v1/performance")
 def performance(
     strategy: str | None = Query(default=None),
@@ -1090,9 +1335,7 @@ def performance(
     start: str | None = Query(default=None, alias="from"),
     to: str | None = Query(default=None),
 ) -> dict[str, Any]:
-    payload = get_payload("/api/v1/performance")
-    payload["meta"]["query"] = {"strategy": strategy, "benchmark": benchmark, "from": start, "to": to}
-    return payload
+    return build_performance_payload(strategy, benchmark, start, to)
 
 
 @app.get("/api/v1/market/heatmap")
