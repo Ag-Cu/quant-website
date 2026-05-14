@@ -25,6 +25,8 @@ BACKEND_DIR = DATA_DIR / "backend"
 LIVE_DIR = DATA_DIR / "live"
 CONFIG_DIR = DATA_DIR / "config"
 WATCHLIST_CONFIG_PATH = CONFIG_DIR / "watchlist.json"
+ACTION_LOG_PATH = BACKEND_DIR / "actions" / "action-log.jsonl"
+EXPORT_DIR = BACKEND_DIR / "exports"
 ETF_STRATEGY_PATH = BACKEND_DIR / "strategies" / "etf.json"
 JOINQUANT_SIGNAL_LOG_PATH = BACKEND_DIR / "strategies" / "joinquant-signals.jsonl"
 JOINQUANT_FULL_LOG_PATH = BACKEND_DIR / "strategies" / "joinquant-full-logs.jsonl"
@@ -776,6 +778,119 @@ def get_payload(path: str) -> dict[str, Any]:
     data_path, source = available_path(spec)
     payload = load_json(data_path)
     return normalize_payload(payload, spec, source, data_path)
+
+
+def verify_action_permission(request: Request) -> None:
+    expected = os.getenv("QUANT_ACTION_TOKEN", "").strip()
+    if not expected:
+        return
+    provided = (request.headers.get("x-action-token") or request.headers.get("authorization") or "").strip()
+    if provided.lower().startswith("bearer "):
+        provided = provided[7:].strip()
+    if not provided or not hmac.compare_digest(provided, expected):
+        raise HTTPException(status_code=403, detail="权限不足：缺少有效操作令牌")
+
+
+def action_response(action_type: str, detail: dict[str, Any]) -> dict[str, Any]:
+    now = now_hk()
+    action_stamp = datetime.now(HK_TZ).strftime("%Y%m%d-%H%M%S-%f")
+    record = {
+        "action_id": f"{action_type}-{action_stamp}",
+        "action_type": action_type,
+        "created_at": now.isoformat(),
+        "trade_date": now.strftime("%Y-%m-%d"),
+        "status": "success",
+        **detail,
+    }
+    append_jsonl(ACTION_LOG_PATH, record)
+    return {
+        "meta": {
+            "version": "1.0",
+            "source": "action",
+            "as_of": now.isoformat(),
+            "trade_date": now.strftime("%Y-%m-%d"),
+            "timezone": "Asia/Hong_Kong",
+            "market_session": market_session(now),
+            "run_id": record["action_id"],
+            "storage_path": str(ACTION_LOG_PATH.relative_to(ROOT)),
+        },
+        "data": record,
+    }
+
+
+def csv_escape(value: Any) -> str:
+    text = str(value if value is not None else "")
+    if any(char in text for char in [",", '"', "\n"]):
+        return '"' + text.replace('"', '""') + '"'
+    return text
+
+
+@app.get("/api/v1/actions")
+def action_log(limit: int = Query(default=50, ge=1, le=500)) -> dict[str, Any]:
+    rows = read_jsonl_tail(ACTION_LOG_PATH, limit)
+    return {
+        "meta": {
+            "version": "1.0",
+            "source": "action",
+            "as_of": now_hk().isoformat(),
+            "trade_date": now_hk().strftime("%Y-%m-%d"),
+            "timezone": "Asia/Hong_Kong",
+            "market_session": market_session(),
+            "run_id": f"actions-{now_hk().strftime('%Y%m%d-%H%M%S')}",
+            "storage_path": str(ACTION_LOG_PATH.relative_to(ROOT)),
+        },
+        "data": {"count": len(rows), "items": rows},
+    }
+
+
+@app.post("/api/v1/portfolio/holdings/{symbol}/mark")
+def mark_holding(symbol: str, request: Request, payload: dict[str, Any] | None = Body(default=None)) -> dict[str, Any]:
+    verify_action_permission(request)
+    payload = payload or {}
+    mark = str(payload.get("mark") or "reviewed").strip()
+    note = str(payload.get("note") or "").strip()
+    return action_response("holding_mark", {"symbol": symbol.upper(), "mark": mark, "note": note, "message": f"持仓 {symbol.upper()} 已标记为 {mark}"})
+
+
+@app.post("/api/v1/strategies/{strategy_id}/signals/{symbol}/confirm")
+def confirm_strategy_signal(strategy_id: str, symbol: str, request: Request, payload: dict[str, Any] | None = Body(default=None)) -> dict[str, Any]:
+    verify_action_permission(request)
+    payload = payload or {}
+    action = str(payload.get("action") or "confirm").strip()
+    note = str(payload.get("note") or "").strip()
+    return action_response("signal_confirm", {"strategy_id": strategy_id, "symbol": symbol.upper(), "action": action, "note": note, "message": f"{strategy_id} 信号 {symbol.upper()} 已确认"})
+
+
+@app.post("/api/v1/strategies/picks/export")
+def export_strategy_picks(request: Request, payload: dict[str, Any] | None = Body(default=None)) -> dict[str, Any]:
+    verify_action_permission(request)
+    payload = payload or {}
+    picks_payload = get_payload("/api/v1/strategies/picks")
+    data = picks_payload.get("data", {})
+    items = data.get("items") if isinstance(data.get("items"), list) else []
+    headers = ["symbol", "name", "score", "entry_price", "stop_loss", "take_profit"]
+    lines = [",".join(headers)]
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        lines.append(",".join(csv_escape(item.get(key)) for key in headers))
+    now = now_hk()
+    filename = f"picks-{now.strftime('%Y%m%d-%H%M%S')}.csv"
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    export_path = EXPORT_DIR / filename
+    export_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return action_response("picks_export", {"filename": filename, "rows": len(items), "csv": export_path.read_text(encoding="utf-8"), "message": f"已导出 {len(items)} 条选股记录"})
+
+
+@app.post("/api/v1/portfolio/rebalance-records")
+def create_rebalance_record(request: Request, payload: dict[str, Any] | None = Body(default=None)) -> dict[str, Any]:
+    verify_action_permission(request)
+    payload = payload or {}
+    symbol = str(payload.get("symbol") or "").strip().upper()
+    action = str(payload.get("action") or "rebalance").strip()
+    weight_pct = payload.get("weight_pct")
+    note = str(payload.get("note") or "").strip()
+    return action_response("rebalance_record", {"symbol": symbol, "action": action, "weight_pct": weight_pct, "note": note, "message": f"调仓记录已保存{f'：{symbol}' if symbol else ''}"})
 
 
 @app.get("/api/v1/health")

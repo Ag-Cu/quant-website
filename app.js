@@ -76,9 +76,57 @@ async function sendJson(path, options = {}) {
     } catch (error) {
       // Keep the original HTTP status when the backend response is not JSON.
     }
-    throw new Error(detail);
+    const requestError = new Error(detail);
+    requestError.status = response.status;
+    throw requestError;
   }
   return response.json();
+}
+
+function actionHeaders() {
+  const token = window.localStorage?.getItem("quant_action_token") || window.QUANT_ACTION_TOKEN || "";
+  return token ? { "X-Action-Token": token } : {};
+}
+
+function actionStatusText(error) {
+  if (error?.status === 403 || String(error?.message || "").includes("权限不足")) return "权限不足：请配置操作令牌";
+  return error?.message || "操作失败";
+}
+
+function setActionState(button, state, message = "") {
+  if (!button) return;
+  const idleText = button.dataset.idleText || button.textContent.trim();
+  button.dataset.idleText = idleText;
+  const statusNode = button.closest(".action-cell, .signal-card, .strategy-toolbar")?.querySelector("[data-action-status]");
+  button.disabled = state === "loading";
+  button.classList.toggle("is-loading", state === "loading");
+  if (state === "loading") button.textContent = "处理中...";
+  if (state === "success") button.textContent = "已完成";
+  if (state === "error" || state === "forbidden") button.textContent = state === "forbidden" ? "权限不足" : "失败";
+  if (state === "idle") button.textContent = idleText;
+  if (statusNode) {
+    statusNode.textContent = message;
+    statusNode.className = `action-status ${state}`;
+  }
+}
+
+async function postAction(button, path, body = {}, successMessage = "操作成功") {
+  setActionState(button, "loading", "正在提交...");
+  try {
+    const payload = await sendJson(path, { method: "POST", headers: actionHeaders(), body: JSON.stringify(body) });
+    setActionState(button, "success", payload.data?.message || successMessage);
+    return payload;
+  } catch (error) {
+    const state = error?.status === 403 ? "forbidden" : "error";
+    setActionState(button, state, actionStatusText(error));
+    return null;
+  } finally {
+    window.setTimeout(() => setActionState(button, "idle", ""), 3200);
+  }
+}
+
+function readonlyNote(text = "只读展示") {
+  return `<span class="readonly-note" title="该控件仅用于展示当前数据维度">${escapeHtml(text)}</span>`;
 }
 
 async function fetchPayload(config) {
@@ -801,7 +849,7 @@ function bindWatchlistInteractions() {
 function renderPicks(payload) {
   const { strategy_label = "", trade_date = "", strategies = [], items = [] } = payload.data || {};
   dom.app.innerHTML = `
-    <section class="strategy-toolbar"><div class="mini-tabs">${strategies.map((name) => `<button class="${name === strategy_label ? "active" : ""}">${escapeHtml(name)}</button>`).join("")}</div><div class="toolbar"><button class="ghost-button">← 昨日</button><button class="primary-button">今日 →</button><button class="ghost-button">导出 CSV ↓</button></div></section>
+    <section class="strategy-toolbar"><div class="mini-tabs readonly-tabs">${strategies.map((name) => `<span class="readonly-tab ${name === strategy_label ? "active" : ""}">${escapeHtml(name)}</span>`).join("")}${readonlyNote("策略筛选只读展示")}</div><div class="toolbar"><span class="readonly-note">日期切换只读展示</span><button class="ghost-button" type="button" data-export-picks>导出 CSV ↓</button><span class="action-status" data-action-status></span></div></section>
     <div class="section-heading"><h2>今日选股结果</h2><span>${escapeHtml(trade_date)} · 共 ${items.length} 只</span></div>
     <section class="pick-grid">
       ${items.length ? items.map((pick) => {
@@ -814,6 +862,22 @@ function renderPicks(payload) {
       }).join("") : `<div class="empty-state">暂无选股结果</div>`}
     </section>
   `;
+  bindPicksInteractions();
+}
+
+function bindPicksInteractions() {
+  document.querySelector("[data-export-picks]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const payload = await postAction(button, "/api/v1/strategies/picks/export", {}, "导出成功");
+    const csv = payload?.data?.csv;
+    if (!csv) return;
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = payload.data.filename || "picks.csv";
+    link.click();
+    URL.revokeObjectURL(link.href);
+  });
 }
 
 function renderHoldings(payload) {
@@ -839,13 +903,27 @@ function renderHoldings(payload) {
           const avgCost = row.avg_cost ?? row.cost;
           const marketValue = row.market_value ?? row.weight_pct * 24800;
           const pnlAmount = row.pnl_amount ?? row.pnl_pct;
-          return `<tr class="${Number(row.pnl_pct) >= 0 ? "profit-row" : "loss-row"}"><td><strong>${escapeHtml(row.symbol)}</strong><br><small>${escapeHtml(row.name)}</small></td><td>${valueText(avgCost, 2)}</td><td>${valueText(row.last_price, 2)}</td><td>${intText(row.quantity ?? row.weight_pct * 1000)}</td><td>¥${intText(marketValue)}</td><td class="${toneClassByValue(pnlAmount)}">${Number(pnlAmount) > 0 ? "+" : ""}¥${intText(pnlAmount)}</td><td><div class="pnl-bar ${toneByValue(row.pnl_pct)}"><i style="--bar:${Math.min(100, Math.abs(row.pnl_pct) * 8)}%;"></i><span>${pctText(row.pnl_pct)}</span></div></td><td><div class="mini-donut" style="--score:${row.weight_pct}%;"></div></td><td>${row.holding_days > 30 ? tag(`${row.holding_days} 天`, "warning") : `${row.holding_days} 天`}</td><td>${icon("chart")}</td></tr>`;
+          return `<tr class="${Number(row.pnl_pct) >= 0 ? "profit-row" : "loss-row"}"><td><strong>${escapeHtml(row.symbol)}</strong><br><small>${escapeHtml(row.name)}</small></td><td>${valueText(avgCost, 2)}</td><td>${valueText(row.last_price, 2)}</td><td>${intText(row.quantity ?? row.weight_pct * 1000)}</td><td>¥${intText(marketValue)}</td><td class="${toneClassByValue(pnlAmount)}">${Number(pnlAmount) > 0 ? "+" : ""}¥${intText(pnlAmount)}</td><td><div class="pnl-bar ${toneByValue(row.pnl_pct)}"><i style="--bar:${Math.min(100, Math.abs(row.pnl_pct) * 8)}%;"></i><span>${pctText(row.pnl_pct)}</span></div></td><td><div class="mini-donut" style="--score:${row.weight_pct}%;"></div></td><td>${row.holding_days > 30 ? tag(`${row.holding_days} 天`, "warning") : `${row.holding_days} 天`}</td><td><div class="action-cell"><button class="row-action" type="button" data-holding-mark="${escapeHtml(row.symbol)}">标记</button><button class="row-action" type="button" data-rebalance-record="${escapeHtml(row.symbol)}" data-weight="${escapeHtml(row.weight_pct)}">调仓记录</button><span class="action-status" data-action-status></span></div></td></tr>`;
         }),
         1100,
       ),
     })}
     ${panel({ title: "行业配置", kicker: "Allocation", span: "span-12", body: `<div class="allocation-panel"><div class="allocation-donut"></div>${barList(allocation.map((item) => ({ name: item.sector, value: item.weight_pct, unit: "%", detail: item.market_value ? `¥${intText(item.market_value)}` : "" })), { color: "var(--accent)" })}</div>` })}
   `;
+  bindHoldingActions();
+}
+
+function bindHoldingActions() {
+  document.querySelectorAll("[data-holding-mark]").forEach((button) => {
+    button.addEventListener("click", () => {
+      postAction(button, `/api/v1/portfolio/holdings/${encodeURIComponent(button.dataset.holdingMark)}/mark`, { mark: "reviewed", note: "前端持仓列表标记" }, "标记成功");
+    });
+  });
+  document.querySelectorAll("[data-rebalance-record]").forEach((button) => {
+    button.addEventListener("click", () => {
+      postAction(button, "/api/v1/portfolio/rebalance-records", { symbol: button.dataset.rebalanceRecord, action: "review", weight_pct: button.dataset.weight, note: "前端持仓列表创建调仓记录" }, "调仓记录已保存");
+    });
+  });
 }
 
 function renderPerformance(payload) {
@@ -872,9 +950,19 @@ function renderPerformance(payload) {
   `;
 }
 
-function compactInstrumentCards(items) {
+function compactInstrumentCards(items, strategyId = "etf") {
   if (!items?.length) return `<div class="empty-state">暂无标的</div>`;
-  return `<div class="signal-card-grid">${items.map((item) => `<article class="signal-card ${actionTone(item.action)}"><div class="signal-card-head"><div><span>${escapeHtml(item.symbol)} ${escapeHtml(item.market || "")}</span><strong>${escapeHtml(item.name)}</strong></div>${tag(item.action_label || item.action, actionTone(item.action))}</div>${sparkline(item.trend, item.change_pct)}<div class="signal-card-metrics"><div><span>信号分</span><strong>${intText(item.score)}</strong></div><div><span>仓位</span><strong>${valueWithUnit(item.suggested_weight_pct, "%", 0)}</strong></div><div><span>涨跌</span><strong class="${toneClassByValue(item.change_pct)}">${pctText(item.change_pct)}</strong></div></div><p class="note">${escapeHtml(item.reason || "")}</p></article>`).join("")}</div>`;
+  return `<div class="signal-card-grid">${items.map((item) => `<article class="signal-card ${actionTone(item.action)}"><div class="signal-card-head"><div><span>${escapeHtml(item.symbol)} ${escapeHtml(item.market || "")}</span><strong>${escapeHtml(item.name)}</strong></div>${tag(item.action_label || item.action, actionTone(item.action))}</div>${sparkline(item.trend, item.change_pct)}<div class="signal-card-metrics"><div><span>信号分</span><strong>${intText(item.score)}</strong></div><div><span>仓位</span><strong>${valueWithUnit(item.suggested_weight_pct, "%", 0)}</strong></div><div><span>涨跌</span><strong class="${toneClassByValue(item.change_pct)}">${pctText(item.change_pct)}</strong></div></div><p class="note">${escapeHtml(item.reason || "")}</p><div class="card-actions"><button class="ghost-button" type="button" data-signal-confirm="${escapeHtml(item.symbol)}" data-strategy-id="${escapeHtml(strategyId)}" data-signal-action="${escapeHtml(item.action || "confirm")}">确认信号</button><span class="action-status" data-action-status></span></div></article>`).join("")}</div>`;
+}
+
+function bindSignalActions() {
+  document.querySelectorAll("[data-signal-confirm]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const strategyId = button.dataset.strategyId || "strategy";
+      const symbol = button.dataset.signalConfirm;
+      postAction(button, `/api/v1/strategies/${encodeURIComponent(strategyId)}/signals/${encodeURIComponent(symbol)}/confirm`, { action: button.dataset.signalAction || "confirm", note: "前端信号卡片确认" }, "信号已确认");
+    });
+  });
 }
 
 function strategyLogConsole(items = []) {
@@ -905,13 +993,14 @@ function renderEtf(payload) {
     ${pageDecisionBrief({ kicker: strategy.name || "ETF Strategy", title: strategy.decision_title || `目标仓位 ${valueWithUnit(summary.target_exposure_pct, "%", 0)}`, detail: strategy.decision_detail || `当前仓位 ${valueWithUnit(summary.current_exposure_pct, "%", 0)}，风格环境 ${regime.label || "--"}。`, tone: strategy.decision_tone || "blue", metrics: [{ label: "仓位差异", value: weightDeltaText(summary.target_exposure_pct, summary.current_exposure_pct) }, { label: "买入信号", value: summary.buy_count === undefined ? "--" : `${summary.buy_count} 个` }, { label: "风控状态", value: strategy.drawdown_guard || "--" }, { label: "再平衡", value: strategy.rebalance_time || "--" }] })}
     ${summaryGrid([metricCard("目标仓位", valueWithUnit(summary.target_exposure_pct, "%", 0), `当前 ${valueWithUnit(summary.current_exposure_pct, "%", 0)}`), metricCard("买入信号", summary.buy_count === undefined ? "--" : `${summary.buy_count} 个`, `${summary.watch_count ?? "--"} 个观察`), metricCard("当日盈亏", pctText(summary.day_pnl_pct), `本周 ${pctText(summary.week_pnl_pct)}`, toneByValue(summary.day_pnl_pct)), metricCard("最大回撤", pctText(summary.max_drawdown_pct), `风控 ${strategy.drawdown_guard || "--"}`, toneByValue(summary.max_drawdown_pct))])}
     <section class="main-grid">
-      ${panel({ title: "推荐标的", kicker: "Signal Cards", span: "span-8", body: compactInstrumentCards(recommendations) })}
+      ${panel({ title: "推荐标的", kicker: "Signal Cards", span: "span-8", body: compactInstrumentCards(recommendations, strategy.id || "etf") })}
       ${panel({ title: "风格环境", kicker: "Regime", span: "span-4", body: scoreBlock(regime.score, regime.label || "环境分", `风险预算 ${valueWithUnit(strategy.risk_budget_pct, "%", 0)}，现金 ${valueWithUnit(strategy.cash_weight_pct, "%", 0)}。`, (regime.factors || []).map((item) => ({ name: item.name, value: item.value, detail: item.detail }))) })}
       ${panel({ title: "当前持仓", kicker: "Positions", span: "span-8", body: table(["代码", "名称", "仓位", "成本", "现价", "当日涨跌", "浮动盈亏"], holdings.map((row) => `<tr><td class="mono">${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.name)}</td><td>${valueWithUnit(row.weight_pct, "%", 0)}</td><td>${valueText(row.cost, 3)}</td><td>${valueText(row.last_price, 3)}</td><td class="${toneClassByValue(row.day_change_pct)}">${pctText(row.day_change_pct)}</td><td class="${toneClassByValue(row.pnl_pct)}">${pctText(row.pnl_pct)}</td></tr>`), 780) })}
       ${panel({ title: "运行记录", kicker: "Events", span: "span-4", body: timeline(events) })}
       ${panel({ title: "完整日志", kicker: "JoinQuant Logs", span: "span-12", tools: pill(`${intText(logs.length)} lines`, "blue"), body: strategyLogConsole(logs) })}
     </section>
   `;
+  bindSignalActions();
 }
 
 function renderSmallCap(payload) {
@@ -920,12 +1009,13 @@ function renderSmallCap(payload) {
     ${pageDecisionBrief({ kicker: strategy.name || "Small Cap Strategy", title: strategy.decision_title || "暂无策略结论", detail: strategy.decision_detail || `候选池 ${intText(strategy.candidate_count)} / ${intText(strategy.universe_size)}，当前仓位 ${valueWithUnit(summary.exposure_pct, "%", 0)}。`, tone: strategy.decision_tone || "blue", metrics: [{ label: "买入候选", value: summary.buy_count === undefined ? "--" : `${summary.buy_count} 只` }, { label: "仓位状态", value: valueWithUnit(summary.exposure_pct, "%", 0) }, { label: "单票上限", value: valueWithUnit(strategy.max_position_pct, "%", 0) }, { label: "止损条件", value: strategy.stop_policy || "--" }] })}
     ${summaryGrid([metricCard("今日信号", summary.signal_count === undefined ? "--" : `${summary.signal_count} 只`, `${summary.buy_count ?? "--"} 只买入`), metricCard("策略仓位", valueWithUnit(summary.exposure_pct, "%", 0), `换手 ${valueWithUnit(summary.turnover_pct, "%", 0)}`), metricCard("当日盈亏", pctText(summary.day_pnl_pct), `浮盈 ${pctText(summary.floating_pnl_pct)}`, toneByValue(summary.day_pnl_pct)), metricCard("候选池", `${intText(strategy.candidate_count)} / ${intText(strategy.universe_size)}`, `单票上限 ${valueWithUnit(strategy.max_position_pct, "%", 0)}`)])}
     <section class="main-grid">
-      ${panel({ title: "今日信号", kicker: "Signal Cards", span: "span-8", body: signals.length ? `<div class="signal-card-grid">${signals.map((item) => `<article class="signal-card ${actionTone(item.signal)}"><div class="signal-card-head"><div><span>${escapeHtml(item.symbol)} / ${escapeHtml(item.theme)}</span><strong>${escapeHtml(item.name)}</strong></div>${tag(item.signal_label, actionTone(item.signal))}</div><div class="signal-card-metrics"><div><span>分数</span><strong>${intText(item.score)}</strong></div><div><span>风险</span><strong>${riskLabel(item.risk)}</strong></div><div><span>涨跌</span><strong class="${toneClassByValue(item.change_pct)}">${pctText(item.change_pct)}</strong></div></div><p class="note">执行：${escapeHtml(item.suggested_range || "--")}。失效：${escapeHtml(item.invalidation || strategy.stop_policy || "--")}</p></article>`).join("")}</div>` : `<div class="empty-state">暂无今日信号</div>` })}
+      ${panel({ title: "今日信号", kicker: "Signal Cards", span: "span-8", body: signals.length ? `<div class="signal-card-grid">${signals.map((item) => `<article class="signal-card ${actionTone(item.signal)}"><div class="signal-card-head"><div><span>${escapeHtml(item.symbol)} / ${escapeHtml(item.theme)}</span><strong>${escapeHtml(item.name)}</strong></div>${tag(item.signal_label, actionTone(item.signal))}</div><div class="signal-card-metrics"><div><span>分数</span><strong>${intText(item.score)}</strong></div><div><span>风险</span><strong>${riskLabel(item.risk)}</strong></div><div><span>涨跌</span><strong class="${toneClassByValue(item.change_pct)}">${pctText(item.change_pct)}</strong></div></div><p class="note">执行：${escapeHtml(item.suggested_range || "--")}。失效：${escapeHtml(item.invalidation || strategy.stop_policy || "--")}</p><div class="card-actions"><button class="ghost-button" type="button" data-signal-confirm="${escapeHtml(item.symbol)}" data-strategy-id="small-cap" data-signal-action="${escapeHtml(item.signal || "confirm")}">确认信号</button><span class="action-status" data-action-status></span></div></article>`).join("")}</div>` : `<div class="empty-state">暂无今日信号</div>` })}
       ${panel({ title: "风控", kicker: "Risk", span: "span-4", body: `<div class="stack">${barList([{ name: "流动性通过率", value: risk.liquidity_pass_pct, detail: "候选池过滤" }, { name: "最大集中度", value: risk.concentration_pct, detail: "单一持仓" }, { name: "波动压力", value: risk.volatility_score, detail: "短期波动" }], { color: "var(--warning)" })}<p class="note">${escapeHtml(strategy.stop_policy || "")}</p></div>` })}
       ${panel({ title: "当前持仓", kicker: "Positions", span: "span-8", body: table(["代码", "名称", "主题", "仓位", "成本", "现价", "当日涨跌", "浮动盈亏", "天数"], holdings.map((row) => `<tr><td class="mono">${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.theme)}</td><td>${valueWithUnit(row.weight_pct, "%", 0)}</td><td>${valueText(row.cost, 2)}</td><td>${valueText(row.last_price, 2)}</td><td class="${toneClassByValue(row.day_change_pct)}">${pctText(row.day_change_pct)}</td><td class="${toneClassByValue(row.pnl_pct)}">${pctText(row.pnl_pct)}</td><td>${intText(row.holding_days)}</td></tr>`), 980) })}
       ${panel({ title: "主题暴露", kicker: "Themes", span: "span-4", body: barList(themes.map((item) => ({ name: item.name, value: item.exposure_pct, detail: `宽度 ${valueWithUnit(item.breadth_pct, "%", 0)}`, unit: "%" }))) })}
     </section>
   `;
+  bindSignalActions();
 }
 
 function marketHeatmapCard(history = {}) {

@@ -2141,3 +2141,65 @@ body.sidebar-collapsed .sidebar-toggle::before {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
+
+.readonly-tabs {
+  align-items: center;
+}
+
+.readonly-tab,
+.readonly-note {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: default;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.readonly-tab.active {
+  border-color: rgba(0, 212, 255, 0.28);
+  background: rgba(0, 212, 255, 0.08);
+  color: var(--accent);
+}
+
+.action-cell,
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.action-cell .row-action {
+  opacity: 1;
+}
+
+.action-status {
+  min-height: 16px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.action-status.loading {
+  color: var(--accent);
+}
+
+.action-status.success {
+  color: var(--positive);
+}
+
+.action-status.error,
+.action-status.forbidden {
+  color: var(--negative);
+}
+
+button[disabled],
+button.is-loading {
+  cursor: wait;
+  opacity: 0.62;
+}
