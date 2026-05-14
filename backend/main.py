@@ -826,6 +826,8 @@ def ensure_fresh_live_data(spec: EndpointSpec) -> None:
 def normalize_payload(payload: dict[str, Any], spec: EndpointSpec, source: str, path: Path) -> dict[str, Any]:
     meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
     as_of = meta.get("as_of") or now_hk().isoformat()
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    algorithm = data.get("source_algorithm") if isinstance(data.get("source_algorithm"), dict) else {}
     normalized_meta = {
         **meta,
         "version": meta.get("version") or "1.0",
@@ -838,8 +840,8 @@ def normalize_payload(payload: dict[str, Any], spec: EndpointSpec, source: str, 
         "refresh_policy": spec.refresh_policy,
         "refresh_seconds": spec.refresh_seconds,
         "storage_path": str(path.relative_to(ROOT)),
+        "source_quality": meta.get("source_quality") or algorithm.get("source_quality") or "real",
     }
-    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     return {"meta": normalized_meta, "data": data}
 
 
