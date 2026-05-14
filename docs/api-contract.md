@@ -31,6 +31,13 @@
 `source` 建议取值：`live`、`cache`。  
 `market_session` 建议取值：`preopen`、`open`、`lunch`、`closed`、`offline`。
 
+
+## JSON Schema 单一来源
+
+核心接口结构由 `backend/schemas.py` 的 Pydantic 模型定义，并导出到 [`docs/api-schema.json`](./api-schema.json)。本文档保留字段解释和业务语义；新增、删除或重命名字段时，必须先更新 Pydantic 模型，再运行 `python scripts/generate_api_schema.py` 重新生成 JSON Schema，避免文档和代码分叉。
+
+当前已纳入 JSON Schema 的模型包括：`DashboardOverviewPayload`、`WatchlistPayload`、`StrategyPicksPayload`、`PortfolioHoldingsPayload`、`PerformancePayload`、`MarketHeatmapPayload`、`BreadthPayload`、`SentimentPayload`、`MacroPayload`。
+
 ## Endpoint
 
 | 页面 | Endpoint | 刷新频率 | 后端数据文件 |
