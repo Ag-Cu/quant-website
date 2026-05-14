@@ -1338,6 +1338,61 @@ def performance(
     return build_performance_payload(strategy, benchmark, start, to)
 
 
+def heatmap_group_key(cell: dict[str, Any], group_by: str) -> list[tuple[str, str]]:
+    if group_by == "size":
+        cap = to_float(cell.get("market_cap") or cell.get("weight"), 0) or 0
+        if cap >= 1_000_000_000_000:
+            return [("large", "超大市值")]
+        if cap >= 200_000_000_000:
+            return [("mid", "核心市值")]
+        return [("small", "弹性市值")]
+    if group_by == "index":
+        memberships = cell.get("index_memberships") if isinstance(cell.get("index_memberships"), list) else []
+        labels = [str(name) for name in memberships if str(name).strip()]
+        if not labels:
+            labels = ["未归入指数"]
+        return [(label, label) for label in labels]
+    label = str(cell.get("sector") or "其他")
+    return [(label, label)]
+
+
+def build_heatmap_groups(cells: list[dict[str, Any]], group_by: str) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for cell in cells:
+        weight = to_float(cell.get("market_cap") or cell.get("weight"), 1) or 1
+        change = to_float(cell.get("change_pct"))
+        for key, label in heatmap_group_key(cell, group_by):
+            bucket = grouped.setdefault(
+                key,
+                {
+                    "key": key,
+                    "label": label,
+                    "weight": 0.0,
+                    "market_cap": 0.0,
+                    "change_sum": 0.0,
+                    "change_weight": 0.0,
+                    "children": [],
+                },
+            )
+            bucket["children"].append(cell)
+            bucket["weight"] += to_float(cell.get("weight"), 1) or 1
+            bucket["market_cap"] += to_float(cell.get("market_cap"), 0) or 0
+            if change is not None:
+                bucket["change_sum"] += change * weight
+                bucket["change_weight"] += weight
+
+    groups = []
+    for bucket in grouped.values():
+        change_weight = bucket.pop("change_weight")
+        change_sum = bucket.pop("change_sum")
+        bucket["change_pct"] = round(change_sum / change_weight, 2) if change_weight else None
+        bucket["count"] = len(bucket["children"])
+        bucket["children"].sort(key=lambda row: row.get("market_cap") or row.get("weight") or 0, reverse=True)
+        groups.append(bucket)
+    groups.sort(key=lambda row: (row.get("market_cap") or row.get("weight") or 0), reverse=True)
+    return groups
+
+
 @app.get("/api/v1/market/heatmap")
 def market_heatmap(
     timeframe: str = Query(default="1D"),
@@ -1351,19 +1406,29 @@ def market_heatmap(
     market_key = market.lower()
     if market_key in {"cn", "us"}:
         cells = [cell for cell in cells if cell.get("market") == market_key]
+    normalized_group_by = group_by.lower() if group_by.lower() in {"sector", "size", "index"} else "sector"
     for cell in cells:
         returns = cell.get("returns") if isinstance(cell.get("returns"), dict) else {}
-        if period in returns:
-            cell["change_pct"] = returns[period]
-    if group_by == "size":
+        has_period_return = period in returns and returns[period] is not None
+        cell["has_period_return"] = has_period_return
+        cell["active_timeframe"] = period
+        cell["change_pct"] = returns[period] if has_period_return else None
+    if normalized_group_by == "size":
         cells.sort(key=lambda row: row.get("market_cap") or row.get("weight") or 0, reverse=True)
-    elif group_by == "index":
-        cells.sort(key=lambda row: str(row.get("symbol") or ""))
+    elif normalized_group_by == "index":
+        cells.sort(
+            key=lambda row: (
+                str((row.get("index_memberships") if isinstance(row.get("index_memberships"), list) else [""]) or [""])[0],
+                -(row.get("market_cap") or row.get("weight") or 0),
+            )
+        )
     else:
         cells.sort(key=lambda row: (str(row.get("sector") or ""), -(row.get("market_cap") or row.get("weight") or 0)))
+    groups = build_heatmap_groups(cells, normalized_group_by)
     payload["data"]["timeframe"] = period
-    payload["data"]["group_by"] = group_by
+    payload["data"]["group_by"] = normalized_group_by
     payload["data"]["market"] = market_key if market_key in {"cn", "us"} else "all"
+    payload["data"]["groups"] = groups
     payload["data"]["cells"] = cells
     return payload
 
