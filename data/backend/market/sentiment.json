@@ -1,0 +1,398 @@
+{
+  "meta": {
+    "version": "1.0",
+    "source": "live",
+    "as_of": "2026-05-12T14:56:00+08:00",
+    "trade_date": "2026-05-12",
+    "timezone": "Asia/Hong_Kong",
+    "market_session": "open",
+    "run_id": "backend-sentiment-20260512-1456",
+    "stale_seconds": 26
+  },
+  "data": {
+    "source_algorithm": {
+      "name": "1 分钟耀眼波动率",
+      "source_file": "/home/yt/quant/yy1min.txt",
+      "data_source": "JoinQuant get_price 1m",
+      "time_window": "09:32 - 14:57",
+      "surge_rule": "volume_increase > mean(volume_increase) + std(volume_increase)",
+      "excluded_minutes": [
+        "13:01"
+      ],
+      "brilliant_window_minutes": 5,
+      "volatility_formula": "成交量激增时刻及后续 4 分钟的 1 分钟收益率标准差均值",
+      "output_fields": [
+        "daily_brilliant_vol",
+        "surge_count",
+        "close"
+      ]
+    },
+    "summary": {
+      "score": 71,
+      "label": "活跃",
+      "temperature": 71,
+      "daily_brilliant_vol": 0.1061,
+      "surge_count": 26,
+      "tracked_symbol": "159915.XSHE",
+      "turnover_vs_20d_pct": 118,
+      "margin_heat_pct": 54,
+      "hot_topic_count": 6
+    },
+    "latest_snapshot": {
+      "updated_at": "2026-05-12T14:57:00+08:00",
+      "update_frequency": "每半小时更新",
+      "symbol": "159915",
+      "name": "创业板",
+      "sentiment_value": 0.1061,
+      "status": "淡定",
+      "last_count": 26,
+      "warning_line": 0.15
+    },
+    "brilliant_volatility": {
+      "symbol": "159915.XSHE",
+      "name": "创业板ETF",
+      "close": 1.842,
+      "daily_brilliant_vol": 0.1061,
+      "surge_count": 26,
+      "last_surge_time": "14:32",
+      "intraday_signal": "淡定",
+      "signal_detail": "当前情绪值低于预警线，成交激增未进入过热区间。",
+      "baseline": "volume_increase > mean + std",
+      "window": "09:32 - 14:57"
+    },
+    "sentiment_trend": [
+      {
+        "date": "2024-04-16",
+        "value": 0.096
+      },
+      {
+        "date": "2024-05-09",
+        "value": 0.071
+      },
+      {
+        "date": "2024-06-03",
+        "value": 0.083
+      },
+      {
+        "date": "2024-06-27",
+        "value": 0.076
+      },
+      {
+        "date": "2024-07-19",
+        "value": 0.092
+      },
+      {
+        "date": "2024-08-12",
+        "value": 0.068
+      },
+      {
+        "date": "2024-09-04",
+        "value": 0.088
+      },
+      {
+        "date": "2024-09-12",
+        "value": 0.172
+      },
+      {
+        "date": "2024-09-18",
+        "value": 0.994
+      },
+      {
+        "date": "2024-09-23",
+        "value": 0.446
+      },
+      {
+        "date": "2024-09-27",
+        "value": 0.165
+      },
+      {
+        "date": "2024-10-08",
+        "value": 0.308
+      },
+      {
+        "date": "2024-10-22",
+        "value": 0.142
+      },
+      {
+        "date": "2024-11-05",
+        "value": 0.222
+      },
+      {
+        "date": "2024-11-19",
+        "value": 0.156
+      },
+      {
+        "date": "2024-12-03",
+        "value": 0.104
+      },
+      {
+        "date": "2024-12-19",
+        "value": 0.082
+      },
+      {
+        "date": "2025-01-08",
+        "value": 0.118
+      },
+      {
+        "date": "2025-01-24",
+        "value": 0.094
+      },
+      {
+        "date": "2025-02-14",
+        "value": 0.089
+      },
+      {
+        "date": "2025-03-05",
+        "value": 0.078
+      },
+      {
+        "date": "2025-03-21",
+        "value": 0.091
+      },
+      {
+        "date": "2025-04-08",
+        "value": 0.226
+      },
+      {
+        "date": "2025-04-28",
+        "value": 0.074
+      },
+      {
+        "date": "2025-05-19",
+        "value": 0.063
+      },
+      {
+        "date": "2025-06-10",
+        "value": 0.071
+      },
+      {
+        "date": "2025-07-01",
+        "value": 0.066
+      },
+      {
+        "date": "2025-07-21",
+        "value": 0.081
+      },
+      {
+        "date": "2025-08-08",
+        "value": 0.124
+      },
+      {
+        "date": "2025-08-26",
+        "value": 0.188
+      },
+      {
+        "date": "2025-09-03",
+        "value": 0.254
+      },
+      {
+        "date": "2025-09-19",
+        "value": 0.126
+      },
+      {
+        "date": "2025-10-10",
+        "value": 0.103
+      },
+      {
+        "date": "2025-10-29",
+        "value": 0.098
+      },
+      {
+        "date": "2025-11-17",
+        "value": 0.109
+      },
+      {
+        "date": "2025-12-08",
+        "value": 0.087
+      },
+      {
+        "date": "2025-12-26",
+        "value": 0.111
+      },
+      {
+        "date": "2026-01-15",
+        "value": 0.094
+      },
+      {
+        "date": "2026-02-06",
+        "value": 0.073
+      },
+      {
+        "date": "2026-02-26",
+        "value": 0.092
+      },
+      {
+        "date": "2026-03-17",
+        "value": 0.118
+      },
+      {
+        "date": "2026-04-08",
+        "value": 0.082
+      },
+      {
+        "date": "2026-04-27",
+        "value": 0.097
+      },
+      {
+        "date": "2026-05-12",
+        "value": 0.1061
+      }
+    ],
+    "brilliant_series": [
+      {
+        "date": "2026-05-06",
+        "close": 1.768,
+        "daily_brilliant_vol": 0.092,
+        "surge_count": 18
+      },
+      {
+        "date": "2026-05-07",
+        "close": 1.792,
+        "daily_brilliant_vol": 0.101,
+        "surge_count": 22
+      },
+      {
+        "date": "2026-05-08",
+        "close": 1.816,
+        "daily_brilliant_vol": 0.118,
+        "surge_count": 24
+      },
+      {
+        "date": "2026-05-11",
+        "close": 1.848,
+        "daily_brilliant_vol": 0.112,
+        "surge_count": 23
+      },
+      {
+        "date": "2026-05-12",
+        "close": 1.842,
+        "daily_brilliant_vol": 0.1061,
+        "surge_count": 26
+      }
+    ],
+    "surge_events": [
+      {
+        "time": "09:46",
+        "volume_increase_ratio": 1.62,
+        "return_std": 0.28,
+        "price_change_pct": 0.18
+      },
+      {
+        "time": "10:18",
+        "volume_increase_ratio": 1.48,
+        "return_std": 0.23,
+        "price_change_pct": 0.12
+      },
+      {
+        "time": "13:37",
+        "volume_increase_ratio": 1.86,
+        "return_std": 0.41,
+        "price_change_pct": -0.22
+      },
+      {
+        "time": "14:32",
+        "volume_increase_ratio": 1.74,
+        "return_std": 0.36,
+        "price_change_pct": 0.16
+      }
+    ],
+    "gauges": [
+      {
+        "name": "成交活跃度",
+        "value": 76,
+        "detail": "较 20 日均值偏高"
+      },
+      {
+        "name": "热门题材拥挤度",
+        "value": 69,
+        "detail": "AI 相关链条集中"
+      },
+      {
+        "name": "融资交易热度",
+        "value": 54,
+        "detail": "未进入极端区间"
+      },
+      {
+        "name": "短线连板温度",
+        "value": 63,
+        "detail": "涨停扩散正常"
+      }
+    ],
+    "topics": [
+      {
+        "name": "AI 算力",
+        "heat": 86,
+        "change": 12,
+        "leader": "光模块"
+      },
+      {
+        "name": "国产芯片",
+        "heat": 74,
+        "change": 7,
+        "leader": "算力芯片"
+      },
+      {
+        "name": "机器人",
+        "heat": 61,
+        "change": -4,
+        "leader": "减速器"
+      },
+      {
+        "name": "低空经济",
+        "heat": 52,
+        "change": -9,
+        "leader": "航空设备"
+      },
+      {
+        "name": "创新药",
+        "heat": 48,
+        "change": 3,
+        "leader": "CXO"
+      },
+      {
+        "name": "消费电子",
+        "heat": 45,
+        "change": -2,
+        "leader": "端侧 AI"
+      }
+    ],
+    "flows": [
+      {
+        "name": "小单净流入",
+        "value": 18.6,
+        "unit": "亿",
+        "detail": "散户参与改善"
+      },
+      {
+        "name": "大单净流入",
+        "value": 42.8,
+        "unit": "亿",
+        "detail": "主线承接较强"
+      },
+      {
+        "name": "融资余额变化",
+        "value": 0.42,
+        "unit": "%",
+        "detail": "温和扩张"
+      },
+      {
+        "name": "ETF 净申购",
+        "value": 21.4,
+        "unit": "亿",
+        "detail": "宽基资金回流"
+      }
+    ],
+    "warnings": [
+      {
+        "level": "warning",
+        "title": "热门题材集中度偏高",
+        "detail": "AI 算力和光模块热度高于 80，需要观察分歧日承接。"
+      },
+      {
+        "level": "info",
+        "title": "融资热度未过热",
+        "detail": "杠杆资金变化仍处中性区间。"
+      }
+    ]
+  }
+}

@@ -1,0 +1,119 @@
+{
+  "meta": {
+    "version": "1.0",
+    "source": "joinquant",
+    "as_of": "2026-05-14T13:10:00+08:00",
+    "trade_date": "2026-05-14",
+    "timezone": "Asia/Hong_Kong",
+    "market_session": "closed",
+    "run_id": "domain-log-test-20260514-1311"
+  },
+  "data": {
+    "strategy": {
+      "id": "joinquant-wufu-etf-v43",
+      "name": "五福闹新春 v4.3",
+      "status": "running",
+      "rebalance_time": "22:05",
+      "risk_budget_pct": 100.0,
+      "cash_weight_pct": 0,
+      "drawdown_guard": "未触发 / 正常期",
+      "decision_title": "聚宽策略已更新",
+      "decision_detail": "收到 1 个目标信号，当前模式 正常期。",
+      "decision_tone": "blue"
+    },
+    "summary": {
+      "buy_count": 1,
+      "watch_count": 0,
+      "target_exposure_pct": 100.0,
+      "current_exposure_pct": 88.5,
+      "day_pnl_pct": 0,
+      "week_pnl_pct": 0,
+      "month_pnl_pct": 0,
+      "max_drawdown_pct": 0
+    },
+    "recommendations": [
+      {
+        "symbol": "159915",
+        "name": "创业板ETF易方达",
+        "market": "SZ",
+        "action": "buy",
+        "action_label": "买入",
+        "rank": 1,
+        "score": 96,
+        "suggested_weight_pct": 100.0,
+        "current_weight_pct": 0,
+        "last_price": 3.997,
+        "change_pct": 0,
+        "volume_ratio": 1.1,
+        "trend": [],
+        "reason": "日志联调测试"
+      }
+    ],
+    "holdings": [
+      {
+        "symbol": "159915",
+        "name": "创业板ETF易方达",
+        "weight_pct": 88.5,
+        "cost": 3.91,
+        "last_price": 3.997,
+        "day_change_pct": 0,
+        "pnl_pct": 2.2
+      }
+    ],
+    "regime": {
+      "label": "正常期",
+      "score": 66,
+      "factors": [
+        {
+          "name": "信号数量",
+          "value": 20,
+          "detail": "1 个候选"
+        },
+        {
+          "name": "目标仓位",
+          "value": 100.0,
+          "detail": "聚宽策略输出"
+        },
+        {
+          "name": "当前仓位",
+          "value": 88.5,
+          "detail": "聚宽账户状态"
+        }
+      ]
+    },
+    "events": [
+      {
+        "time": "13:10",
+        "label": "日志联调",
+        "detail": "完整日志同步测试",
+        "status": "done"
+      }
+    ],
+    "logs": [
+      {
+        "received_at": "2026-05-14T22:05:06+08:00",
+        "run_id": "domain-log-test-20260514-1311",
+        "trade_date": "2026-05-14",
+        "sequence": 1,
+        "time": "2026-05-14 13:10:00",
+        "stage": "rank",
+        "level": "info",
+        "message": "排名完成：159915.XSHE score=4.8 r2=0.72"
+      },
+      {
+        "received_at": "2026-05-14T22:05:06+08:00",
+        "run_id": "domain-log-test-20260514-1311",
+        "trade_date": "2026-05-14",
+        "sequence": 2,
+        "time": "2026-05-14 13:10:01",
+        "stage": "risk",
+        "level": "warning",
+        "message": "示例风控日志：成交量过滤通过但需观察"
+      }
+    ],
+    "raw": {
+      "provider": "joinquant",
+      "received_at": "2026-05-14T22:05:06+08:00"
+    }
+  }
+}

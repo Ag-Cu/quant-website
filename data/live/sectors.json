@@ -1,0 +1,44 @@
+{
+  "meta": {
+    "version": "1.0",
+    "source": "live",
+    "as_of": "2026-05-14T22:20:31+08:00",
+    "trade_date": "2026-05-14",
+    "timezone": "Asia/Hong_Kong",
+    "market_session": "closed",
+    "run_id": "live-sectors-20260514-222031",
+    "stale_seconds": 0
+  },
+  "data": {
+    "period": "1D",
+    "updated_at": "2026-05-14T22:20:31+08:00",
+    "sectors": [
+      {
+        "id": "proxy-2",
+        "name": "消费",
+        "icon": "◇",
+        "performance_pct": -0.14,
+        "up_count": 0,
+        "down_count": 1,
+        "flat_count": 0,
+        "market_cap": null,
+        "turnover": null,
+        "rank": 1,
+        "data_source": "eastmoney"
+      },
+      {
+        "id": "proxy-1",
+        "name": "AI 链",
+        "icon": "◇",
+        "performance_pct": -3.54,
+        "up_count": 1,
+        "down_count": 2,
+        "flat_count": 0,
+        "market_cap": null,
+        "turnover": null,
+        "rank": 2,
+        "data_source": "eastmoney"
+      }
+    ]
+  }
+}

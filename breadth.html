@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>市场宽度 - 量化策略中控台</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body data-page="breadth">
+    <div class="layout">
+      <aside class="sidebar">
+        <a class="brand" href="index.html" aria-label="量化策略中控台">
+          <span class="brand-mark">Q</span>
+          <span><strong>Quant Desk</strong><small>Research Console</small></span>
+        </a>
+        <nav class="side-nav" aria-label="主导航">
+          <a href="index.html" data-nav="overview">总览</a>
+          <a href="etf.html" data-nav="etf">ETF 策略</a>
+          <a href="small-cap.html" data-nav="small-cap">小盘股策略</a>
+          <a href="breadth.html" data-nav="breadth">市场宽度</a>
+          <a href="sentiment.html" data-nav="sentiment">散户情绪</a>
+          <a href="macro.html" data-nav="macro">宏观指标</a>
+        </nav>
+        <section class="side-status" aria-label="服务状态">
+          <span>数据源</span>
+          <strong id="apiMode">--</strong>
+          <small id="runSummary">等待首次刷新</small>
+        </section>
+      </aside>
+
+      <div class="workspace">
+        <header class="topbar">
+          <div class="page-heading">
+            <p class="eyebrow">Market Breadth</p>
+            <h1>市场宽度</h1>
+          </div>
+          <div class="topbar-actions">
+            <span class="connection-badge" id="connectionBadge">连接中</span>
+            <div class="market-clock" aria-label="市场时间"><span id="marketDate">--</span><strong id="marketClock">--:--:--</strong></div>
+            <button class="icon-button" id="refreshButton" type="button" title="刷新" aria-label="刷新"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.3 6.4" /><path d="M3 12A9 9 0 0 1 18.3 5.6" /><path d="M18 2v4h4" /><path d="M6 22v-4H2" /></svg></button>
+          </div>
+        </header>
+        <main class="page-content" id="app" aria-live="polite"></main>
+        <footer class="page-footer"><span>研究样例数据非投资建议</span><span id="lastUpdated">最近刷新 --</span></footer>
+      </div>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>

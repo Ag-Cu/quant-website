@@ -1,0 +1,163 @@
+{
+  "meta": {
+    "version": "1.0",
+    "source": "live",
+    "as_of": "2026-05-12T14:56:00+08:00",
+    "trade_date": "2026-05-12",
+    "timezone": "Asia/Hong_Kong",
+    "market_session": "open",
+    "run_id": "backend-picks-20260512-1456",
+    "stale_seconds": 20
+  },
+  "data": {
+    "strategy": "momentum",
+    "strategy_label": "动量策略",
+    "trade_date": "2026-05-12",
+    "status": "ready",
+    "count": 4,
+    "strategies": [
+      "动量策略",
+      "均值回归",
+      "多因子"
+    ],
+    "items": [
+      {
+        "symbol": "300476",
+        "name": "胜宏科技",
+        "score": 87,
+        "confidence": 0.82,
+        "is_new": true,
+        "in_portfolio": false,
+        "factors": [
+          {
+            "name": "动量信号",
+            "value": 82,
+            "weight": 0.4
+          },
+          {
+            "name": "成交量异常",
+            "value": 61,
+            "weight": 0.25
+          },
+          {
+            "name": "主题强度",
+            "value": 76,
+            "weight": 0.35
+          }
+        ],
+        "entry_price": 42.8,
+        "stop_loss": 40.3,
+        "take_profit": 48.6,
+        "tags": [
+          "突破型",
+          "放量",
+          "AI PCB"
+        ],
+        "explanation": "价格突破短期平台，成交量放大，主题宽度继续改善。",
+        "invalidation": "跌回突破平台且成交量无法维持。"
+      },
+      {
+        "symbol": "002281",
+        "name": "光迅科技",
+        "score": 82,
+        "confidence": 0.78,
+        "is_new": true,
+        "in_portfolio": false,
+        "factors": [
+          {
+            "name": "趋势强度",
+            "value": 78,
+            "weight": 0.4
+          },
+          {
+            "name": "宽度共振",
+            "value": 69,
+            "weight": 0.3
+          },
+          {
+            "name": "换手质量",
+            "value": 64,
+            "weight": 0.3
+          }
+        ],
+        "entry_price": 33.4,
+        "stop_loss": 31.6,
+        "take_profit": 37.2,
+        "tags": [
+          "光模块",
+          "高Beta"
+        ],
+        "explanation": "光模块主题继续扩散，趋势和成交质量同步通过过滤。",
+        "invalidation": "跌破 10 日线或主题宽度转弱。"
+      },
+      {
+        "symbol": "688041",
+        "name": "海光信息",
+        "score": 76,
+        "confidence": 0.71,
+        "is_new": false,
+        "in_portfolio": true,
+        "factors": [
+          {
+            "name": "国产芯片",
+            "value": 72,
+            "weight": 0.35
+          },
+          {
+            "name": "资金流",
+            "value": 58,
+            "weight": 0.25
+          },
+          {
+            "name": "回撤控制",
+            "value": 63,
+            "weight": 0.4
+          }
+        ],
+        "entry_price": 84.2,
+        "stop_loss": 79.1,
+        "take_profit": 93.0,
+        "tags": [
+          "芯片",
+          "持仓中"
+        ],
+        "explanation": "国产芯片链条维持中强，当前更适合持仓跟踪。",
+        "invalidation": "资金流连续转负或回撤超过策略阈值。"
+      },
+      {
+        "symbol": "512100",
+        "name": "中证1000ETF",
+        "score": 74,
+        "confidence": 0.69,
+        "is_new": false,
+        "in_portfolio": false,
+        "factors": [
+          {
+            "name": "风格扩散",
+            "value": 81,
+            "weight": 0.45
+          },
+          {
+            "name": "量能",
+            "value": 56,
+            "weight": 0.2
+          },
+          {
+            "name": "波动收敛",
+            "value": 62,
+            "weight": 0.35
+          }
+        ],
+        "entry_price": 2.35,
+        "stop_loss": 2.26,
+        "take_profit": 2.52,
+        "tags": [
+          "ETF",
+          "小盘"
+        ],
+        "explanation": "小盘风格扩散修复，适合用 ETF 做组合 beta。",
+        "invalidation": "市场宽度回落到 50 以下。"
+      }
+    ]
+  }
+}

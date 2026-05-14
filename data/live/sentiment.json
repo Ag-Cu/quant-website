@@ -1,0 +1,375 @@
+{
+  "meta": {
+    "version": "1.0",
+    "source": "live",
+    "as_of": "2026-05-14T22:20:31+08:00",
+    "trade_date": "2026-05-14",
+    "timezone": "Asia/Hong_Kong",
+    "market_session": "closed",
+    "run_id": "live-sentiment-20260514-222031",
+    "stale_seconds": 0
+  },
+  "data": {
+    "source_algorithm": {
+      "name": "行业热力散户情绪代理指标",
+      "source_file": "scripts/update_live_data.py",
+      "data_source": "东方财富行业板块公开接口",
+      "time_window": "daily snapshot",
+      "surge_rule": "由总体行业热度、强势行业数量、行业涨跌幅合成",
+      "excluded_minutes": [],
+      "brilliant_window_minutes": null,
+      "volatility_formula": "sentiment_value = clipped(sentiment_temperature / 650)",
+      "output_fields": [
+        "sentiment_value",
+        "temperature",
+        "strong_industry_count"
+      ]
+    },
+    "summary": {
+      "score": 26,
+      "label": "低迷",
+      "temperature": 26,
+      "daily_brilliant_vol": 0.04,
+      "surge_count": 0,
+      "tracked_symbol": "INDUSTRY_HEAT",
+      "turnover_vs_20d_pct": 118,
+      "margin_heat_pct": 54,
+      "hot_topic_count": 0
+    },
+    "latest_snapshot": {
+      "updated_at": "2026-05-14T22:20:31+08:00",
+      "update_frequency": "远端每日自动更新",
+      "symbol": "MARKET",
+      "name": "全市场行业热度",
+      "sentiment_value": 0.04,
+      "status": "淡定",
+      "last_count": 0,
+      "warning_line": 0.15
+    },
+    "brilliant_volatility": {
+      "symbol": "INDUSTRY_HEAT",
+      "name": "行业热力",
+      "close": 16.0,
+      "daily_brilliant_vol": 0.04,
+      "surge_count": 0,
+      "last_surge_time": "22:20",
+      "intraday_signal": "淡定",
+      "signal_detail": "当前为公开行业热力合成的情绪代理指标；后续可替换为 yy1min 的真实 1 分钟耀眼波动率。",
+      "baseline": "industry heat proxy",
+      "window": "daily snapshot"
+    },
+    "sentiment_trend": [
+      {
+        "date": "2024-04-16",
+        "value": 0.096
+      },
+      {
+        "date": "2024-05-09",
+        "value": 0.071
+      },
+      {
+        "date": "2024-06-03",
+        "value": 0.083
+      },
+      {
+        "date": "2024-06-27",
+        "value": 0.076
+      },
+      {
+        "date": "2024-07-19",
+        "value": 0.092
+      },
+      {
+        "date": "2024-08-12",
+        "value": 0.068
+      },
+      {
+        "date": "2024-09-04",
+        "value": 0.088
+      },
+      {
+        "date": "2024-09-12",
+        "value": 0.172
+      },
+      {
+        "date": "2024-09-18",
+        "value": 0.994
+      },
+      {
+        "date": "2024-09-23",
+        "value": 0.446
+      },
+      {
+        "date": "2024-09-27",
+        "value": 0.165
+      },
+      {
+        "date": "2024-10-08",
+        "value": 0.308
+      },
+      {
+        "date": "2024-10-22",
+        "value": 0.142
+      },
+      {
+        "date": "2024-11-05",
+        "value": 0.222
+      },
+      {
+        "date": "2024-11-19",
+        "value": 0.156
+      },
+      {
+        "date": "2024-12-03",
+        "value": 0.104
+      },
+      {
+        "date": "2024-12-19",
+        "value": 0.082
+      },
+      {
+        "date": "2025-01-08",
+        "value": 0.118
+      },
+      {
+        "date": "2025-01-24",
+        "value": 0.094
+      },
+      {
+        "date": "2025-02-14",
+        "value": 0.089
+      },
+      {
+        "date": "2025-03-05",
+        "value": 0.078
+      },
+      {
+        "date": "2025-03-21",
+        "value": 0.091
+      },
+      {
+        "date": "2025-04-08",
+        "value": 0.226
+      },
+      {
+        "date": "2025-04-28",
+        "value": 0.074
+      },
+      {
+        "date": "2025-05-19",
+        "value": 0.063
+      },
+      {
+        "date": "2025-06-10",
+        "value": 0.071
+      },
+      {
+        "date": "2025-07-01",
+        "value": 0.066
+      },
+      {
+        "date": "2025-07-21",
+        "value": 0.081
+      },
+      {
+        "date": "2025-08-08",
+        "value": 0.124
+      },
+      {
+        "date": "2025-08-26",
+        "value": 0.188
+      },
+      {
+        "date": "2025-09-03",
+        "value": 0.254
+      },
+      {
+        "date": "2025-09-19",
+        "value": 0.126
+      },
+      {
+        "date": "2025-10-10",
+        "value": 0.103
+      },
+      {
+        "date": "2025-10-29",
+        "value": 0.098
+      },
+      {
+        "date": "2025-11-17",
+        "value": 0.109
+      },
+      {
+        "date": "2025-12-08",
+        "value": 0.087
+      },
+      {
+        "date": "2025-12-26",
+        "value": 0.111
+      },
+      {
+        "date": "2026-01-15",
+        "value": 0.094
+      },
+      {
+        "date": "2026-02-06",
+        "value": 0.073
+      },
+      {
+        "date": "2026-02-26",
+        "value": 0.092
+      },
+      {
+        "date": "2026-03-17",
+        "value": 0.118
+      },
+      {
+        "date": "2026-04-08",
+        "value": 0.082
+      },
+      {
+        "date": "2026-04-27",
+        "value": 0.097
+      },
+      {
+        "date": "2026-05-12",
+        "value": 0.1061
+      },
+      {
+        "date": "2026-05-13",
+        "value": 0.1092
+      },
+      {
+        "date": "2026-05-14",
+        "value": 0.04
+      }
+    ],
+    "brilliant_series": [
+      {
+        "date": "2026-05-06",
+        "close": 1.768,
+        "daily_brilliant_vol": 0.092,
+        "surge_count": 18
+      },
+      {
+        "date": "2026-05-07",
+        "close": 1.792,
+        "daily_brilliant_vol": 0.101,
+        "surge_count": 22
+      },
+      {
+        "date": "2026-05-08",
+        "close": 1.816,
+        "daily_brilliant_vol": 0.118,
+        "surge_count": 24
+      },
+      {
+        "date": "2026-05-11",
+        "close": 1.848,
+        "daily_brilliant_vol": 0.112,
+        "surge_count": 23
+      },
+      {
+        "date": "2026-05-12",
+        "close": 1.842,
+        "daily_brilliant_vol": 0.1061,
+        "surge_count": 26
+      }
+    ],
+    "surge_events": [
+      {
+        "time": "09:46",
+        "volume_increase_ratio": 1.62,
+        "return_std": 0.28,
+        "price_change_pct": 0.18
+      },
+      {
+        "time": "10:18",
+        "volume_increase_ratio": 1.48,
+        "return_std": 0.23,
+        "price_change_pct": 0.12
+      },
+      {
+        "time": "13:37",
+        "volume_increase_ratio": 1.86,
+        "return_std": 0.41,
+        "price_change_pct": -0.22
+      },
+      {
+        "time": "14:32",
+        "volume_increase_ratio": 1.74,
+        "return_std": 0.36,
+        "price_change_pct": 0.16
+      }
+    ],
+    "gauges": [
+      {
+        "name": "总体行业热度",
+        "value": 16.0,
+        "detail": "来自市场宽度 live 数据"
+      },
+      {
+        "name": "强势行业数量",
+        "value": 0,
+        "detail": "0 个行业宽度 >= 70"
+      },
+      {
+        "name": "平均行业涨跌",
+        "value": 32,
+        "detail": "-1.84%"
+      },
+      {
+        "name": "情绪温度",
+        "value": 26,
+        "detail": "合成代理指标"
+      }
+    ],
+    "topics": [
+      {
+        "name": "AI 链",
+        "heat": 33.0,
+        "change": 33.0,
+        "leader": "proxy-1"
+      },
+      {
+        "name": "消费",
+        "heat": 0.0,
+        "change": 0.0,
+        "leader": "proxy-2"
+      }
+    ],
+    "flows": [
+      {
+        "name": "小单净流入",
+        "value": 18.6,
+        "unit": "亿",
+        "detail": "散户参与改善"
+      },
+      {
+        "name": "大单净流入",
+        "value": 42.8,
+        "unit": "亿",
+        "detail": "主线承接较强"
+      },
+      {
+        "name": "融资余额变化",
+        "value": 0.42,
+        "unit": "%",
+        "detail": "温和扩张"
+      },
+      {
+        "name": "ETF 净申购",
+        "value": 21.4,
+        "unit": "亿",
+        "detail": "宽基资金回流"
+      }
+    ],
+    "warnings": [
+      {
+        "level": "info",
+        "title": "情绪指标已自动更新",
+        "detail": "当前情绪值 0.0400，预警线 0.15。"
+      }
+    ]
+  }
+}

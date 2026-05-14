@@ -1,0 +1,282 @@
+{
+  "meta": {
+    "version": "1.0",
+    "source": "live",
+    "as_of": "2026-05-14T22:20:31+08:00",
+    "trade_date": "2026-05-14",
+    "timezone": "Asia/Hong_Kong",
+    "market_session": "closed",
+    "run_id": "live-etf-rankings-20260514-222031",
+    "stale_seconds": 0
+  },
+  "data": {
+    "period": "1D",
+    "items": [
+      {
+        "symbol": "159915",
+        "name": "创业板ETF",
+        "return_pct": 3.61,
+        "aum": null,
+        "volume": 1471968793,
+        "turnover": 5906571388.606,
+        "sparkline": [
+          4.048,
+          4.092,
+          3.948,
+          3.961,
+          4.104
+        ],
+        "data_source": "sina",
+        "rank": 1
+      },
+      {
+        "symbol": "512100",
+        "name": "中证1000ETF",
+        "return_pct": 2.38,
+        "aum": null,
+        "volume": 628072853,
+        "turnover": 2238207387.0,
+        "sparkline": [
+          3.598,
+          3.61,
+          3.525,
+          3.529,
+          3.613
+        ],
+        "data_source": "sina",
+        "rank": 2
+      },
+      {
+        "symbol": "510300",
+        "name": "沪深300ETF",
+        "return_pct": 2.02,
+        "aum": null,
+        "volume": 1028164563,
+        "turnover": 5118663487.0,
+        "sparkline": [
+          5.017,
+          5.037,
+          4.931,
+          4.941,
+          5.041
+        ],
+        "data_source": "sina",
+        "rank": 3
+      }
+    ],
+    "periods": {
+      "1D": [
+        {
+          "symbol": "159915",
+          "name": "创业板ETF",
+          "return_pct": 3.61,
+          "aum": null,
+          "volume": 1471968793,
+          "turnover": 5906571388.606,
+          "sparkline": [
+            4.048,
+            4.092,
+            3.948,
+            3.961,
+            4.104
+          ],
+          "data_source": "sina",
+          "rank": 1
+        },
+        {
+          "symbol": "512100",
+          "name": "中证1000ETF",
+          "return_pct": 2.38,
+          "aum": null,
+          "volume": 628072853,
+          "turnover": 2238207387.0,
+          "sparkline": [
+            3.598,
+            3.61,
+            3.525,
+            3.529,
+            3.613
+          ],
+          "data_source": "sina",
+          "rank": 2
+        },
+        {
+          "symbol": "510300",
+          "name": "沪深300ETF",
+          "return_pct": 2.02,
+          "aum": null,
+          "volume": 1028164563,
+          "turnover": 5118663487.0,
+          "sparkline": [
+            5.017,
+            5.037,
+            4.931,
+            4.941,
+            5.041
+          ],
+          "data_source": "sina",
+          "rank": 3
+        }
+      ],
+      "5D": [
+        {
+          "symbol": "159915",
+          "name": "创业板ETF",
+          "return_pct": 1.38,
+          "aum": null,
+          "volume": 1471968793,
+          "turnover": 5906571388.606,
+          "sparkline": [
+            4.048,
+            4.092,
+            3.948,
+            3.961,
+            4.104
+          ],
+          "data_source": "sina",
+          "rank": 1
+        },
+        {
+          "symbol": "510300",
+          "name": "沪深300ETF",
+          "return_pct": 0.48,
+          "aum": null,
+          "volume": 1028164563,
+          "turnover": 5118663487.0,
+          "sparkline": [
+            5.017,
+            5.037,
+            4.931,
+            4.941,
+            5.041
+          ],
+          "data_source": "sina",
+          "rank": 2
+        },
+        {
+          "symbol": "512100",
+          "name": "中证1000ETF",
+          "return_pct": 0.42,
+          "aum": null,
+          "volume": 628072853,
+          "turnover": 2238207387.0,
+          "sparkline": [
+            3.598,
+            3.61,
+            3.525,
+            3.529,
+            3.613
+          ],
+          "data_source": "sina",
+          "rank": 3
+        }
+      ],
+      "1M": [
+        {
+          "symbol": "159915",
+          "name": "创业板ETF",
+          "return_pct": 1.38,
+          "aum": null,
+          "volume": 1471968793,
+          "turnover": 5906571388.606,
+          "sparkline": [
+            4.048,
+            4.092,
+            3.948,
+            3.961,
+            4.104
+          ],
+          "data_source": "sina",
+          "rank": 1
+        },
+        {
+          "symbol": "510300",
+          "name": "沪深300ETF",
+          "return_pct": 0.48,
+          "aum": null,
+          "volume": 1028164563,
+          "turnover": 5118663487.0,
+          "sparkline": [
+            5.017,
+            5.037,
+            4.931,
+            4.941,
+            5.041
+          ],
+          "data_source": "sina",
+          "rank": 2
+        },
+        {
+          "symbol": "512100",
+          "name": "中证1000ETF",
+          "return_pct": 0.42,
+          "aum": null,
+          "volume": 628072853,
+          "turnover": 2238207387.0,
+          "sparkline": [
+            3.598,
+            3.61,
+            3.525,
+            3.529,
+            3.613
+          ],
+          "data_source": "sina",
+          "rank": 3
+        }
+      ],
+      "YTD": [
+        {
+          "symbol": "159915",
+          "name": "创业板ETF",
+          "return_pct": 1.38,
+          "aum": null,
+          "volume": 1471968793,
+          "turnover": 5906571388.606,
+          "sparkline": [
+            4.048,
+            4.092,
+            3.948,
+            3.961,
+            4.104
+          ],
+          "data_source": "sina",
+          "rank": 1
+        },
+        {
+          "symbol": "510300",
+          "name": "沪深300ETF",
+          "return_pct": 0.48,
+          "aum": null,
+          "volume": 1028164563,
+          "turnover": 5118663487.0,
+          "sparkline": [
+            5.017,
+            5.037,
+            4.931,
+            4.941,
+            5.041
+          ],
+          "data_source": "sina",
+          "rank": 2
+        },
+        {
+          "symbol": "512100",
+          "name": "中证1000ETF",
+          "return_pct": 0.42,
+          "aum": null,
+          "volume": 628072853,
+          "turnover": 2238207387.0,
+          "sparkline": [
+            3.598,
+            3.61,
+            3.525,
+            3.529,
+            3.613
+          ],
+          "data_source": "sina",
+          "rank": 3
+        }
+      ]
+    }
+  }
+}

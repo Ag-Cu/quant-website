@@ -1,0 +1,67 @@
+{
+  "items": [
+    {
+      "symbol": "NVDA",
+      "name": "NVIDIA Corp",
+      "logo": "N",
+      "sector": "科技股",
+      "provider": "yahoo",
+      "market_region": "us",
+      "provider_symbol": "NVDA"
+    },
+    {
+      "symbol": "TSLA",
+      "name": "Tesla Inc",
+      "logo": "T",
+      "sector": "科技股",
+      "provider": "yahoo",
+      "market_region": "us",
+      "provider_symbol": "TSLA"
+    },
+    {
+      "symbol": "AAPL",
+      "name": "Apple Inc",
+      "logo": "A",
+      "sector": "科技股",
+      "provider": "yahoo",
+      "market_region": "us",
+      "provider_symbol": "AAPL"
+    },
+    {
+      "symbol": "300308",
+      "name": "中际旭创",
+      "logo": "中",
+      "sector": "AI 链",
+      "provider": "eastmoney",
+      "market_region": "cn",
+      "market": "SZ"
+    },
+    {
+      "symbol": "002463",
+      "name": "沪电股份",
+      "logo": "沪",
+      "sector": "AI 链",
+      "provider": "eastmoney",
+      "market_region": "cn",
+      "market": "SZ"
+    },
+    {
+      "symbol": "600519",
+      "name": "贵州茅台",
+      "logo": "茅",
+      "sector": "消费股",
+      "provider": "eastmoney",
+      "market_region": "cn",
+      "market": "SH"
+    },
+    {
+      "symbol": "601138",
+      "name": "工业富联",
+      "logo": "工",
+      "sector": "AI",
+      "provider": "eastmoney",
+      "market_region": "cn",
+      "market": "SH"
+    }
+  ]
+}

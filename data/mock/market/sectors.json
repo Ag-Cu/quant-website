@@ -1,0 +1,136 @@
+{
+  "meta": {
+    "version": "1.0",
+    "source": "mock",
+    "as_of": "2026-05-12T14:56:00+08:00",
+    "trade_date": "2026-05-12",
+    "timezone": "Asia/Hong_Kong",
+    "market_session": "open",
+    "run_id": "mock-sectors-20260512-1456",
+    "stale_seconds": 18
+  },
+  "data": {
+    "sectors": [
+      {
+        "id": "tech",
+        "name": "科技",
+        "icon": "⌁",
+        "performance_pct": 2.4,
+        "up_count": 23,
+        "down_count": 7,
+        "flat_count": 2,
+        "market_cap": 12000000000000,
+        "turnover": 92000000000,
+        "rank": 1
+      },
+      {
+        "id": "financials",
+        "name": "金融",
+        "icon": "◇",
+        "performance_pct": 0.8,
+        "up_count": 18,
+        "down_count": 12,
+        "flat_count": 4,
+        "market_cap": 8400000000000,
+        "turnover": 47000000000,
+        "rank": 4
+      },
+      {
+        "id": "healthcare",
+        "name": "医疗",
+        "icon": "+",
+        "performance_pct": -0.4,
+        "up_count": 10,
+        "down_count": 16,
+        "flat_count": 3,
+        "market_cap": 4600000000000,
+        "turnover": 21000000000,
+        "rank": 7
+      },
+      {
+        "id": "energy",
+        "name": "能源",
+        "icon": "⚡",
+        "performance_pct": -1.7,
+        "up_count": 7,
+        "down_count": 18,
+        "flat_count": 1,
+        "market_cap": 3800000000000,
+        "turnover": 26000000000,
+        "rank": 9
+      },
+      {
+        "id": "consumer",
+        "name": "消费",
+        "icon": "◌",
+        "performance_pct": 0.9,
+        "up_count": 21,
+        "down_count": 9,
+        "flat_count": 2,
+        "market_cap": 6900000000000,
+        "turnover": 43000000000,
+        "rank": 3
+      },
+      {
+        "id": "industrial",
+        "name": "工业",
+        "icon": "▣",
+        "performance_pct": 0.3,
+        "up_count": 17,
+        "down_count": 13,
+        "flat_count": 5,
+        "market_cap": 4100000000000,
+        "turnover": 33000000000,
+        "rank": 5
+      },
+      {
+        "id": "materials",
+        "name": "材料",
+        "icon": "◆",
+        "performance_pct": -1.1,
+        "up_count": 9,
+        "down_count": 20,
+        "flat_count": 2,
+        "market_cap": 3500000000000,
+        "turnover": 28000000000,
+        "rank": 8
+      },
+      {
+        "id": "utilities",
+        "name": "公用事业",
+        "icon": "◧",
+        "performance_pct": 0.2,
+        "up_count": 14,
+        "down_count": 8,
+        "flat_count": 4,
+        "market_cap": 2100000000000,
+        "turnover": 12000000000,
+        "rank": 6
+      },
+      {
+        "id": "real_estate",
+        "name": "房地产",
+        "icon": "⌂",
+        "performance_pct": -2.2,
+        "up_count": 5,
+        "down_count": 22,
+        "flat_count": 1,
+        "market_cap": 1900000000000,
+        "turnover": 17000000000,
+        "rank": 10
+      },
+      {
+        "id": "communication",
+        "name": "通信",
+        "icon": "◈",
+        "performance_pct": 1.6,
+        "up_count": 20,
+        "down_count": 6,
+        "flat_count": 3,
+        "market_cap": 3000000000000,
+        "turnover": 24000000000,
+        "rank": 2
+      }
+    ]
+  }
+}

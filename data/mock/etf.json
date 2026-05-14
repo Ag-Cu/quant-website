@@ -1,0 +1,126 @@
+{
+  "meta": {
+    "version": "1.0",
+    "source": "mock",
+    "as_of": "2026-05-12T14:56:00+08:00",
+    "trade_date": "2026-05-12",
+    "timezone": "Asia/Hong_Kong",
+    "market_session": "open",
+    "run_id": "mock-etf-20260512-1456",
+    "stale_seconds": 20
+  },
+  "data": {
+    "strategy": {
+      "id": "etf-rotation",
+      "name": "ETF 轮动",
+      "status": "running",
+      "rebalance_time": "14:55",
+      "risk_budget_pct": 70,
+      "cash_weight_pct": 35,
+      "drawdown_guard": "未触发"
+    },
+    "summary": {
+      "buy_count": 2,
+      "watch_count": 1,
+      "target_exposure_pct": 65,
+      "current_exposure_pct": 58,
+      "day_pnl_pct": 0.48,
+      "week_pnl_pct": 1.82,
+      "month_pnl_pct": 4.16,
+      "max_drawdown_pct": -3.24
+    },
+    "recommendations": [
+      {
+        "symbol": "512100",
+        "name": "中证1000ETF",
+        "market": "SH",
+        "action": "buy",
+        "action_label": "买入",
+        "rank": 1,
+        "score": 88,
+        "suggested_weight_pct": 30,
+        "current_weight_pct": 18,
+        "last_price": 2.376,
+        "change_pct": 1.18,
+        "volume_ratio": 1.42,
+        "trend": [2.21, 2.25, 2.24, 2.28, 2.31, 2.34, 2.376],
+        "reason": "小盘风格强度改善，20 日线上方占比扩散。"
+      },
+      {
+        "symbol": "510300",
+        "name": "沪深300ETF",
+        "market": "SH",
+        "action": "buy",
+        "action_label": "分批买入",
+        "rank": 2,
+        "score": 82,
+        "suggested_weight_pct": 25,
+        "current_weight_pct": 20,
+        "last_price": 4.128,
+        "change_pct": 0.86,
+        "volume_ratio": 1.08,
+        "trend": [3.96, 4.01, 4.02, 3.99, 4.06, 4.09, 4.128],
+        "reason": "估值分位回落，趋势重新站上 20 日线。"
+      },
+      {
+        "symbol": "159915",
+        "name": "创业板ETF",
+        "market": "SZ",
+        "action": "watch",
+        "action_label": "观察",
+        "rank": 3,
+        "score": 64,
+        "suggested_weight_pct": 10,
+        "current_weight_pct": 8,
+        "last_price": 1.842,
+        "change_pct": -0.34,
+        "volume_ratio": 0.92,
+        "trend": [1.91, 1.88, 1.87, 1.85, 1.86, 1.84, 1.842],
+        "reason": "波动率偏高，等待量能收敛。"
+      }
+    ],
+    "holdings": [
+      {
+        "symbol": "512100",
+        "name": "中证1000ETF",
+        "weight_pct": 18,
+        "cost": 2.284,
+        "last_price": 2.376,
+        "day_change_pct": 1.18,
+        "pnl_pct": 4.03
+      },
+      {
+        "symbol": "510300",
+        "name": "沪深300ETF",
+        "weight_pct": 20,
+        "cost": 4.036,
+        "last_price": 4.128,
+        "day_change_pct": 0.86,
+        "pnl_pct": 2.28
+      },
+      {
+        "symbol": "159915",
+        "name": "创业板ETF",
+        "weight_pct": 8,
+        "cost": 1.884,
+        "last_price": 1.842,
+        "day_change_pct": -0.34,
+        "pnl_pct": -2.23
+      }
+    ],
+    "regime": {
+      "label": "风险偏好修复",
+      "score": 66,
+      "factors": [
+        { "name": "趋势强度", "value": 72, "detail": "主要宽基指数站上 20 日线" },
+        { "name": "成交扩散", "value": 61, "detail": "成交额向中小盘扩散" },
+        { "name": "波动压力", "value": 42, "detail": "短期波动仍需控制仓位" }
+      ]
+    },
+    "events": [
+      { "time": "09:20", "label": "生成目标仓位", "status": "done" },
+      { "time": "10:30", "label": "量能过滤通过", "status": "done" },
+      { "time": "14:55", "label": "盘中再平衡检查", "status": "done" }
+    ]
+  }
+}

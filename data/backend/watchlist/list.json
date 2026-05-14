@@ -1,0 +1,127 @@
+{
+  "meta": {
+    "version": "1.0",
+    "source": "live",
+    "as_of": "2026-05-12T14:56:00+08:00",
+    "trade_date": "2026-05-12",
+    "timezone": "Asia/Hong_Kong",
+    "market_session": "open",
+    "run_id": "backend-watchlist-20260512-1456",
+    "stale_seconds": 15
+  },
+  "data": {
+    "groups": [
+      {
+        "name": "科技股",
+        "items": [
+          {
+            "symbol": "NVDA",
+            "name": "NVIDIA Corp",
+            "logo": "N",
+            "price": 1084.6,
+            "change_pct": 2.34,
+            "intraday_high": 1096.2,
+            "intraday_low": 1058.4,
+            "intraday_current": 1084.6,
+            "volume": 53820000,
+            "volume_ratio": 92,
+            "market_cap": "2.67T",
+            "week52_low": 410.1,
+            "week52_high": 1120.4,
+            "week52_current": 1084.6
+          },
+          {
+            "symbol": "TSLA",
+            "name": "Tesla Inc",
+            "logo": "T",
+            "price": 182.1,
+            "change_pct": -1.18,
+            "intraday_high": 189.4,
+            "intraday_low": 180.2,
+            "intraday_current": 182.1,
+            "volume": 110900000,
+            "volume_ratio": 118,
+            "market_cap": "584B",
+            "week52_low": 138.8,
+            "week52_high": 299.3,
+            "week52_current": 182.1
+          },
+          {
+            "symbol": "AAPL",
+            "name": "Apple Inc",
+            "logo": "A",
+            "price": 191.7,
+            "change_pct": 0.42,
+            "intraday_high": 193.0,
+            "intraday_low": 189.7,
+            "intraday_current": 191.7,
+            "volume": 42100000,
+            "volume_ratio": 64,
+            "market_cap": "2.94T",
+            "week52_low": 164.1,
+            "week52_high": 237.2,
+            "week52_current": 191.7
+          }
+        ]
+      },
+      {
+        "name": "AI 链",
+        "items": [
+          {
+            "symbol": "300308",
+            "name": "中际旭创",
+            "logo": "中",
+            "price": 178.62,
+            "change_pct": 0.94,
+            "intraday_high": 181.2,
+            "intraday_low": 174.6,
+            "intraday_current": 178.62,
+            "volume": 22300000,
+            "volume_ratio": 84,
+            "market_cap": "143B",
+            "week52_low": 88.4,
+            "week52_high": 192.3,
+            "week52_current": 178.62
+          },
+          {
+            "symbol": "002463",
+            "name": "沪电股份",
+            "logo": "沪",
+            "price": 39.18,
+            "change_pct": 1.12,
+            "intraday_high": 39.9,
+            "intraday_low": 38.2,
+            "intraday_current": 39.18,
+            "volume": 64000000,
+            "volume_ratio": 79,
+            "market_cap": "74B",
+            "week52_low": 18.2,
+            "week52_high": 42.6,
+            "week52_current": 39.18
+          }
+        ]
+      },
+      {
+        "name": "消费股",
+        "items": [
+          {
+            "symbol": "600519",
+            "name": "贵州茅台",
+            "logo": "茅",
+            "price": 1718.3,
+            "change_pct": 0.88,
+            "intraday_high": 1728.2,
+            "intraday_low": 1695.1,
+            "intraday_current": 1718.3,
+            "volume": 1800000,
+            "volume_ratio": 56,
+            "market_cap": "2.16T",
+            "week52_low": 1380.0,
+            "week52_high": 1888.0,
+            "week52_current": 1718.3
+          }
+        ]
+      }
+    ]
+  }
+}

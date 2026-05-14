@@ -1,0 +1,71 @@
+{
+  "meta": {
+    "version": "1.0",
+    "source": "live",
+    "as_of": "2026-05-12T14:56:00+08:00",
+    "trade_date": "2026-05-12",
+    "timezone": "Asia/Hong_Kong",
+    "market_session": "open",
+    "run_id": "backend-etf-rankings-20260512-1456",
+    "stale_seconds": 18
+  },
+  "data": {
+    "period": "1D",
+    "items": [
+      {
+        "rank": 1,
+        "symbol": "512100",
+        "name": "中证1000ETF",
+        "return_pct": 1.18,
+        "aum": 12400000000,
+        "volume": 82000000,
+        "turnover": 194800000,
+        "sparkline": [
+          2.21,
+          2.25,
+          2.24,
+          2.28,
+          2.31,
+          2.34,
+          2.376
+        ]
+      },
+      {
+        "rank": 2,
+        "symbol": "510300",
+        "name": "沪深300ETF",
+        "return_pct": 0.86,
+        "aum": 10300000000,
+        "volume": 61000000,
+        "turnover": 251800000,
+        "sparkline": [
+          3.96,
+          4.01,
+          4.02,
+          3.99,
+          4.06,
+          4.09,
+          4.128
+        ]
+      },
+      {
+        "rank": 3,
+        "symbol": "159915",
+        "name": "创业板ETF",
+        "return_pct": -0.34,
+        "aum": 8200000000,
+        "volume": 54000000,
+        "turnover": 99400000,
+        "sparkline": [
+          1.91,
+          1.88,
+          1.87,
+          1.85,
+          1.86,
+          1.84,
+          1.842
+        ]
+      }
+    ]
+  }
+}

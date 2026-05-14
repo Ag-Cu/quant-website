@@ -1,0 +1,98 @@
+{
+  "meta": {
+    "version": "1.0",
+    "source": "mock",
+    "as_of": "2026-05-12T14:56:00+08:00",
+    "trade_date": "2026-05-12",
+    "timezone": "Asia/Hong_Kong",
+    "market_session": "open",
+    "run_id": "mock-20260512-1456",
+    "stale_seconds": 18
+  },
+  "data": {
+    "health": {
+      "backend": "running",
+      "scheduler": "running",
+      "latest_job": "intraday_snapshot",
+      "latest_job_status": "success",
+      "next_run_at": "2026-05-12T14:57:00+08:00",
+      "api_latency_ms": 42
+    },
+    "account": {
+      "net_exposure_pct": 62,
+      "cash_pct": 38,
+      "position_count": 7,
+      "day_pnl_pct": 0.64,
+      "total_pnl_pct": 8.72
+    },
+    "market": {
+      "breadth_score": 68,
+      "sentiment_score": 71,
+      "ten_year_yield_pct": 2.31,
+      "usd_cnh": 7.19,
+      "risk_preference_score": 66
+    },
+    "strategy_status": [
+      {
+        "id": "etf-rotation",
+        "name": "ETF 轮动",
+        "page": "etf.html",
+        "status": "running",
+        "signal": "加仓",
+        "active_positions": 3,
+        "target_exposure_pct": 65,
+        "day_pnl_pct": 0.48,
+        "updated_at": "2026-05-12T14:56:00+08:00"
+      },
+      {
+        "id": "small-cap-momentum",
+        "name": "小盘股动量",
+        "page": "small-cap.html",
+        "status": "running",
+        "signal": "精选买入",
+        "active_positions": 4,
+        "target_exposure_pct": 55,
+        "day_pnl_pct": 0.91,
+        "updated_at": "2026-05-12T14:56:00+08:00"
+      }
+    ],
+    "alerts": [
+      {
+        "level": "warning",
+        "title": "小盘风格波动率升高",
+        "detail": "中证1000 近 20 日实现波动率高于 60 日均值 18%。"
+      },
+      {
+        "level": "info",
+        "title": "ETF 轮动信号未触发风控降仓",
+        "detail": "当前组合回撤和成交量过滤均在允许范围内。"
+      }
+    ],
+    "timeline": [
+      {
+        "time": "09:20",
+        "label": "开盘前信号",
+        "status": "done",
+        "detail": "ETF 目标仓位 65%，小盘股候选池 12 只。"
+      },
+      {
+        "time": "11:35",
+        "label": "午间快照",
+        "status": "done",
+        "detail": "市场宽度维持偏强，情绪温度 69。"
+      },
+      {
+        "time": "14:56",
+        "label": "盘中刷新",
+        "status": "running",
+        "detail": "持仓涨跌和参考指标已更新。"
+      },
+      {
+        "time": "15:10",
+        "label": "收盘归档",
+        "status": "pending",
+        "detail": "等待收盘后运行。"
+      }
+    ]
+  }
+}

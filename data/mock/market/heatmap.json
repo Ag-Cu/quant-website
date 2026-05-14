@@ -1,0 +1,149 @@
+{
+  "meta": {
+    "version": "1.0",
+    "source": "mock",
+    "as_of": "2026-05-12T14:56:00+08:00",
+    "trade_date": "2026-05-12",
+    "timezone": "Asia/Hong_Kong",
+    "market_session": "open",
+    "run_id": "mock-heatmap-20260512-1456",
+    "stale_seconds": 18
+  },
+  "data": {
+    "timeframe": "1D",
+    "group_by": "sector",
+    "updated_at": "2026-05-12T14:32:05+08:00",
+    "cells": [
+      {
+        "symbol": "NVDA",
+        "name": "NVIDIA",
+        "sector": "科技",
+        "price": 1084.6,
+        "change_pct": 2.8,
+        "volume": 53820000,
+        "market_cap": 2670000000000,
+        "weight": 24
+      },
+      {
+        "symbol": "AAPL",
+        "name": "Apple",
+        "sector": "科技",
+        "price": 191.7,
+        "change_pct": 0.6,
+        "volume": 42100000,
+        "market_cap": 2940000000000,
+        "weight": 18
+      },
+      {
+        "symbol": "MSFT",
+        "name": "Microsoft",
+        "sector": "科技",
+        "price": 425.2,
+        "change_pct": 1.1,
+        "volume": 22800000,
+        "market_cap": 3150000000000,
+        "weight": 18
+      },
+      {
+        "symbol": "TSLA",
+        "name": "Tesla",
+        "sector": "科技",
+        "price": 182.1,
+        "change_pct": -2.4,
+        "volume": 110900000,
+        "market_cap": 584000000000,
+        "weight": 16
+      },
+      {
+        "symbol": "JPM",
+        "name": "JPMorgan",
+        "sector": "金融",
+        "price": 202.4,
+        "change_pct": 0.8,
+        "volume": 12400000,
+        "market_cap": 581000000000,
+        "weight": 20
+      },
+      {
+        "symbol": "BAC",
+        "name": "Bank of America",
+        "sector": "金融",
+        "price": 38.2,
+        "change_pct": -1.2,
+        "volume": 42600000,
+        "market_cap": 296000000000,
+        "weight": 14
+      },
+      {
+        "symbol": "招商",
+        "name": "招商银行",
+        "sector": "金融",
+        "price": 34.88,
+        "change_pct": 0.4,
+        "volume": 31800000,
+        "market_cap": 880000000000,
+        "weight": 14
+      },
+      {
+        "symbol": "300308",
+        "name": "中际旭创",
+        "sector": "AI 链",
+        "price": 178.62,
+        "change_pct": 2.1,
+        "volume": 22300000,
+        "market_cap": 143000000000,
+        "weight": 18
+      },
+      {
+        "symbol": "002463",
+        "name": "沪电股份",
+        "sector": "AI 链",
+        "price": 39.18,
+        "change_pct": 1.2,
+        "volume": 64000000,
+        "market_cap": 74000000000,
+        "weight": 16
+      },
+      {
+        "symbol": "300476",
+        "name": "胜宏科技",
+        "sector": "AI 链",
+        "price": 43.62,
+        "change_pct": 3.4,
+        "volume": 48600000,
+        "market_cap": 38000000000,
+        "weight": 16
+      },
+      {
+        "symbol": "MOUTAI",
+        "name": "贵州茅台",
+        "sector": "消费",
+        "price": 1718.3,
+        "change_pct": 0.9,
+        "volume": 1800000,
+        "market_cap": 2160000000000,
+        "weight": 18
+      },
+      {
+        "symbol": "XOM",
+        "name": "Exxon Mobil",
+        "sector": "能源",
+        "price": 114.6,
+        "change_pct": -1.7,
+        "volume": 18900000,
+        "market_cap": 456000000000,
+        "weight": 16
+      },
+      {
+        "symbol": "JNJ",
+        "name": "Johnson & Johnson",
+        "sector": "医疗",
+        "price": 151.2,
+        "change_pct": -0.4,
+        "volume": 7200000,
+        "market_cap": 364000000000,
+        "weight": 14
+      }
+    ]
+  }
+}

@@ -1,0 +1,111 @@
+{
+  "meta": {
+    "version": "1.0",
+    "source": "live",
+    "as_of": "2026-05-12T14:56:00+08:00",
+    "trade_date": "2026-05-12",
+    "timezone": "Asia/Hong_Kong",
+    "market_session": "open",
+    "run_id": "backend-holdings-20260512-1456",
+    "stale_seconds": 22
+  },
+  "data": {
+    "summary": {
+      "total_market_value": 2418000,
+      "day_pnl_amount": 18420,
+      "day_pnl_pct": 0.76,
+      "total_return_pct": 8.72,
+      "exposure_pct": 78,
+      "position_count": 4,
+      "sector_diversity": 4
+    },
+    "holdings": [
+      {
+        "symbol": "002463",
+        "name": "沪电股份",
+        "strategy_id": "small-cap-momentum",
+        "sector": "AI PCB",
+        "avg_cost": 36.42,
+        "last_price": 39.18,
+        "quantity": 18000,
+        "market_value": 705240,
+        "pnl_amount": 49680,
+        "pnl_pct": 7.58,
+        "weight_pct": 18,
+        "holding_days": 12,
+        "entry_date": "2026-04-24",
+        "notes": "趋势保持强势"
+      },
+      {
+        "symbol": "300308",
+        "name": "中际旭创",
+        "strategy_id": "small-cap-momentum",
+        "sector": "光模块",
+        "avg_cost": 171.2,
+        "last_price": 178.62,
+        "quantity": 2100,
+        "market_value": 375102,
+        "pnl_amount": 15582,
+        "pnl_pct": 4.33,
+        "weight_pct": 16,
+        "holding_days": 9,
+        "entry_date": "2026-04-29",
+        "notes": "光模块主线"
+      },
+      {
+        "symbol": "002475",
+        "name": "立讯精密",
+        "strategy_id": "small-cap-momentum",
+        "sector": "消费电子",
+        "avg_cost": 31.9,
+        "last_price": 31.46,
+        "quantity": 9200,
+        "market_value": 289432,
+        "pnl_amount": -4048,
+        "pnl_pct": -1.38,
+        "weight_pct": 12,
+        "holding_days": 35,
+        "entry_date": "2026-03-21",
+        "notes": "持有较久，等待修复"
+      },
+      {
+        "symbol": "688041",
+        "name": "海光信息",
+        "strategy_id": "small-cap-momentum",
+        "sector": "国产芯片",
+        "avg_cost": 83.5,
+        "last_price": 86.22,
+        "quantity": 2600,
+        "market_value": 224172,
+        "pnl_amount": 7072,
+        "pnl_pct": 3.26,
+        "weight_pct": 9,
+        "holding_days": 6,
+        "entry_date": "2026-05-06",
+        "notes": "国产芯片弹性"
+      }
+    ],
+    "allocation": [
+      {
+        "sector": "AI PCB",
+        "weight_pct": 34,
+        "market_value": 822120
+      },
+      {
+        "sector": "光模块",
+        "weight_pct": 26,
+        "market_value": 628680
+      },
+      {
+        "sector": "国产芯片",
+        "weight_pct": 18,
+        "market_value": 435240
+      },
+      {
+        "sector": "消费电子",
+        "weight_pct": 12,
+        "market_value": 290160
+      }
+    ]
+  }
+}

@@ -1,0 +1,475 @@
+{
+  "meta": {
+    "version": "1.0",
+    "source": "mock",
+    "as_of": "2026-05-12T14:56:00+08:00",
+    "trade_date": "2026-05-12",
+    "timezone": "Asia/Hong_Kong",
+    "market_session": "open",
+    "run_id": "mock-20260512-1456",
+    "stale_seconds": 18
+  },
+  "data": {
+    "health": {
+      "backend": "running",
+      "scheduler": "running",
+      "latest_job": "intraday_snapshot",
+      "latest_job_status": "success",
+      "next_run_at": "2026-05-12T14:57:00+08:00",
+      "api_latency_ms": 42
+    },
+    "account": {
+      "net_exposure_pct": 62,
+      "cash_pct": 38,
+      "position_count": 7,
+      "day_pnl_pct": 0.64,
+      "total_pnl_pct": 8.72
+    },
+    "market": {
+      "breadth_score": 68,
+      "sentiment_score": 71,
+      "ten_year_yield_pct": 2.31,
+      "usd_cnh": 7.19,
+      "risk_preference_score": 66
+    },
+    "strategy_status": [
+      {
+        "id": "etf-rotation",
+        "name": "ETF 轮动",
+        "page": "etf.html",
+        "status": "running",
+        "signal": "加仓",
+        "active_positions": 3,
+        "target_exposure_pct": 65,
+        "day_pnl_pct": 0.48,
+        "updated_at": "2026-05-12T14:56:00+08:00"
+      },
+      {
+        "id": "small-cap-momentum",
+        "name": "小盘股动量",
+        "page": "small-cap.html",
+        "status": "running",
+        "signal": "精选买入",
+        "active_positions": 4,
+        "target_exposure_pct": 55,
+        "day_pnl_pct": 0.91,
+        "updated_at": "2026-05-12T14:56:00+08:00"
+      }
+    ],
+    "alerts": [
+      {
+        "level": "warning",
+        "title": "小盘风格波动率升高",
+        "detail": "中证1000 近 20 日实现波动率高于 60 日均值 18%。"
+      },
+      {
+        "level": "info",
+        "title": "ETF 轮动信号未触发风控降仓",
+        "detail": "当前组合回撤和成交量过滤均在允许范围内。"
+      }
+    ],
+    "timeline": [
+      {
+        "time": "09:20",
+        "label": "开盘前信号",
+        "status": "done",
+        "detail": "ETF 目标仓位 65%，小盘股候选池 12 只。"
+      },
+      {
+        "time": "11:35",
+        "label": "午间快照",
+        "status": "done",
+        "detail": "市场宽度维持偏强，情绪温度 69。"
+      },
+      {
+        "time": "14:56",
+        "label": "盘中刷新",
+        "status": "running",
+        "detail": "持仓涨跌和参考指标已更新。"
+      },
+      {
+        "time": "15:10",
+        "label": "收盘归档",
+        "status": "pending",
+        "detail": "等待收盘后运行。"
+      }
+    ],
+    "decision": {
+      "tone": "positive",
+      "title": "市场扩散偏强，策略可以保持进攻",
+      "detail": "市场宽度扩散修复，风险偏好中性偏强，散户情绪仍在可交易区间。",
+      "action": "执行强信号，弱信号保持观察"
+    },
+    "sentiment_gauge": {
+      "score": 71,
+      "label": "贪婪",
+      "previous_day_score": 66,
+      "previous_week_score": 61,
+      "trend_30d": [
+        {
+          "date": "2026-04-14",
+          "value": 45
+        },
+        {
+          "date": "2026-04-16",
+          "value": 48
+        },
+        {
+          "date": "2026-04-18",
+          "value": 43
+        },
+        {
+          "date": "2026-04-21",
+          "value": 51
+        },
+        {
+          "date": "2026-04-23",
+          "value": 58
+        },
+        {
+          "date": "2026-04-25",
+          "value": 55
+        },
+        {
+          "date": "2026-04-28",
+          "value": 62
+        },
+        {
+          "date": "2026-04-30",
+          "value": 65
+        },
+        {
+          "date": "2026-05-06",
+          "value": 68
+        },
+        {
+          "date": "2026-05-08",
+          "value": 64
+        },
+        {
+          "date": "2026-05-11",
+          "value": 69
+        },
+        {
+          "date": "2026-05-12",
+          "value": 71
+        }
+      ]
+    },
+    "heatmap": {
+      "timeframe": "1D",
+      "group_by": "sector",
+      "updated_at": "2026-05-12T14:32:05+08:00",
+      "cells": [
+        {
+          "symbol": "NVDA",
+          "name": "NVIDIA",
+          "sector": "科技",
+          "price": 1084.6,
+          "change_pct": 2.8,
+          "volume": 53820000,
+          "market_cap": 2670000000000,
+          "weight": 24
+        },
+        {
+          "symbol": "AAPL",
+          "name": "Apple",
+          "sector": "科技",
+          "price": 191.7,
+          "change_pct": 0.6,
+          "volume": 42100000,
+          "market_cap": 2940000000000,
+          "weight": 18
+        },
+        {
+          "symbol": "MSFT",
+          "name": "Microsoft",
+          "sector": "科技",
+          "price": 425.2,
+          "change_pct": 1.1,
+          "volume": 22800000,
+          "market_cap": 3150000000000,
+          "weight": 18
+        },
+        {
+          "symbol": "TSLA",
+          "name": "Tesla",
+          "sector": "科技",
+          "price": 182.1,
+          "change_pct": -2.4,
+          "volume": 110900000,
+          "market_cap": 584000000000,
+          "weight": 16
+        },
+        {
+          "symbol": "JPM",
+          "name": "JPMorgan",
+          "sector": "金融",
+          "price": 202.4,
+          "change_pct": 0.8,
+          "volume": 12400000,
+          "market_cap": 581000000000,
+          "weight": 20
+        },
+        {
+          "symbol": "BAC",
+          "name": "Bank of America",
+          "sector": "金融",
+          "price": 38.2,
+          "change_pct": -1.2,
+          "volume": 42600000,
+          "market_cap": 296000000000,
+          "weight": 14
+        },
+        {
+          "symbol": "招商",
+          "name": "招商银行",
+          "sector": "金融",
+          "price": 34.88,
+          "change_pct": 0.4,
+          "volume": 31800000,
+          "market_cap": 880000000000,
+          "weight": 14
+        },
+        {
+          "symbol": "300308",
+          "name": "中际旭创",
+          "sector": "AI 链",
+          "price": 178.62,
+          "change_pct": 2.1,
+          "volume": 22300000,
+          "market_cap": 143000000000,
+          "weight": 18
+        },
+        {
+          "symbol": "002463",
+          "name": "沪电股份",
+          "sector": "AI 链",
+          "price": 39.18,
+          "change_pct": 1.2,
+          "volume": 64000000,
+          "market_cap": 74000000000,
+          "weight": 16
+        },
+        {
+          "symbol": "300476",
+          "name": "胜宏科技",
+          "sector": "AI 链",
+          "price": 43.62,
+          "change_pct": 3.4,
+          "volume": 48600000,
+          "market_cap": 38000000000,
+          "weight": 16
+        },
+        {
+          "symbol": "MOUTAI",
+          "name": "贵州茅台",
+          "sector": "消费",
+          "price": 1718.3,
+          "change_pct": 0.9,
+          "volume": 1800000,
+          "market_cap": 2160000000000,
+          "weight": 18
+        },
+        {
+          "symbol": "XOM",
+          "name": "Exxon Mobil",
+          "sector": "能源",
+          "price": 114.6,
+          "change_pct": -1.7,
+          "volume": 18900000,
+          "market_cap": 456000000000,
+          "weight": 16
+        },
+        {
+          "symbol": "JNJ",
+          "name": "Johnson & Johnson",
+          "sector": "医疗",
+          "price": 151.2,
+          "change_pct": -0.4,
+          "volume": 7200000,
+          "market_cap": 364000000000,
+          "weight": 14
+        }
+      ]
+    },
+    "top_etfs": [
+      {
+        "rank": 1,
+        "symbol": "512100",
+        "name": "中证1000ETF",
+        "return_pct": 1.18,
+        "aum": 12400000000,
+        "volume": 82000000,
+        "turnover": 194800000,
+        "sparkline": [
+          2.21,
+          2.25,
+          2.24,
+          2.28,
+          2.31,
+          2.34,
+          2.376
+        ]
+      },
+      {
+        "rank": 2,
+        "symbol": "510300",
+        "name": "沪深300ETF",
+        "return_pct": 0.86,
+        "aum": 10300000000,
+        "volume": 61000000,
+        "turnover": 251800000,
+        "sparkline": [
+          3.96,
+          4.01,
+          4.02,
+          3.99,
+          4.06,
+          4.09,
+          4.128
+        ]
+      },
+      {
+        "rank": 3,
+        "symbol": "159915",
+        "name": "创业板ETF",
+        "return_pct": -0.34,
+        "aum": 8200000000,
+        "volume": 54000000,
+        "turnover": 99400000,
+        "sparkline": [
+          1.91,
+          1.88,
+          1.87,
+          1.85,
+          1.86,
+          1.84,
+          1.842
+        ]
+      }
+    ],
+    "sectors": [
+      {
+        "id": "tech",
+        "name": "科技",
+        "icon": "⌁",
+        "performance_pct": 2.4,
+        "up_count": 23,
+        "down_count": 7,
+        "flat_count": 2,
+        "market_cap": 12000000000000,
+        "turnover": 92000000000,
+        "rank": 1
+      },
+      {
+        "id": "financials",
+        "name": "金融",
+        "icon": "◇",
+        "performance_pct": 0.8,
+        "up_count": 18,
+        "down_count": 12,
+        "flat_count": 4,
+        "market_cap": 8400000000000,
+        "turnover": 47000000000,
+        "rank": 4
+      },
+      {
+        "id": "healthcare",
+        "name": "医疗",
+        "icon": "+",
+        "performance_pct": -0.4,
+        "up_count": 10,
+        "down_count": 16,
+        "flat_count": 3,
+        "market_cap": 4600000000000,
+        "turnover": 21000000000,
+        "rank": 7
+      },
+      {
+        "id": "energy",
+        "name": "能源",
+        "icon": "⚡",
+        "performance_pct": -1.7,
+        "up_count": 7,
+        "down_count": 18,
+        "flat_count": 1,
+        "market_cap": 3800000000000,
+        "turnover": 26000000000,
+        "rank": 9
+      },
+      {
+        "id": "consumer",
+        "name": "消费",
+        "icon": "◌",
+        "performance_pct": 0.9,
+        "up_count": 21,
+        "down_count": 9,
+        "flat_count": 2,
+        "market_cap": 6900000000000,
+        "turnover": 43000000000,
+        "rank": 3
+      },
+      {
+        "id": "industrial",
+        "name": "工业",
+        "icon": "▣",
+        "performance_pct": 0.3,
+        "up_count": 17,
+        "down_count": 13,
+        "flat_count": 5,
+        "market_cap": 4100000000000,
+        "turnover": 33000000000,
+        "rank": 5
+      },
+      {
+        "id": "materials",
+        "name": "材料",
+        "icon": "◆",
+        "performance_pct": -1.1,
+        "up_count": 9,
+        "down_count": 20,
+        "flat_count": 2,
+        "market_cap": 3500000000000,
+        "turnover": 28000000000,
+        "rank": 8
+      },
+      {
+        "id": "utilities",
+        "name": "公用事业",
+        "icon": "◧",
+        "performance_pct": 0.2,
+        "up_count": 14,
+        "down_count": 8,
+        "flat_count": 4,
+        "market_cap": 2100000000000,
+        "turnover": 12000000000,
+        "rank": 6
+      },
+      {
+        "id": "real_estate",
+        "name": "房地产",
+        "icon": "⌂",
+        "performance_pct": -2.2,
+        "up_count": 5,
+        "down_count": 22,
+        "flat_count": 1,
+        "market_cap": 1900000000000,
+        "turnover": 17000000000,
+        "rank": 10
+      },
+      {
+        "id": "communication",
+        "name": "通信",
+        "icon": "◈",
+        "performance_pct": 1.6,
+        "up_count": 20,
+        "down_count": 6,
+        "flat_count": 3,
+        "market_cap": 3000000000000,
+        "turnover": 24000000000,
+        "rank": 2
+      }
+    ]
+  }
+}
