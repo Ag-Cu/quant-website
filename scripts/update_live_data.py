@@ -1077,6 +1077,200 @@ def yahoo_latest(symbol: str) -> tuple[float | None, float | None]:
     return (normalize_number(price, None) if price is not None else None, change_pct)
 
 
+
+def load_optional_json(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        return load_json(path)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"warning: failed to load {path}: {exc}")
+        return None
+
+
+def payload_source(payload: dict[str, Any], fallback: str = "unavailable") -> str:
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    source = str(meta.get("source") or fallback).strip()
+    return source or fallback
+
+
+def payload_as_of(payload: dict[str, Any]) -> str | None:
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    value = meta.get("as_of")
+    return str(value) if value else None
+
+
+def unavailable_account() -> dict[str, Any]:
+    return {
+        "net_exposure_pct": None,
+        "cash_pct": None,
+        "position_count": None,
+        "day_pnl_pct": None,
+        "total_pnl_pct": None,
+        "source": "unavailable",
+        "source_as_of": None,
+    }
+
+
+def build_account_from_holdings() -> dict[str, Any]:
+    payload = load_optional_json(BACKEND_DIR / "portfolio" / "holdings.json")
+    if not payload or payload_source(payload) in {"mock", "sample", "unavailable"}:
+        return unavailable_account()
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+    holdings = data.get("holdings") if isinstance(data.get("holdings"), list) else []
+    if not summary and not holdings:
+        return unavailable_account()
+
+    exposure = summary.get("exposure_pct")
+    if exposure is None:
+        weights = [normalize_number(item.get("weight_pct"), 0) for item in holdings if isinstance(item, dict)]
+        exposure = round(sum(weights), 2) if weights else None
+    cash = None if exposure is None else round(max(0.0, 100.0 - normalize_number(exposure)), 2)
+    return {
+        "net_exposure_pct": exposure,
+        "cash_pct": cash,
+        "position_count": summary.get("position_count") if summary.get("position_count") is not None else len(holdings),
+        "day_pnl_pct": summary.get("day_pnl_pct"),
+        "total_pnl_pct": summary.get("total_return_pct", summary.get("floating_pnl_pct")),
+        "source": "portfolio/holdings",
+        "source_as_of": payload_as_of(payload),
+    }
+
+
+def strategy_signal(strategy: dict[str, Any], summary: dict[str, Any], recommendations: list[Any]) -> str | None:
+    for key in ("decision_title", "signal", "status_label"):
+        value = strategy.get(key)
+        if value:
+            return str(value)
+    if summary.get("buy_count"):
+        return f"{summary.get('buy_count')} 个买入信号"
+    if recommendations and isinstance(recommendations[0], dict):
+        return str(recommendations[0].get("action_label") or recommendations[0].get("signal_label") or recommendations[0].get("action") or "已更新")
+    return None
+
+
+def build_strategy_status_from_artifacts() -> tuple[list[dict[str, Any]], str]:
+    configs = [
+        (BACKEND_DIR / "strategies" / "etf.json", "etf.html"),
+        (BACKEND_DIR / "strategies" / "small-cap.json", "small-cap.html"),
+    ]
+    statuses: list[dict[str, Any]] = []
+    for path, page in configs:
+        payload = load_optional_json(path)
+        if not payload or payload_source(payload) in {"mock", "sample", "unavailable"}:
+            continue
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        strategy = data.get("strategy") if isinstance(data.get("strategy"), dict) else {}
+        summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+        holdings = data.get("holdings") if isinstance(data.get("holdings"), list) else []
+        recommendations = data.get("recommendations") or data.get("signals") or []
+        if not isinstance(recommendations, list):
+            recommendations = []
+        if not strategy and not summary and not holdings and not recommendations:
+            continue
+        target_exposure = summary.get("target_exposure_pct", summary.get("exposure_pct"))
+        day_pnl = summary.get("day_pnl_pct", summary.get("floating_pnl_pct"))
+        statuses.append({
+            "id": strategy.get("id") or path.stem,
+            "name": strategy.get("name") or strategy.get("label") or path.stem,
+            "page": page,
+            "status": strategy.get("status") or "unknown",
+            "signal": strategy_signal(strategy, summary, recommendations) or "source=unavailable",
+            "active_positions": len(holdings),
+            "target_exposure_pct": target_exposure,
+            "day_pnl_pct": day_pnl,
+            "updated_at": payload_as_of(payload),
+            "source": str(path.relative_to(ROOT)),
+        })
+    return statuses, "strategy-artifacts" if statuses else "unavailable"
+
+
+def build_timeline_from_strategy_artifacts(limit: int = 6) -> tuple[list[dict[str, Any]], str]:
+    entries: list[dict[str, Any]] = []
+    artifact_paths = (
+        BACKEND_DIR / "strategies" / "etf.json",
+        BACKEND_DIR / "strategies" / "small-cap.json",
+    )
+    for path in artifact_paths:
+        payload = load_optional_json(path)
+        if not payload or payload_source(payload) in {"mock", "sample", "unavailable"}:
+            continue
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        source = str(path.relative_to(ROOT))
+        events = data.get("events") if isinstance(data.get("events"), list) else []
+        logs = data.get("logs") if isinstance(data.get("logs"), list) else []
+        for item in events:
+            if not isinstance(item, dict):
+                continue
+            entries.append({
+                "time": item.get("time") or payload_as_of(payload),
+                "label": item.get("label") or "策略事件",
+                "status": item.get("status") or "done",
+                "detail": item.get("detail") or item.get("message"),
+                "source": source,
+                "updated_at": payload_as_of(payload),
+            })
+        for item in logs:
+            if not isinstance(item, dict):
+                continue
+            entries.append({
+                "time": item.get("time") or item.get("received_at") or payload_as_of(payload),
+                "label": item.get("stage") or "策略日志",
+                "status": item.get("level") or "info",
+                "detail": item.get("message"),
+                "source": source,
+                "updated_at": item.get("received_at") or payload_as_of(payload),
+            })
+    unique: list[dict[str, Any]] = []
+    seen: set[tuple[Any, Any, Any, Any]] = set()
+    for entry in reversed(entries):
+        key = (entry.get("time"), entry.get("label"), entry.get("status"), entry.get("detail"))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(entry)
+    unique.reverse()
+    return unique[-limit:], "strategy-artifacts" if unique else "unavailable"
+
+
+def load_scheduler_status() -> dict[str, Any]:
+    status_paths = (
+        LIVE_DIR / "scheduler.json",
+        BACKEND_DIR / "scheduler" / "status.json",
+        BACKEND_DIR / "scheduler.json",
+    )
+    for path in status_paths:
+        payload = load_optional_json(path)
+        if not payload:
+            continue
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+        return {
+            "status": data.get("status") or data.get("scheduler") or "unknown",
+            "next_run_at": data.get("next_run_at"),
+            "latest_job": data.get("latest_job"),
+            "latest_job_status": data.get("latest_job_status"),
+            "source": str(path.relative_to(ROOT)),
+        }
+    return {"status": "unavailable", "next_run_at": None, "source": "unavailable"}
+
+
+def dedupe_alerts(alerts: list[dict[str, Any]], limit: int = 3) -> list[dict[str, Any]]:
+    unique: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for alert in alerts:
+        if not isinstance(alert, dict):
+            continue
+        key = (str(alert.get("level") or ""), str(alert.get("title") or ""), str(alert.get("detail") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(alert)
+        if len(unique) >= limit:
+            break
+    return unique
+
+
 def build_macro_payload() -> dict[str, Any]:
     payload = base_payload("macro")
     data = payload.setdefault("data", {})
@@ -1177,19 +1371,31 @@ def build_overview_payload(
             "calculation_note": trend_note,
         }
     data["decision"] = build_market_decision(data.get("market", {}), data.get("top_etfs", []))
+
+    account = build_account_from_holdings()
+    strategy_status, strategy_status_source = build_strategy_status_from_artifacts()
+    timeline, timeline_source = build_timeline_from_strategy_artifacts()
+    scheduler_status = load_scheduler_status()
+
+    data["account"] = account
+    data["strategy_status"] = strategy_status
+    data["strategy_status_source"] = strategy_status_source
+    data["timeline"] = timeline
+    data["timeline_source"] = timeline_source
     data["health"] = {
-        **data.get("health", {}),
         "backend": "fastapi",
-        "scheduler": "cron",
-        "latest_job": "update_live_data",
-        "latest_job_status": "success",
-        "next_run_at": "next scheduled cron run",
+        "scheduler": scheduler_status.get("status") or "unavailable",
+        "scheduler_source": scheduler_status.get("source") or "unavailable",
+        "latest_job": scheduler_status.get("latest_job") or "update_live_data",
+        "latest_job_status": scheduler_status.get("latest_job_status") or "success",
+        "next_run_at": scheduler_status.get("next_run_at"),
         "api_latency_ms": None,
     }
-    data["alerts"] = [
+    existing_alerts = data.get("alerts") if isinstance(data.get("alerts"), list) else []
+    data["alerts"] = dedupe_alerts([
         {"level": "info", "title": "真实行情已更新", "detail": "东方财富与 Yahoo 行情已写入 data/live，并由 API 对前端提供。"},
-        *data.get("alerts", [])[:2],
-    ]
+        *existing_alerts,
+    ])
     update_meta(payload, "live-overview")
     return payload
 

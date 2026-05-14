@@ -12,18 +12,21 @@
   "data": {
     "health": {
       "backend": "fastapi",
-      "scheduler": "cron",
+      "scheduler": "unavailable",
+      "scheduler_source": "unavailable",
       "latest_job": "update_live_data",
       "latest_job_status": "success",
-      "next_run_at": "next scheduled cron run",
+      "next_run_at": null,
       "api_latency_ms": null
     },
     "account": {
-      "net_exposure_pct": 62,
-      "cash_pct": 38,
-      "position_count": 7,
-      "day_pnl_pct": 0.64,
-      "total_pnl_pct": 8.72
+      "net_exposure_pct": 78,
+      "cash_pct": 22.0,
+      "position_count": 4,
+      "day_pnl_pct": 0.76,
+      "total_pnl_pct": 8.72,
+      "source": "portfolio/holdings",
+      "source_as_of": "2026-05-12T14:56:00+08:00"
     },
     "market": {
       "breadth_score": 16,
@@ -34,39 +37,31 @@
     },
     "strategy_status": [
       {
-        "id": "etf-rotation",
-        "name": "ETF 轮动",
+        "id": "joinquant-wufu-etf-v43",
+        "name": "五福闹新春 v4.3",
         "page": "etf.html",
         "status": "running",
-        "signal": "加仓",
-        "active_positions": 3,
-        "target_exposure_pct": 65,
-        "day_pnl_pct": 0.48,
-        "updated_at": "2026-05-12T14:56:00+08:00"
+        "signal": "聚宽策略已更新",
+        "active_positions": 1,
+        "target_exposure_pct": 100.0,
+        "day_pnl_pct": 0,
+        "updated_at": "2026-05-14T13:10:00+08:00",
+        "source": "data/backend/strategies/etf.json"
       },
       {
         "id": "small-cap-momentum",
         "name": "小盘股动量",
         "page": "small-cap.html",
         "status": "running",
-        "signal": "精选买入",
+        "signal": "2 个买入信号",
         "active_positions": 4,
         "target_exposure_pct": 55,
         "day_pnl_pct": 0.91,
-        "updated_at": "2026-05-12T14:56:00+08:00"
+        "updated_at": "2026-05-12T14:56:00+08:00",
+        "source": "data/backend/strategies/small-cap.json"
       }
     ],
     "alerts": [
-      {
-        "level": "info",
-        "title": "真实行情已更新",
-        "detail": "东方财富与 Yahoo 行情已写入 data/live，并由 API 对前端提供。"
-      },
-      {
-        "level": "info",
-        "title": "真实行情已更新",
-        "detail": "东方财富与 Yahoo 行情已写入 data/live，并由 API 对前端提供。"
-      },
       {
         "level": "info",
         "title": "真实行情已更新",
@@ -75,28 +70,28 @@
     ],
     "timeline": [
       {
-        "time": "09:20",
-        "label": "开盘前信号",
+        "time": "13:10",
+        "label": "日志联调",
         "status": "done",
-        "detail": "ETF 目标仓位 65%，小盘股候选池 12 只。"
+        "detail": "完整日志同步测试",
+        "source": "data/backend/strategies/etf.json",
+        "updated_at": "2026-05-14T13:10:00+08:00"
       },
       {
-        "time": "11:35",
-        "label": "午间快照",
-        "status": "done",
-        "detail": "市场宽度维持偏强，情绪温度 69。"
+        "time": "2026-05-14 13:10:00",
+        "label": "rank",
+        "status": "info",
+        "detail": "排名完成：159915.XSHE score=4.8 r2=0.72",
+        "source": "data/backend/strategies/etf.json",
+        "updated_at": "2026-05-14T22:05:06+08:00"
       },
       {
-        "time": "14:56",
-        "label": "盘中刷新",
-        "status": "running",
-        "detail": "持仓涨跌和参考指标已更新。"
-      },
-      {
-        "time": "15:10",
-        "label": "收盘归档",
-        "status": "pending",
-        "detail": "等待收盘后运行。"
+        "time": "2026-05-14 13:10:01",
+        "label": "risk",
+        "status": "warning",
+        "detail": "示例风控日志：成交量过滤通过但需观察",
+        "source": "data/backend/strategies/etf.json",
+        "updated_at": "2026-05-14T22:05:06+08:00"
       }
     ],
     "decision": {
@@ -1191,6 +1186,8 @@
           ]
         }
       ]
-    }
+    },
+    "strategy_status_source": "strategy-artifacts",
+    "timeline_source": "strategy-artifacts"
   }
 }
