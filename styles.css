@@ -2203,3 +2203,428 @@ button.is-loading {
   cursor: wait;
   opacity: 0.62;
 }
+
+/* Mobile-first trading surfaces */
+.table-scroll-hint {
+  display: none;
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-align: right;
+}
+
+.watch-card-detail {
+  display: none;
+}
+
+.watch-desktop-detail {
+  min-width: 0;
+}
+
+.row-action,
+.icon-button,
+.mini-tabs button {
+  min-height: 40px;
+}
+
+.row-action {
+  padding: 8px 12px;
+}
+
+.mini-tabs button {
+  padding-inline: 14px;
+}
+
+@media (max-width: 760px) {
+  body {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .layout,
+  body.sidebar-collapsed .layout {
+    display: block;
+  }
+
+  .sidebar {
+    position: sticky;
+    z-index: 12;
+    top: 0;
+    display: block;
+    height: auto;
+    padding: 8px 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    background: rgba(10, 12, 16, 0.94);
+    backdrop-filter: blur(18px);
+  }
+
+  .brand {
+    display: none;
+  }
+
+  .side-nav {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 0 0 2px;
+    scrollbar-width: none;
+  }
+
+  .side-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .side-nav a {
+    min-height: 40px;
+    flex: 0 0 auto;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.03);
+    padding: 8px 12px;
+  }
+
+  .side-nav a.active::before {
+    left: 12px;
+    right: 12px;
+    bottom: -1px;
+    width: auto;
+    height: 2px;
+  }
+
+  .side-status,
+  .sidebar-toggle {
+    display: none;
+  }
+
+  .topbar {
+    position: relative;
+    min-height: auto;
+    padding: 14px 16px;
+  }
+
+  .page-heading h1 {
+    white-space: normal;
+  }
+
+  .watchlist-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .watchlist-main,
+  .stock-detail {
+    padding: 14px;
+  }
+
+  .watch-toolbar .toolbar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+  }
+
+  .watch-toolbar .primary-button {
+    grid-column: 1 / -1;
+  }
+
+  .watch-table {
+    display: grid;
+    gap: 12px;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .group-header {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+  }
+
+  .watch-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: start;
+    overflow: visible;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--surface-2);
+    padding: 14px;
+  }
+
+  .watch-row:nth-child(odd) {
+    background: var(--surface-2);
+  }
+
+  .watch-row.selected {
+    border-left-width: 1px;
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+
+  .watch-row .stock-cell {
+    grid-column: 1;
+  }
+
+  .watch-price {
+    grid-column: 1;
+    font-size: 20px;
+  }
+
+  .watch-change {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: center;
+    min-height: 32px;
+  }
+
+  .watch-row .row-action {
+    grid-column: 2;
+    grid-row: 2;
+    opacity: 1;
+  }
+
+  .watch-desktop-detail {
+    display: none;
+  }
+
+  .watch-card-detail {
+    display: block;
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--line);
+    padding-top: 4px;
+  }
+
+  .watch-card-detail summary {
+    min-height: 40px;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 40px;
+  }
+
+  .watch-detail-grid {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 10px;
+    align-items: center;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .watch-detail-grid strong {
+    color: var(--ink);
+    font-family: var(--font-mono);
+  }
+
+  .stock-detail {
+    display: none;
+  }
+
+  body[data-page="holdings"] .table-scroll-hint {
+    display: none;
+  }
+
+  body[data-page="holdings"] .table-wrap {
+    overflow: visible;
+    border: 0;
+  }
+
+  body[data-page="holdings"] .data-table,
+  body[data-page="holdings"] .data-table tbody,
+  body[data-page="holdings"] .data-table tr,
+  body[data-page="holdings"] .data-table td {
+    display: block;
+    width: 100%;
+    min-width: 0 !important;
+  }
+
+  body[data-page="holdings"] .data-table thead {
+    display: none;
+  }
+
+  body[data-page="holdings"] .data-table tbody {
+    display: grid;
+    gap: 12px;
+  }
+
+  body[data-page="holdings"] .holding-card-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--surface-2);
+    padding: 14px;
+  }
+
+  body[data-page="holdings"] .data-table td {
+    border: 0;
+    padding: 0;
+    white-space: normal;
+  }
+
+  body[data-page="holdings"] .data-table td::before {
+    display: block;
+    margin-bottom: 3px;
+    color: var(--muted);
+    content: attr(data-label);
+    font-family: var(--font-ui);
+    font-size: 10px;
+    font-weight: 800;
+  }
+
+  body[data-page="holdings"] .holding-stock,
+  body[data-page="holdings"] .holding-market-value,
+  body[data-page="holdings"] .data-table td:last-child,
+  body[data-page="holdings"] .data-table td:nth-child(7) {
+    grid-column: 1 / -1;
+  }
+
+  body[data-page="holdings"] .holding-stock strong,
+  body[data-page="holdings"] .holding-price {
+    font-size: 18px;
+  }
+
+  body[data-page="holdings"] .data-table td:nth-child(n+4):nth-child(-n+9) {
+    display: none;
+  }
+
+  body[data-page="holdings"] .holding-card-row:focus-within td,
+  body[data-page="holdings"] .holding-card-row:hover td {
+    display: block;
+  }
+
+  body[data-page="holdings"] .action-cell {
+    align-items: stretch;
+  }
+
+  body[data-page="holdings"] .action-cell .row-action {
+    flex: 1 1 120px;
+  }
+
+  .signal-card {
+    padding-bottom: 0;
+    overflow: hidden;
+  }
+
+  .signal-card .card-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    align-items: stretch;
+    margin: 0 -15px;
+    border-top: 1px solid var(--line);
+    background: rgba(17, 19, 24, 0.96);
+    padding: 10px 15px calc(10px + env(safe-area-inset-bottom));
+    backdrop-filter: blur(12px);
+  }
+
+  .signal-card .card-actions .ghost-button,
+  .signal-card .card-actions .primary-button {
+    min-height: 44px;
+    flex: 1 1 auto;
+  }
+
+  body[data-page="performance"] .metric-strip {
+    grid-auto-columns: minmax(145px, 1fr);
+    order: -1;
+  }
+
+  .performance-chart-panel .chart-panel {
+    max-height: 340px;
+    overflow: auto hidden;
+  }
+
+  .performance-chart-panel .equity-chart {
+    min-width: 760px;
+    max-height: 320px;
+  }
+
+  .chart-panel::before,
+  .table-scroll-hint {
+    display: block;
+  }
+
+  .chart-panel::before {
+    position: sticky;
+    left: 0;
+    display: inline-block;
+    margin-bottom: 8px;
+    color: var(--muted);
+    content: "左右滑动查看更多";
+    font-size: 11px;
+    font-weight: 800;
+  }
+}
+
+.holding-card-list {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  body[data-page="holdings"] .holding-card-list {
+    display: grid;
+    gap: 12px;
+  }
+
+  body[data-page="holdings"] .panel .holding-card-list + .table-scroll-hint,
+  body[data-page="holdings"] .panel .holding-card-list + .table-scroll-hint + .table-wrap {
+    display: none;
+  }
+
+  .holding-card {
+    display: grid;
+    gap: 12px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--surface-2);
+    padding: 14px;
+  }
+
+  .holding-card-top,
+  .holding-card-core {
+    display: grid;
+    gap: 10px;
+  }
+
+  .holding-card-top {
+    grid-template-columns: minmax(0, 1.2fr) minmax(86px, 0.8fr) minmax(96px, 0.8fr);
+  }
+
+  .holding-card-core {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .holding-card span,
+  .holding-card small,
+  .holding-card-detail summary {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .holding-card strong {
+    display: block;
+    overflow: hidden;
+    margin-top: 3px;
+    font-family: var(--font-mono);
+    font-size: 16px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .holding-card-detail {
+    border-top: 1px solid var(--line);
+    padding-top: 2px;
+  }
+
+  .holding-card-detail summary {
+    min-height: 40px;
+    cursor: pointer;
+    line-height: 40px;
+  }
+
+  .holding-detail-grid {
+    display: grid;
+    grid-template-columns: 80px minmax(0, 1fr);
+    gap: 8px 12px;
+  }
+}
