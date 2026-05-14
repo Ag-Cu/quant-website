@@ -88,7 +88,7 @@ async function refreshPerformance() {
     renderPerformance(payload);
     updateShell(payload.meta || {}, mode);
   } catch (error) {
-    showError(error);
+    if (!renderCachedFallback(PAGE_CONFIG.performance, error)) showError(error);
   }
 }
 
@@ -205,7 +205,37 @@ async function fetchPayload(config) {
   if (!config.endpoint) throw new Error("页面未配置数据接口");
   const payload = await requestJson(joinUrl(API_BASE, pageEndpoint(config)));
   const mode = payload.meta?.source === "cache" ? "cache" : "live";
+  writeLastPayload(activePage, payload, mode);
   return { payload, mode };
+}
+
+function lastPayloadKey(page = activePage) {
+  return `quant:lastPayload:${page}`;
+}
+
+function writeLastPayload(page, payload, mode) {
+  try {
+    window.localStorage?.setItem(lastPayloadKey(page), JSON.stringify({ payload, mode, savedAt: new Date().toISOString() }));
+  } catch (error) {
+    // localStorage can be unavailable in strict privacy modes; live rendering should continue.
+  }
+}
+
+function readLastPayload(page = activePage) {
+  try {
+    const text = window.localStorage?.getItem(lastPayloadKey(page));
+    if (!text) return null;
+    const cached = JSON.parse(text);
+    if (!cached?.payload || !cached.savedAt) return null;
+    return cached;
+  } catch (error) {
+    try {
+      window.localStorage?.removeItem(lastPayloadKey(page));
+    } catch (removeError) {
+      // Ignore cleanup failures and fall through to the normal error state.
+    }
+    return null;
+  }
 }
 
 function valueText(value, digits = 2) {
@@ -756,14 +786,21 @@ async function loadHeatmap(timeframe, groupBy, market = "all") {
   if (!panelNode || !body) return;
   document.querySelectorAll("[data-heatmap-period]").forEach((node) => node.classList.toggle("active", node.dataset.heatmapPeriod === timeframe));
   document.querySelectorAll("[data-heatmap-market]").forEach((node) => node.classList.toggle("active", node.dataset.heatmapMarket === market));
-  body.innerHTML = `<div class="empty-state treemap-empty">热力图获取中...</div>`;
+  panelNode.classList.add("is-refreshing");
+  panelNode.querySelector("[data-heatmap-stale]")?.remove();
+  body.setAttribute("aria-busy", "true");
   try {
     const payload = await requestJson(joinUrl(API_BASE, `/api/v1/market/heatmap?timeframe=${encodeURIComponent(timeframe)}&group_by=${encodeURIComponent(groupBy)}&market=${encodeURIComponent(market)}`));
     panelNode.outerHTML = marketHeatmapTreemap(payload.data || {}, timeframe, groupBy, market);
     bindOverviewInteractions();
     updateShell(payload.meta || {}, payload.meta?.source === "cache" ? "cache" : "live");
   } catch (error) {
-    body.innerHTML = `<div class="empty-state treemap-empty">热力图获取失败：${escapeHtml(error.message)}</div>`;
+    const message = error?.message || "接口请求失败";
+    panelNode.insertAdjacentHTML("afterbegin", `<div class="heatmap-stale-note" data-heatmap-stale>热力图刷新失败，已保留上一张图：${escapeHtml(message)}</div>`);
+    updateShell({}, "stale", { error, cached: { savedAt: new Date().toISOString() } });
+  } finally {
+    panelNode.classList.remove("is-refreshing");
+    body.removeAttribute("aria-busy");
   }
 }
 
@@ -1245,12 +1282,49 @@ function renderMacro(payload) {
 }
 
 function updateShell(meta, mode, apiError = null) {
-  const sourceText = mode === "cache" ? "Cached API" : "Live API";
+  const isStale = mode === "stale";
+  const isCache = mode === "cache";
+  const sourceText = isStale ? "Stale cache" : isCache ? "Cached API" : "Live API";
   dom.apiMode.textContent = sourceText;
-  dom.connectionBadge.textContent = sourceText;
-  dom.connectionBadge.className = `connection-badge live`;
+  dom.connectionBadge.textContent = isStale ? "刷新失败 · 显示缓存" : sourceText;
+  dom.connectionBadge.className = `connection-badge ${isStale ? "stale" : isCache ? "mock" : "live"}`;
+  if (isStale) {
+    const message = apiError?.error?.message || "接口请求失败";
+    const savedAt = apiError?.cached?.savedAt;
+    dom.runSummary.textContent = `${message} / 缓存 ${formatDateTime(savedAt)}`;
+    dom.lastUpdated.textContent = `显示缓存 ${formatDateTime(savedAt)}`;
+    return;
+  }
   dom.runSummary.textContent = `${meta.run_id || "--"} / ${formatDateTime(meta.as_of)}`;
   dom.lastUpdated.textContent = `最近刷新 ${formatDateTime(new Date().toISOString())}`;
+}
+
+function staleBanner(error, cached) {
+  const message = error?.message || "接口请求失败";
+  const savedAt = formatDateTime(cached?.savedAt);
+  return `
+    <aside class="stale-banner" data-stale-banner role="alert">
+      <div><strong>刷新失败，当前显示最近成功缓存</strong><span>错误：${escapeHtml(message)} · 缓存时间：${escapeHtml(savedAt)}</span></div>
+      <button type="button" aria-label="关闭缓存提示" data-dismiss-stale>×</button>
+    </aside>
+  `;
+}
+
+function insertStaleBanner(error, cached) {
+  dom.app.querySelector("[data-stale-banner]")?.remove();
+  dom.app.insertAdjacentHTML("afterbegin", staleBanner(error, cached));
+  dom.app.querySelector("[data-dismiss-stale]")?.addEventListener("click", (event) => {
+    event.currentTarget.closest("[data-stale-banner]")?.remove();
+  });
+}
+
+function renderCachedFallback(config, error) {
+  const cached = readLastPayload(activePage);
+  if (!cached) return false;
+  config.render(cached.payload);
+  updateShell(cached.payload?.meta || {}, "stale", { error, cached });
+  insertStaleBanner(error, cached);
+  return true;
 }
 
 function showError(error) {
@@ -1337,7 +1411,7 @@ async function init() {
       config.render(payload);
       updateShell(payload.meta || {}, mode);
     } catch (error) {
-      showError(error);
+      if (!renderCachedFallback(config, error)) showError(error);
     } finally {
       refreshing = false;
     }
