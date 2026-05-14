@@ -1717,6 +1717,8 @@ def strategy_etf() -> dict[str, Any]:
     logs = data.get("logs") if isinstance(data.get("logs"), list) else []
     if len(logs) < ETF_INLINE_LOG_LINES:
         archive_logs = get_recent_strategy_logs(ETF_INLINE_LOG_LINES, trade_date=payload.get("meta", {}).get("trade_date"))
+        if not archive_logs:
+            archive_logs = get_recent_strategy_logs(ETF_INLINE_LOG_LINES)
         if archive_logs:
             logs = archive_logs
     data["logs"] = logs[-ETF_INLINE_LOG_LINES:]
