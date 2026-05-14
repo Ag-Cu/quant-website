@@ -1205,7 +1205,8 @@ def watchlist_config() -> dict[str, Any]:
 
 
 @app.post("/api/v1/watchlist")
-def add_watchlist_item(response: Response, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def add_watchlist_item(request: Request, response: Response, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    verify_action_permission(request)
     item = normalize_watchlist_item(payload)
     config = load_watchlist_config()
     items = config["items"]
@@ -1219,9 +1220,11 @@ def add_watchlist_item(response: Response, payload: dict[str, Any] = Body(...)) 
 @app.delete("/api/v1/watchlist/{symbol}")
 def delete_watchlist_item(
     symbol: str,
+    request: Request,
     response: Response,
     market_region: str | None = Query(default=None, alias="market"),
 ) -> dict[str, Any]:
+    verify_action_permission(request)
     probe = normalize_watchlist_item({"symbol": symbol, "market_region": market_region} if market_region else {"symbol": symbol})
     raw_symbol = probe["symbol"]
     region = probe["market_region"]
