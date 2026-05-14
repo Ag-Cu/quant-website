@@ -741,6 +741,18 @@ function setWatchlistStatus(message, tone = "") {
   node.className = `form-status ${tone}`;
 }
 
+function watchlistRefreshMessage(payload, fallback = "已保存，行情稍后刷新") {
+  const refreshError = payload?.data?.refresh_error || payload?.meta?.warning;
+  return refreshError ? fallback : "";
+}
+
+function showWatchlistRefreshMessage(message, tone = "") {
+  if (!message) return;
+  const panel = document.querySelector("[data-watch-add-panel]");
+  panel?.classList.add("open");
+  setWatchlistStatus(message, tone);
+}
+
 function bindWatchlistInteractions() {
   const panelNode = document.querySelector("[data-watch-add-panel]");
   document.querySelector("[data-add-watch]")?.addEventListener("click", () => {
@@ -771,8 +783,10 @@ function bindWatchlistInteractions() {
     form.querySelector("button[type='submit']")?.setAttribute("disabled", "disabled");
     try {
       const payload = await sendJson("/api/v1/watchlist", { method: "POST", body: JSON.stringify(body) });
+      const refreshMessage = watchlistRefreshMessage(payload, "已保存，行情稍后刷新");
       renderWatchlist(payload);
       updateShell(payload.meta || {}, payload.meta?.source === "cache" ? "cache" : "live");
+      showWatchlistRefreshMessage(refreshMessage);
     } catch (error) {
       setWatchlistStatus(`保存失败：${error.message}`, "negative");
       form.querySelector("button[type='submit']")?.removeAttribute("disabled");
@@ -788,8 +802,10 @@ function bindWatchlistInteractions() {
       button.setAttribute("disabled", "disabled");
       try {
         const payload = await sendJson(`/api/v1/watchlist/${encodeURIComponent(symbol)}?market=${encodeURIComponent(market || "")}`, { method: "DELETE" });
+        const refreshMessage = watchlistRefreshMessage(payload, "已删除，行情稍后刷新");
         renderWatchlist(payload);
         updateShell(payload.meta || {}, payload.meta?.source === "cache" ? "cache" : "live");
+        showWatchlistRefreshMessage(refreshMessage);
       } catch (error) {
         button.textContent = "失败";
         button.removeAttribute("disabled");
