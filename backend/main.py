@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -684,6 +684,74 @@ def invalidate_watchlist_live_data() -> None:
             pass
 
 
+def build_watchlist_config_payload(
+    items: list[dict[str, Any]],
+    *,
+    config_status: str,
+    refresh_status: str,
+    refresh_error: str | None = None,
+) -> dict[str, Any]:
+    groups_by_name: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        groups_by_name.setdefault(str(item.get("sector") or "自选股"), []).append(item)
+
+    meta: dict[str, Any] = {
+        "version": "1.0",
+        "source": "config",
+        "as_of": now_hk().isoformat(),
+        "trade_date": now_hk().strftime("%Y-%m-%d"),
+        "timezone": "Asia/Hong_Kong",
+        "market_session": market_session(),
+        "run_id": f"watchlist-config-{now_hk().strftime('%Y%m%d-%H%M%S')}",
+        "refresh_policy": "realtime",
+        "refresh_seconds": ENDPOINTS["/api/v1/watchlist"].refresh_seconds,
+        "config_status": config_status,
+        "refresh_status": refresh_status,
+    }
+    data: dict[str, Any] = {
+        "items": items,
+        "groups": [{"name": name, "items": group_items} for name, group_items in groups_by_name.items()],
+    }
+    if refresh_error:
+        warning = f"配置写入成功，行情暂未更新: {refresh_error}"
+        meta["warning"] = warning
+        data["refresh_error"] = warning
+    return {"meta": meta, "data": data}
+
+
+def watchlist_mutation_payload(
+    items: list[dict[str, Any]],
+    *,
+    config_status: str,
+    response: Response,
+) -> dict[str, Any]:
+    invalidate_watchlist_live_data()
+    refreshed, detail = run_live_data_refresh()
+    if not refreshed:
+        response.status_code = 202
+        return build_watchlist_config_payload(
+            items,
+            config_status=config_status,
+            refresh_status="failed",
+            refresh_error=detail or "行情刷新失败",
+        )
+
+    try:
+        payload = get_payload("/api/v1/watchlist")
+    except HTTPException as exc:
+        response.status_code = 202
+        return build_watchlist_config_payload(
+            items,
+            config_status=config_status,
+            refresh_status="failed",
+            refresh_error=str(exc.detail or "行情刷新后仍不可用"),
+        )
+    payload["meta"]["config_status"] = config_status
+    payload["meta"]["refresh_status"] = "refreshed"
+    payload.setdefault("data", {})["refresh_error"] = None
+    return payload
+
+
 def run_live_data_refresh(timeout: int = 45) -> tuple[bool, str]:
     try:
         result = subprocess.run(
@@ -849,7 +917,7 @@ def watchlist_config() -> dict[str, Any]:
 
 
 @app.post("/api/v1/watchlist")
-def add_watchlist_item(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def add_watchlist_item(response: Response, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     item = normalize_watchlist_item(payload)
     config = load_watchlist_config()
     items = config["items"]
@@ -857,15 +925,15 @@ def add_watchlist_item(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     merged = [row for row in items if (row.get("market_region"), row.get("symbol")) != item_key]
     merged.append(item)
     save_watchlist_items(merged)
-    invalidate_watchlist_live_data()
-    refreshed, detail = run_live_data_refresh()
-    if not refreshed:
-        raise HTTPException(status_code=503, detail=f"自选股已保存，但行情刷新失败: {detail}")
-    return get_payload("/api/v1/watchlist")
+    return watchlist_mutation_payload(merged, config_status="saved", response=response)
 
 
 @app.delete("/api/v1/watchlist/{symbol}")
-def delete_watchlist_item(symbol: str, market_region: str | None = Query(default=None, alias="market")) -> dict[str, Any]:
+def delete_watchlist_item(
+    symbol: str,
+    response: Response,
+    market_region: str | None = Query(default=None, alias="market"),
+) -> dict[str, Any]:
     probe = normalize_watchlist_item({"symbol": symbol, "market_region": market_region} if market_region else {"symbol": symbol})
     raw_symbol = probe["symbol"]
     region = probe["market_region"]
@@ -882,11 +950,7 @@ def delete_watchlist_item(symbol: str, market_region: str | None = Query(default
     if len(kept) == len(items):
         raise HTTPException(status_code=404, detail=f"自选股不存在: {raw_symbol}")
     save_watchlist_items(kept)
-    invalidate_watchlist_live_data()
-    refreshed, detail = run_live_data_refresh()
-    if not refreshed:
-        raise HTTPException(status_code=503, detail=f"自选股已删除，但行情刷新失败: {detail}")
-    return get_payload("/api/v1/watchlist")
+    return watchlist_mutation_payload(kept, config_status="deleted", response=response)
 
 
 @app.get("/api/v1/strategies/picks")
