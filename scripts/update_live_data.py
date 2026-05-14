@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Generate live JSON payloads for the quant dashboard API.
 
-This script intentionally uses only the Python standard library so it can run
-from cron on a clean server. It writes JSON files under data/live/ that the
-FastAPI backend can serve for realtime endpoints.
+It writes JSON files under data/live/ that the FastAPI backend can serve for
+realtime endpoints. Payloads are validated against backend.schemas before any
+file is replaced.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import json
 import math
 import os
 import re
+import sys
 import tempfile
 import urllib.parse
 import urllib.request
@@ -24,9 +25,14 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from backend.schemas import LIVE_PAYLOAD_SCHEMAS, SchemaValidationError, validate_payload
+
 
 HK_TZ = ZoneInfo("Asia/Hong_Kong")
-ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = ROOT / "data" / "backend"
 LIVE_DIR = ROOT / "data" / "live"
 CONFIG_DIR = ROOT / "data" / "config"
@@ -299,7 +305,22 @@ def infer_cn_market(symbol: str) -> str:
     return "SH" if symbol.startswith(("5", "6", "9")) else "SZ"
 
 
+def validate_live_payload(path: Path, payload: dict[str, Any]) -> None:
+    model = LIVE_PAYLOAD_SCHEMAS.get(path.stem)
+    if not model:
+        return
+    try:
+        validate_payload(model, payload, str(path.relative_to(ROOT)))
+    except SchemaValidationError as exc:
+        fields = ", ".join(exc.missing_fields)
+        raise RuntimeError(
+            f"Schema validation failed before writing {exc.storage_path}; "
+            f"missing_fields={fields}; errors={exc.errors}"
+        ) from exc
+
+
 def write_json(path: Path, payload: dict[str, Any]) -> None:
+    validate_live_payload(path, payload)
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as file:
         json.dump(payload, file, ensure_ascii=False, indent=2)

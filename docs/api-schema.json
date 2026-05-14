@@ -1,0 +1,1481 @@
+{
+  "title": "Quant Dashboard API payload schemas",
+  "version": "1.0",
+  "schemas": {
+    "DashboardOverviewPayload": {
+      "$defs": {
+        "DashboardOverviewData": {
+          "additionalProperties": true,
+          "properties": {
+            "account": {
+              "additionalProperties": true,
+              "title": "Account",
+              "type": "object"
+            },
+            "market": {
+              "additionalProperties": true,
+              "title": "Market",
+              "type": "object"
+            },
+            "decision": {
+              "additionalProperties": true,
+              "title": "Decision",
+              "type": "object"
+            },
+            "sentiment_gauge": {
+              "additionalProperties": true,
+              "title": "Sentiment Gauge",
+              "type": "object"
+            },
+            "heatmap": {
+              "additionalProperties": true,
+              "title": "Heatmap",
+              "type": "object"
+            },
+            "top_etfs": {
+              "items": {},
+              "title": "Top Etfs",
+              "type": "array"
+            },
+            "sectors": {
+              "items": {},
+              "title": "Sectors",
+              "type": "array"
+            },
+            "strategy_status": {
+              "items": {},
+              "title": "Strategy Status",
+              "type": "array"
+            },
+            "alerts": {
+              "items": {},
+              "title": "Alerts",
+              "type": "array"
+            }
+          },
+          "required": [
+            "account",
+            "market",
+            "decision",
+            "sentiment_gauge",
+            "heatmap",
+            "top_etfs",
+            "sectors",
+            "strategy_status",
+            "alerts"
+          ],
+          "title": "DashboardOverviewData",
+          "type": "object"
+        },
+        "Meta": {
+          "additionalProperties": true,
+          "properties": {
+            "version": {
+              "title": "Version",
+              "type": "string"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            },
+            "as_of": {
+              "title": "As Of",
+              "type": "string"
+            },
+            "trade_date": {
+              "title": "Trade Date",
+              "type": "string"
+            },
+            "timezone": {
+              "title": "Timezone",
+              "type": "string"
+            },
+            "market_session": {
+              "title": "Market Session",
+              "type": "string"
+            },
+            "run_id": {
+              "title": "Run Id",
+              "type": "string"
+            },
+            "storage_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Storage Path"
+            }
+          },
+          "required": [
+            "version",
+            "source",
+            "as_of",
+            "trade_date",
+            "timezone",
+            "market_session",
+            "run_id"
+          ],
+          "title": "Meta",
+          "type": "object"
+        }
+      },
+      "additionalProperties": true,
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/Meta"
+        },
+        "data": {
+          "$ref": "#/$defs/DashboardOverviewData"
+        }
+      },
+      "required": [
+        "meta",
+        "data"
+      ],
+      "title": "DashboardOverviewPayload",
+      "type": "object"
+    },
+    "WatchlistPayload": {
+      "$defs": {
+        "Meta": {
+          "additionalProperties": true,
+          "properties": {
+            "version": {
+              "title": "Version",
+              "type": "string"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            },
+            "as_of": {
+              "title": "As Of",
+              "type": "string"
+            },
+            "trade_date": {
+              "title": "Trade Date",
+              "type": "string"
+            },
+            "timezone": {
+              "title": "Timezone",
+              "type": "string"
+            },
+            "market_session": {
+              "title": "Market Session",
+              "type": "string"
+            },
+            "run_id": {
+              "title": "Run Id",
+              "type": "string"
+            },
+            "storage_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Storage Path"
+            }
+          },
+          "required": [
+            "version",
+            "source",
+            "as_of",
+            "trade_date",
+            "timezone",
+            "market_session",
+            "run_id"
+          ],
+          "title": "Meta",
+          "type": "object"
+        },
+        "WatchlistData": {
+          "additionalProperties": true,
+          "properties": {
+            "groups": {
+              "items": {
+                "$ref": "#/$defs/WatchlistGroup"
+              },
+              "title": "Groups",
+              "type": "array"
+            }
+          },
+          "required": [
+            "groups"
+          ],
+          "title": "WatchlistData",
+          "type": "object"
+        },
+        "WatchlistGroup": {
+          "additionalProperties": true,
+          "properties": {
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "items": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "title": "Items",
+              "type": "array"
+            }
+          },
+          "required": [
+            "name",
+            "items"
+          ],
+          "title": "WatchlistGroup",
+          "type": "object"
+        }
+      },
+      "additionalProperties": true,
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/Meta"
+        },
+        "data": {
+          "$ref": "#/$defs/WatchlistData"
+        }
+      },
+      "required": [
+        "meta",
+        "data"
+      ],
+      "title": "WatchlistPayload",
+      "type": "object"
+    },
+    "StrategyPicksPayload": {
+      "$defs": {
+        "Meta": {
+          "additionalProperties": true,
+          "properties": {
+            "version": {
+              "title": "Version",
+              "type": "string"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            },
+            "as_of": {
+              "title": "As Of",
+              "type": "string"
+            },
+            "trade_date": {
+              "title": "Trade Date",
+              "type": "string"
+            },
+            "timezone": {
+              "title": "Timezone",
+              "type": "string"
+            },
+            "market_session": {
+              "title": "Market Session",
+              "type": "string"
+            },
+            "run_id": {
+              "title": "Run Id",
+              "type": "string"
+            },
+            "storage_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Storage Path"
+            }
+          },
+          "required": [
+            "version",
+            "source",
+            "as_of",
+            "trade_date",
+            "timezone",
+            "market_session",
+            "run_id"
+          ],
+          "title": "Meta",
+          "type": "object"
+        },
+        "StrategyPickFactor": {
+          "additionalProperties": true,
+          "properties": {
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Value"
+            },
+            "weight": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Weight"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "title": "StrategyPickFactor",
+          "type": "object"
+        },
+        "StrategyPickItem": {
+          "additionalProperties": true,
+          "properties": {
+            "symbol": {
+              "title": "Symbol",
+              "type": "string"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "score": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "title": "Score"
+            },
+            "confidence": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confidence"
+            },
+            "factors": {
+              "items": {
+                "$ref": "#/$defs/StrategyPickFactor"
+              },
+              "title": "Factors",
+              "type": "array"
+            },
+            "tags": {
+              "items": {},
+              "title": "Tags",
+              "type": "array"
+            }
+          },
+          "required": [
+            "symbol",
+            "name",
+            "score"
+          ],
+          "title": "StrategyPickItem",
+          "type": "object"
+        },
+        "StrategyPicksData": {
+          "additionalProperties": true,
+          "properties": {
+            "strategy": {
+              "title": "Strategy",
+              "type": "string"
+            },
+            "strategy_label": {
+              "title": "Strategy Label",
+              "type": "string"
+            },
+            "trade_date": {
+              "title": "Trade Date",
+              "type": "string"
+            },
+            "status": {
+              "title": "Status",
+              "type": "string"
+            },
+            "strategies": {
+              "items": {},
+              "title": "Strategies",
+              "type": "array"
+            },
+            "items": {
+              "items": {
+                "$ref": "#/$defs/StrategyPickItem"
+              },
+              "title": "Items",
+              "type": "array"
+            }
+          },
+          "required": [
+            "strategy",
+            "strategy_label",
+            "trade_date",
+            "status",
+            "strategies",
+            "items"
+          ],
+          "title": "StrategyPicksData",
+          "type": "object"
+        }
+      },
+      "additionalProperties": true,
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/Meta"
+        },
+        "data": {
+          "$ref": "#/$defs/StrategyPicksData"
+        }
+      },
+      "required": [
+        "meta",
+        "data"
+      ],
+      "title": "StrategyPicksPayload",
+      "type": "object"
+    },
+    "PortfolioHoldingsPayload": {
+      "$defs": {
+        "Meta": {
+          "additionalProperties": true,
+          "properties": {
+            "version": {
+              "title": "Version",
+              "type": "string"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            },
+            "as_of": {
+              "title": "As Of",
+              "type": "string"
+            },
+            "trade_date": {
+              "title": "Trade Date",
+              "type": "string"
+            },
+            "timezone": {
+              "title": "Timezone",
+              "type": "string"
+            },
+            "market_session": {
+              "title": "Market Session",
+              "type": "string"
+            },
+            "run_id": {
+              "title": "Run Id",
+              "type": "string"
+            },
+            "storage_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Storage Path"
+            }
+          },
+          "required": [
+            "version",
+            "source",
+            "as_of",
+            "trade_date",
+            "timezone",
+            "market_session",
+            "run_id"
+          ],
+          "title": "Meta",
+          "type": "object"
+        },
+        "PortfolioHoldingsData": {
+          "additionalProperties": true,
+          "properties": {
+            "summary": {
+              "additionalProperties": true,
+              "title": "Summary",
+              "type": "object"
+            },
+            "holdings": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "title": "Holdings",
+              "type": "array"
+            },
+            "allocation": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "title": "Allocation",
+              "type": "array"
+            }
+          },
+          "required": [
+            "summary",
+            "holdings",
+            "allocation"
+          ],
+          "title": "PortfolioHoldingsData",
+          "type": "object"
+        }
+      },
+      "additionalProperties": true,
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/Meta"
+        },
+        "data": {
+          "$ref": "#/$defs/PortfolioHoldingsData"
+        }
+      },
+      "required": [
+        "meta",
+        "data"
+      ],
+      "title": "PortfolioHoldingsPayload",
+      "type": "object"
+    },
+    "PerformancePayload": {
+      "$defs": {
+        "Meta": {
+          "additionalProperties": true,
+          "properties": {
+            "version": {
+              "title": "Version",
+              "type": "string"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            },
+            "as_of": {
+              "title": "As Of",
+              "type": "string"
+            },
+            "trade_date": {
+              "title": "Trade Date",
+              "type": "string"
+            },
+            "timezone": {
+              "title": "Timezone",
+              "type": "string"
+            },
+            "market_session": {
+              "title": "Market Session",
+              "type": "string"
+            },
+            "run_id": {
+              "title": "Run Id",
+              "type": "string"
+            },
+            "storage_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Storage Path"
+            }
+          },
+          "required": [
+            "version",
+            "source",
+            "as_of",
+            "trade_date",
+            "timezone",
+            "market_session",
+            "run_id"
+          ],
+          "title": "Meta",
+          "type": "object"
+        },
+        "PerformanceData": {
+          "additionalProperties": true,
+          "properties": {
+            "strategy": {
+              "title": "Strategy",
+              "type": "string"
+            },
+            "strategy_label": {
+              "title": "Strategy Label",
+              "type": "string"
+            },
+            "benchmark": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Benchmark"
+            },
+            "benchmark_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Benchmark Id"
+            },
+            "strategies": {
+              "items": {},
+              "title": "Strategies",
+              "type": "array"
+            },
+            "benchmarks": {
+              "items": {},
+              "title": "Benchmarks",
+              "type": "array"
+            },
+            "equity_curve": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "title": "Equity Curve",
+              "type": "array"
+            },
+            "benchmark_curve": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "title": "Benchmark Curve",
+              "type": "array"
+            },
+            "drawdowns": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "title": "Drawdowns",
+              "type": "array"
+            },
+            "metrics": {
+              "additionalProperties": true,
+              "title": "Metrics",
+              "type": "object"
+            },
+            "monthly_returns": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "title": "Monthly Returns",
+              "type": "array"
+            },
+            "annotations": {
+              "items": {},
+              "title": "Annotations",
+              "type": "array"
+            }
+          },
+          "required": [
+            "strategy",
+            "strategy_label",
+            "strategies",
+            "benchmarks",
+            "equity_curve"
+          ],
+          "title": "PerformanceData",
+          "type": "object"
+        }
+      },
+      "additionalProperties": true,
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/Meta"
+        },
+        "data": {
+          "$ref": "#/$defs/PerformanceData"
+        }
+      },
+      "required": [
+        "meta",
+        "data"
+      ],
+      "title": "PerformancePayload",
+      "type": "object"
+    },
+    "MarketHeatmapPayload": {
+      "$defs": {
+        "MarketHeatmapCell": {
+          "additionalProperties": true,
+          "properties": {
+            "symbol": {
+              "title": "Symbol",
+              "type": "string"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "sector": {
+              "title": "Sector",
+              "type": "string"
+            },
+            "price": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Price"
+            },
+            "change_pct": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Change Pct"
+            },
+            "volume": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Volume"
+            },
+            "market_cap": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Market Cap"
+            },
+            "weight": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Weight"
+            }
+          },
+          "required": [
+            "symbol",
+            "name",
+            "sector"
+          ],
+          "title": "MarketHeatmapCell",
+          "type": "object"
+        },
+        "MarketHeatmapData": {
+          "additionalProperties": true,
+          "properties": {
+            "timeframe": {
+              "title": "Timeframe",
+              "type": "string"
+            },
+            "group_by": {
+              "title": "Group By",
+              "type": "string"
+            },
+            "updated_at": {
+              "title": "Updated At",
+              "type": "string"
+            },
+            "cells": {
+              "items": {
+                "$ref": "#/$defs/MarketHeatmapCell"
+              },
+              "title": "Cells",
+              "type": "array"
+            }
+          },
+          "required": [
+            "timeframe",
+            "group_by",
+            "updated_at",
+            "cells"
+          ],
+          "title": "MarketHeatmapData",
+          "type": "object"
+        },
+        "Meta": {
+          "additionalProperties": true,
+          "properties": {
+            "version": {
+              "title": "Version",
+              "type": "string"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            },
+            "as_of": {
+              "title": "As Of",
+              "type": "string"
+            },
+            "trade_date": {
+              "title": "Trade Date",
+              "type": "string"
+            },
+            "timezone": {
+              "title": "Timezone",
+              "type": "string"
+            },
+            "market_session": {
+              "title": "Market Session",
+              "type": "string"
+            },
+            "run_id": {
+              "title": "Run Id",
+              "type": "string"
+            },
+            "storage_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Storage Path"
+            }
+          },
+          "required": [
+            "version",
+            "source",
+            "as_of",
+            "trade_date",
+            "timezone",
+            "market_session",
+            "run_id"
+          ],
+          "title": "Meta",
+          "type": "object"
+        }
+      },
+      "additionalProperties": true,
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/Meta"
+        },
+        "data": {
+          "$ref": "#/$defs/MarketHeatmapData"
+        }
+      },
+      "required": [
+        "meta",
+        "data"
+      ],
+      "title": "MarketHeatmapPayload",
+      "type": "object"
+    },
+    "BreadthPayload": {
+      "$defs": {
+        "BreadthData": {
+          "additionalProperties": true,
+          "properties": {
+            "summary": {
+              "additionalProperties": true,
+              "title": "Summary",
+              "type": "object"
+            },
+            "metrics": {
+              "items": {},
+              "title": "Metrics",
+              "type": "array"
+            },
+            "industry_width": {
+              "items": {},
+              "title": "Industry Width",
+              "type": "array"
+            },
+            "heatmap_history": {
+              "additionalProperties": true,
+              "title": "Heatmap History",
+              "type": "object"
+            },
+            "style": {
+              "items": {},
+              "title": "Style",
+              "type": "array"
+            },
+            "distribution": {
+              "items": {},
+              "title": "Distribution",
+              "type": "array"
+            }
+          },
+          "required": [
+            "summary",
+            "metrics",
+            "industry_width",
+            "heatmap_history",
+            "style",
+            "distribution"
+          ],
+          "title": "BreadthData",
+          "type": "object"
+        },
+        "Meta": {
+          "additionalProperties": true,
+          "properties": {
+            "version": {
+              "title": "Version",
+              "type": "string"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            },
+            "as_of": {
+              "title": "As Of",
+              "type": "string"
+            },
+            "trade_date": {
+              "title": "Trade Date",
+              "type": "string"
+            },
+            "timezone": {
+              "title": "Timezone",
+              "type": "string"
+            },
+            "market_session": {
+              "title": "Market Session",
+              "type": "string"
+            },
+            "run_id": {
+              "title": "Run Id",
+              "type": "string"
+            },
+            "storage_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Storage Path"
+            }
+          },
+          "required": [
+            "version",
+            "source",
+            "as_of",
+            "trade_date",
+            "timezone",
+            "market_session",
+            "run_id"
+          ],
+          "title": "Meta",
+          "type": "object"
+        }
+      },
+      "additionalProperties": true,
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/Meta"
+        },
+        "data": {
+          "$ref": "#/$defs/BreadthData"
+        }
+      },
+      "required": [
+        "meta",
+        "data"
+      ],
+      "title": "BreadthPayload",
+      "type": "object"
+    },
+    "SentimentPayload": {
+      "$defs": {
+        "Meta": {
+          "additionalProperties": true,
+          "properties": {
+            "version": {
+              "title": "Version",
+              "type": "string"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            },
+            "as_of": {
+              "title": "As Of",
+              "type": "string"
+            },
+            "trade_date": {
+              "title": "Trade Date",
+              "type": "string"
+            },
+            "timezone": {
+              "title": "Timezone",
+              "type": "string"
+            },
+            "market_session": {
+              "title": "Market Session",
+              "type": "string"
+            },
+            "run_id": {
+              "title": "Run Id",
+              "type": "string"
+            },
+            "storage_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Storage Path"
+            }
+          },
+          "required": [
+            "version",
+            "source",
+            "as_of",
+            "trade_date",
+            "timezone",
+            "market_session",
+            "run_id"
+          ],
+          "title": "Meta",
+          "type": "object"
+        },
+        "SentimentData": {
+          "additionalProperties": true,
+          "properties": {
+            "summary": {
+              "additionalProperties": true,
+              "title": "Summary",
+              "type": "object"
+            },
+            "latest_snapshot": {
+              "additionalProperties": true,
+              "title": "Latest Snapshot",
+              "type": "object"
+            },
+            "brilliant_volatility": {
+              "additionalProperties": true,
+              "title": "Brilliant Volatility",
+              "type": "object"
+            },
+            "sentiment_trend": {
+              "items": {},
+              "title": "Sentiment Trend",
+              "type": "array"
+            },
+            "brilliant_series": {
+              "items": {},
+              "title": "Brilliant Series",
+              "type": "array"
+            },
+            "surge_events": {
+              "items": {},
+              "title": "Surge Events",
+              "type": "array"
+            },
+            "gauges": {
+              "items": {},
+              "title": "Gauges",
+              "type": "array"
+            },
+            "topics": {
+              "items": {},
+              "title": "Topics",
+              "type": "array"
+            },
+            "flows": {
+              "items": {},
+              "title": "Flows",
+              "type": "array"
+            },
+            "warnings": {
+              "items": {},
+              "title": "Warnings",
+              "type": "array"
+            }
+          },
+          "required": [
+            "summary",
+            "latest_snapshot",
+            "brilliant_volatility",
+            "sentiment_trend",
+            "brilliant_series",
+            "surge_events",
+            "gauges",
+            "topics",
+            "flows",
+            "warnings"
+          ],
+          "title": "SentimentData",
+          "type": "object"
+        }
+      },
+      "additionalProperties": true,
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/Meta"
+        },
+        "data": {
+          "$ref": "#/$defs/SentimentData"
+        }
+      },
+      "required": [
+        "meta",
+        "data"
+      ],
+      "title": "SentimentPayload",
+      "type": "object"
+    },
+    "MacroPayload": {
+      "$defs": {
+        "MacroData": {
+          "additionalProperties": true,
+          "properties": {
+            "summary": {
+              "additionalProperties": true,
+              "title": "Summary",
+              "type": "object"
+            },
+            "rates": {
+              "items": {},
+              "title": "Rates",
+              "type": "array"
+            },
+            "fx": {
+              "items": {},
+              "title": "Fx",
+              "type": "array"
+            },
+            "risk_assets": {
+              "items": {},
+              "title": "Risk Assets",
+              "type": "array"
+            },
+            "calendar": {
+              "items": {},
+              "title": "Calendar",
+              "type": "array"
+            },
+            "observations": {
+              "items": {},
+              "title": "Observations",
+              "type": "array"
+            }
+          },
+          "required": [
+            "summary",
+            "rates",
+            "fx",
+            "risk_assets",
+            "calendar",
+            "observations"
+          ],
+          "title": "MacroData",
+          "type": "object"
+        },
+        "Meta": {
+          "additionalProperties": true,
+          "properties": {
+            "version": {
+              "title": "Version",
+              "type": "string"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            },
+            "as_of": {
+              "title": "As Of",
+              "type": "string"
+            },
+            "trade_date": {
+              "title": "Trade Date",
+              "type": "string"
+            },
+            "timezone": {
+              "title": "Timezone",
+              "type": "string"
+            },
+            "market_session": {
+              "title": "Market Session",
+              "type": "string"
+            },
+            "run_id": {
+              "title": "Run Id",
+              "type": "string"
+            },
+            "storage_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Storage Path"
+            }
+          },
+          "required": [
+            "version",
+            "source",
+            "as_of",
+            "trade_date",
+            "timezone",
+            "market_session",
+            "run_id"
+          ],
+          "title": "Meta",
+          "type": "object"
+        }
+      },
+      "additionalProperties": true,
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/Meta"
+        },
+        "data": {
+          "$ref": "#/$defs/MacroData"
+        }
+      },
+      "required": [
+        "meta",
+        "data"
+      ],
+      "title": "MacroPayload",
+      "type": "object"
+    },
+    "JoinQuantEtfStrategyPayload": {
+      "$defs": {
+        "JoinQuantEtfStrategyData": {
+          "additionalProperties": true,
+          "properties": {
+            "strategy": {
+              "additionalProperties": true,
+              "title": "Strategy",
+              "type": "object"
+            },
+            "summary": {
+              "additionalProperties": true,
+              "title": "Summary",
+              "type": "object"
+            },
+            "recommendations": {
+              "items": {},
+              "title": "Recommendations",
+              "type": "array"
+            },
+            "holdings": {
+              "items": {},
+              "title": "Holdings",
+              "type": "array"
+            },
+            "regime": {
+              "additionalProperties": true,
+              "title": "Regime",
+              "type": "object"
+            },
+            "events": {
+              "items": {},
+              "title": "Events",
+              "type": "array"
+            },
+            "logs": {
+              "items": {},
+              "title": "Logs",
+              "type": "array"
+            }
+          },
+          "required": [
+            "strategy",
+            "summary",
+            "recommendations",
+            "holdings",
+            "regime",
+            "events"
+          ],
+          "title": "JoinQuantEtfStrategyData",
+          "type": "object"
+        },
+        "Meta": {
+          "additionalProperties": true,
+          "properties": {
+            "version": {
+              "title": "Version",
+              "type": "string"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            },
+            "as_of": {
+              "title": "As Of",
+              "type": "string"
+            },
+            "trade_date": {
+              "title": "Trade Date",
+              "type": "string"
+            },
+            "timezone": {
+              "title": "Timezone",
+              "type": "string"
+            },
+            "market_session": {
+              "title": "Market Session",
+              "type": "string"
+            },
+            "run_id": {
+              "title": "Run Id",
+              "type": "string"
+            },
+            "storage_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Storage Path"
+            }
+          },
+          "required": [
+            "version",
+            "source",
+            "as_of",
+            "trade_date",
+            "timezone",
+            "market_session",
+            "run_id"
+          ],
+          "title": "Meta",
+          "type": "object"
+        }
+      },
+      "additionalProperties": true,
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/Meta"
+        },
+        "data": {
+          "$ref": "#/$defs/JoinQuantEtfStrategyData"
+        }
+      },
+      "required": [
+        "meta",
+        "data"
+      ],
+      "title": "JoinQuantEtfStrategyPayload",
+      "type": "object"
+    }
+  }
+}

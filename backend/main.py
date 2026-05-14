@@ -21,6 +21,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from backend.schemas import PAYLOAD_SCHEMAS, SchemaValidationError, validate_payload
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data"
@@ -229,11 +231,23 @@ def load_json(path: Path) -> dict[str, Any]:
         with path.open("r", encoding="utf-8") as file:
             payload = json.load(file)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=f"数据文件不存在: {path.relative_to(ROOT)}") from exc
+        storage_path = str(path.relative_to(ROOT))
+        raise HTTPException(
+            status_code=503,
+            detail={"message": "数据文件不存在", "storage_path": storage_path, "missing_fields": []},
+        ) from exc
     except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=500, detail=f"数据文件格式错误: {path.relative_to(ROOT)}") from exc
+        storage_path = str(path.relative_to(ROOT))
+        raise HTTPException(
+            status_code=500,
+            detail={"message": "数据文件格式错误", "storage_path": storage_path, "missing_fields": []},
+        ) from exc
     if not isinstance(payload, dict):
-        raise HTTPException(status_code=500, detail=f"数据文件根节点必须是对象: {path.relative_to(ROOT)}")
+        storage_path = str(path.relative_to(ROOT))
+        raise HTTPException(
+            status_code=500,
+            detail={"message": "数据文件根节点必须是对象", "storage_path": storage_path, "missing_fields": []},
+        )
     return payload
 
 
@@ -790,14 +804,18 @@ def run_live_data_refresh(timeout: int = 45) -> tuple[bool, str]:
     return True, result.stdout.strip()
 
 
+def unavailable_detail(message: str, path: Path) -> dict[str, Any]:
+    return {"message": message, "storage_path": str(path.relative_to(ROOT)), "missing_fields": []}
+
+
 def available_path(spec: EndpointSpec) -> tuple[Path, str]:
     if spec.live_path and spec.live_path.exists():
         return spec.live_path, "live"
-    if spec.live_key:
-        raise HTTPException(status_code=503, detail=f"{spec.path} 实时数据暂不可用")
+    if spec.live_key and spec.live_path:
+        raise HTTPException(status_code=503, detail=unavailable_detail(f"{spec.path} 实时数据暂不可用", spec.live_path))
     if spec.backend_path.exists():
         return spec.backend_path, "backend"
-    raise HTTPException(status_code=503, detail=f"{spec.path} 暂无可用数据")
+    raise HTTPException(status_code=503, detail=unavailable_detail(f"{spec.path} 暂无可用数据", spec.backend_path))
 
 
 def parse_iso_datetime(value: str | None) -> datetime | None:
@@ -858,11 +876,32 @@ def normalize_payload(payload: dict[str, Any], spec: EndpointSpec, source: str, 
     return {"meta": normalized_meta, "data": data}
 
 
+def schema_error_detail(exc: SchemaValidationError) -> dict[str, Any]:
+    return {
+        "message": "数据结构校验失败",
+        "storage_path": exc.storage_path,
+        "missing_fields": exc.missing_fields,
+        "errors": exc.errors,
+    }
+
+
+def validate_response_payload(path: str, payload: dict[str, Any], storage_path: str) -> dict[str, Any]:
+    model = PAYLOAD_SCHEMAS.get(path)
+    if not model:
+        return payload
+    try:
+        validate_payload(model, payload, storage_path)
+    except SchemaValidationError as exc:
+        raise HTTPException(status_code=500, detail=schema_error_detail(exc)) from exc
+    return payload
+
+
 def get_payload(path: str) -> dict[str, Any]:
     spec = ENDPOINTS[path]
     data_path, source = available_path(spec)
     payload = load_json(data_path)
-    return normalize_payload(payload, spec, source, data_path)
+    normalized = normalize_payload(payload, spec, source, data_path)
+    return validate_response_payload(path, normalized, str(data_path.relative_to(ROOT)))
 
 
 def verify_action_permission(request: Request) -> None:
@@ -995,7 +1034,12 @@ def load_strategy_picks_base(strategy: str | None, trade_date: str | None) -> di
     spec = ENDPOINTS["/api/v1/strategies/picks"]
     for path in pick_partition_candidates(strategy, trade_date):
         if path.exists() and path.is_file():
-            return normalize_payload(load_json(path), spec, "backend", path)
+            normalized = normalize_payload(load_json(path), spec, "backend", path)
+            return validate_response_payload(
+                "/api/v1/strategies/picks",
+                normalized,
+                str(path.relative_to(ROOT)),
+            )
     return get_payload("/api/v1/strategies/picks")
 
 
@@ -1262,7 +1306,12 @@ def strategy_picks(
     strategy: str | None = Query(default=None),
     date: str | None = Query(default=None),
 ) -> dict[str, Any]:
-    return filtered_strategy_picks(strategy=strategy, date=date)
+    payload = filtered_strategy_picks(strategy=strategy, date=date)
+    return validate_response_payload(
+        "/api/v1/strategies/picks",
+        payload,
+        payload.get("meta", {}).get("storage_path") or "data/backend/strategies/picks.json",
+    )
 
 
 @app.get("/api/v1/strategies/picks/export")
@@ -1529,7 +1578,8 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
         "monthly_returns": monthly_returns,
         "annotations": strategy_data.get("annotations") if isinstance(strategy_data.get("annotations"), list) else [],
     }
-    return payload
+    return validate_response_payload("/api/v1/performance", payload, str(PERFORMANCE_NAV_PATH.relative_to(ROOT)))
+
 
 @app.get("/api/v1/performance")
 def performance(
@@ -1633,7 +1683,11 @@ def market_heatmap(
     payload["data"]["market"] = market_key if market_key in {"cn", "us"} else "all"
     payload["data"]["groups"] = groups
     payload["data"]["cells"] = cells
-    return payload
+    return validate_response_payload(
+        "/api/v1/market/heatmap",
+        payload,
+        payload.get("meta", {}).get("storage_path") or "data/backend/market/heatmap.json",
+    )
 
 
 @app.get("/api/v1/market/sectors")
@@ -1680,6 +1734,20 @@ def receive_joinquant_signals(request: Request, payload: dict[str, Any] = Body(.
     )
     if stored_logs:
         next_payload["data"]["logs"] = stored_logs[-80:]
+    normalized_next_payload = normalize_payload(
+        next_payload,
+        ENDPOINTS["/api/v1/strategies/etf"],
+        "joinquant",
+        ETF_STRATEGY_PATH,
+    )
+    try:
+        validate_payload(
+            PAYLOAD_SCHEMAS["/api/v1/strategies/etf"],
+            normalized_next_payload,
+            str(ETF_STRATEGY_PATH.relative_to(ROOT)),
+        )
+    except SchemaValidationError as exc:
+        raise HTTPException(status_code=500, detail=schema_error_detail(exc)) from exc
     write_json_atomic(ETF_STRATEGY_PATH, next_payload)
     append_jsonl(
         JOINQUANT_SIGNAL_LOG_PATH,
@@ -1692,7 +1760,11 @@ def receive_joinquant_signals(request: Request, payload: dict[str, Any] = Body(.
             "payload": redact_secret_fields(payload),
         },
     )
-    return normalize_payload(next_payload, ENDPOINTS["/api/v1/strategies/etf"], "joinquant", ETF_STRATEGY_PATH)
+    return validate_response_payload(
+        "/api/v1/strategies/etf",
+        normalized_next_payload,
+        str(ETF_STRATEGY_PATH.relative_to(ROOT)),
+    )
 
 
 @app.get("/api/v1/strategies/etf/logs")
