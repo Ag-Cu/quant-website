@@ -2,27 +2,31 @@
   "meta": {
     "version": "1.0",
     "source": "live",
-    "as_of": "2026-05-14T22:20:31+08:00",
+    "as_of": "2026-05-14T23:20:25+08:00",
     "trade_date": "2026-05-14",
     "timezone": "Asia/Hong_Kong",
     "market_session": "closed",
-    "run_id": "live-sentiment-20260514-222031",
-    "stale_seconds": 0
+    "run_id": "live-sentiment-20260514-232025",
+    "stale_seconds": 0,
+    "source_quality": "proxy"
   },
   "data": {
     "source_algorithm": {
-      "name": "行业热力散户情绪代理指标",
+      "name": "行业/指数宽度散户情绪代理指标",
       "source_file": "scripts/update_live_data.py",
-      "data_source": "东方财富行业板块公开接口",
+      "data_source": "market breadth proxy from data/live/breadth.json",
+      "source_quality": "proxy",
       "time_window": "daily snapshot",
-      "surge_rule": "由总体行业热度、强势行业数量、行业涨跌幅合成",
+      "surge_rule": "强势行业/指数桶数量（宽度 >= 70）替代分钟成交激增次数",
       "excluded_minutes": [],
       "brilliant_window_minutes": null,
-      "volatility_formula": "sentiment_value = clipped(sentiment_temperature / 650)",
+      "volatility_formula": "sentiment_value = clipped((market_width * 0.72 + strong_industries * 1.5 + avg_industry_change * 2 + 18) / 650)",
+      "warning_line": 0.15,
       "output_fields": [
-        "sentiment_value",
-        "temperature",
-        "strong_industry_count"
+        "daily_brilliant_vol",
+        "surge_count",
+        "close",
+        "source_quality"
       ]
     },
     "summary": {
@@ -31,32 +35,35 @@
       "temperature": 26,
       "daily_brilliant_vol": 0.04,
       "surge_count": 0,
-      "tracked_symbol": "INDUSTRY_HEAT",
+      "tracked_symbol": "BREADTH_PROXY",
       "turnover_vs_20d_pct": 118,
       "margin_heat_pct": 54,
-      "hot_topic_count": 0
+      "hot_topic_count": 0,
+      "source_quality": "proxy"
     },
     "latest_snapshot": {
-      "updated_at": "2026-05-14T22:20:31+08:00",
-      "update_frequency": "远端每日自动更新",
-      "symbol": "MARKET",
-      "name": "全市场行业热度",
+      "updated_at": "2026-05-14T23:20:25+08:00",
+      "update_frequency": "真实源不可用时降级更新",
+      "symbol": "BREADTH_PROXY",
+      "name": "代理指标：全市场宽度热度",
       "sentiment_value": 0.04,
       "status": "淡定",
       "last_count": 0,
-      "warning_line": 0.15
+      "warning_line": 0.15,
+      "source_quality": "proxy"
     },
     "brilliant_volatility": {
-      "symbol": "INDUSTRY_HEAT",
-      "name": "行业热力",
+      "symbol": "BREADTH_PROXY",
+      "name": "代理指标：全市场宽度热度",
       "close": 16.0,
       "daily_brilliant_vol": 0.04,
       "surge_count": 0,
-      "last_surge_time": "22:20",
+      "last_surge_time": "23:20",
       "intraday_signal": "淡定",
-      "signal_detail": "当前为公开行业热力合成的情绪代理指标；后续可替换为 yy1min 的真实 1 分钟耀眼波动率。",
-      "baseline": "industry heat proxy",
-      "window": "daily snapshot"
+      "signal_detail": "真实散户情绪/耀眼波动率分钟源不可用，当前为全市场宽度代理指标。",
+      "baseline": "强势行业/指数桶数量（宽度 >= 70）替代分钟成交激增次数",
+      "window": "daily snapshot",
+      "source_quality": "proxy"
     },
     "sentiment_trend": [
       {
@@ -304,24 +311,24 @@
     ],
     "gauges": [
       {
-        "name": "总体行业热度",
+        "name": "总体行业/指数热度",
         "value": 16.0,
         "detail": "来自市场宽度 live 数据"
       },
       {
-        "name": "强势行业数量",
+        "name": "强势行业/指数数量",
         "value": 0,
-        "detail": "0 个行业宽度 >= 70"
+        "detail": "0 个宽度 >= 70"
       },
       {
-        "name": "平均行业涨跌",
+        "name": "平均涨跌",
         "value": 32,
         "detail": "-1.84%"
       },
       {
-        "name": "情绪温度",
-        "value": 26,
-        "detail": "合成代理指标"
+        "name": "数据质量",
+        "value": 35,
+        "detail": "代理指标"
       }
     ],
     "topics": [
@@ -367,8 +374,8 @@
     "warnings": [
       {
         "level": "info",
-        "title": "情绪指标已自动更新",
-        "detail": "当前情绪值 0.0400，预警线 0.15。"
+        "title": "当前为代理指标",
+        "detail": "当前情绪值 0.0400，预警线 0.15。真实散户情绪/耀眼波动率分钟源不可用，当前为全市场宽度代理指标。"
       }
     ]
   }

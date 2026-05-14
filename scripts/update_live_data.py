@@ -35,6 +35,9 @@ EASTMONEY_QUOTE_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get"
 SINA_KLINE_URL = "https://quotes.sina.cn/cn/api/openapi.php/CN_MarketDataService.getKLineData"
 SINA_QUOTE_URL = "https://hq.sinajs.cn/list={symbols}"
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+SENTIMENT_WARNING_LINE = 0.15
+BRILLIANT_WINDOW_MINUTES = 5
+SENTIMENT_EXCLUDED_MINUTES = ("09:30", "09:31", "13:01", "14:58", "14:59", "15:00")
 
 WATCHLIST_CONFIG = [
     {"symbol": "NVDA", "name": "NVIDIA Corp", "logo": "N", "sector": "科技股", "provider": "yahoo", "provider_symbol": "NVDA"},
@@ -108,6 +111,49 @@ class BoardRecord:
         if self.total_count <= 0:
             return 0.0
         return round(self.up_count * 100.0 / self.total_count)
+
+
+@dataclass(frozen=True)
+class BreadthSource:
+    records: list["BoardRecord"]
+    name: str
+    quality: str
+    universe: str
+    industry_standard: str
+    notes: list[str]
+
+
+@dataclass(frozen=True)
+class SentimentMinuteRecord:
+    timestamp: datetime
+    close: float
+    volume: float
+    symbol: str
+    name: str
+
+
+@dataclass(frozen=True)
+class SentimentSignal:
+    source_quality: str
+    source_name: str
+    data_source: str
+    source_file: str
+    symbol: str
+    name: str
+    close: float | None
+    sentiment_value: float
+    temperature: int
+    surge_count: int
+    last_surge_time: str | None
+    status: str
+    warning_line: float
+    signal_detail: str
+    time_window: str
+    excluded_minutes: list[str]
+    brilliant_window_minutes: int | None
+    volatility_formula: str
+    surge_rule: str
+    trend_value: float
 
 
 @dataclass(frozen=True)
@@ -710,6 +756,162 @@ def proxy_industry_boards_from_quotes(quotes: dict[str, QuoteRecord]) -> list[Bo
     return records
 
 
+def previous_breadth_records() -> list[BoardRecord]:
+    for path in (LIVE_DIR / "breadth.json", BACKEND_DIR / "market" / "breadth.json"):
+        if not path.exists():
+            continue
+        try:
+            payload = load_json(path)
+        except Exception:
+            continue
+        rows = payload.get("data", {}).get("industry_width", [])
+        records: list[BoardRecord] = []
+        for index, row in enumerate(rows, 1):
+            if not isinstance(row, dict):
+                continue
+            total = max(1, normalize_int(row.get("total_count")) or 100)
+            width = max(0, min(100, normalize_number(row.get("width_pct"))))
+            up = round(total * width / 100)
+            down = max(0, total - up)
+            records.append(
+                BoardRecord(
+                    code=str(row.get("industry_code") or f"previous-{index}"),
+                    name=str(row.get("name") or f"历史宽度{index}"),
+                    change_pct=normalize_number(row.get("change_pct")),
+                    up_count=up,
+                    down_count=down,
+                    flat_count=0,
+                )
+            )
+        if records:
+            return records
+    return []
+
+
+def fetch_eastmoney_all_a_breadth() -> list[BoardRecord]:
+    """Fetch whole-market A-share breadth as an index/universe breadth source.
+
+    Eastmoney's clist endpoint can page through all Shanghai/Shenzhen A shares.
+    We aggregate advancers/decliners by exchange and by common broad index style
+    buckets so the fallback universe is no longer limited to HEATMAP_CONFIG.
+    """
+    fields = "f12,f14,f3,f13"
+    page_size = 500
+    rows: list[dict[str, Any]] = []
+    for page in range(1, 12):
+        params = {
+            "pn": str(page),
+            "pz": str(page_size),
+            "po": "1",
+            "np": "1",
+            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+            "fltt": "2",
+            "invt": "2",
+            "fid": "f3",
+            "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
+            "fields": fields,
+        }
+        data = http_json(f"{EASTMONEY_BOARD_URL}?{urllib.parse.urlencode(params)}")
+        page_rows = data.get("data", {}).get("diff", []) or []
+        if not page_rows:
+            break
+        rows.extend(row for row in page_rows if isinstance(row, dict))
+        if len(page_rows) < page_size:
+            break
+    if not rows:
+        return []
+
+    buckets: dict[str, list[float]] = {
+        "全A等权": [],
+        "沪市A股": [],
+        "深市A股": [],
+        "沪深300近似": [],
+        "中证500/1000近似": [],
+        "创业板近似": [],
+    }
+    for row in rows:
+        code = str(row.get("f12") or "").strip()
+        change_pct = optional_number(row.get("f3"))
+        if not code or change_pct is None:
+            continue
+        buckets["全A等权"].append(change_pct)
+        if code.startswith("6"):
+            buckets["沪市A股"].append(change_pct)
+        else:
+            buckets["深市A股"].append(change_pct)
+        if code.startswith(("600", "601", "603", "000", "001", "002")):
+            buckets["沪深300近似"].append(change_pct)
+        if code.startswith(("002", "003", "300", "301", "688")):
+            buckets["中证500/1000近似"].append(change_pct)
+        if code.startswith(("300", "301")):
+            buckets["创业板近似"].append(change_pct)
+
+    records: list[BoardRecord] = []
+    for index, (name, changes) in enumerate(buckets.items(), 1):
+        if not changes:
+            continue
+        records.append(
+            BoardRecord(
+                code=f"all-a-{index}",
+                name=name,
+                change_pct=round(sum(changes) / len(changes), 2),
+                up_count=sum(1 for value in changes if value > 0),
+                down_count=sum(1 for value in changes if value < 0),
+                flat_count=sum(1 for value in changes if value == 0),
+            )
+        )
+    return records
+
+
+def get_breadth_source(quotes: dict[str, QuoteRecord] | None = None) -> BreadthSource:
+    try:
+        industry_records = fetch_industry_boards()
+        if industry_records:
+            return BreadthSource(
+                records=industry_records,
+                name="东方财富全市场行业板块宽度",
+                quality="real",
+                universe="东方财富全量行业板块成分股",
+                industry_standard="东方财富行业分类",
+                notes=["优先使用东方财富行业板块接口 f104/f105/f106 上涨、下跌、平盘成分家数。"],
+            )
+    except Exception as exc:
+        print(f"warning: eastmoney industry board fetch failed: {exc}")
+
+    try:
+        market_records = fetch_eastmoney_all_a_breadth()
+        if market_records:
+            return BreadthSource(
+                records=market_records,
+                name="东方财富全A/指数成分近似宽度",
+                quality="real",
+                universe="东方财富沪深 A 股 clist 全市场行情分页",
+                industry_standard="全A、沪深交易所、创业板及宽基指数样式代码桶",
+                notes=[
+                    "当行业板块接口不可用时，分页拉取沪深 A 股全市场涨跌幅。",
+                    "沪深300/中证500/1000为公开代码前缀近似桶，用于宽基成分宽度观察，不再依赖 HEATMAP_CONFIG 监控池。",
+                ],
+            )
+    except Exception as exc:
+        print(f"warning: eastmoney all-a breadth fetch failed: {exc}")
+
+    proxy_records = proxy_industry_boards_from_quotes(quotes or {})
+    proxy_universe = "HEATMAP_CONFIG 监控池真实 quote"
+    proxy_notes = ["真实全市场行业/指数成分宽度源不可用，降级为监控池代理指标。"]
+    if not proxy_records:
+        proxy_records = previous_breadth_records()
+        proxy_universe = "上一可用 breadth 快照"
+        proxy_notes.append("监控池 quote 同样不可用，沿用上一可用宽度快照并标记为 proxy。")
+    return BreadthSource(
+        records=proxy_records,
+        name="真实行情监控池代理宽度",
+        quality="proxy",
+        universe=proxy_universe,
+        industry_standard="前端监控分组/历史宽度列",
+        notes=proxy_notes,
+    )
+
+
 def align_heatmap_rows(old_rows: list[dict[str, Any]], old_columns: list[str], columns: list[str]) -> list[dict[str, Any]]:
     aligned: list[dict[str, Any]] = []
     old_index = {name: index for index, name in enumerate(old_columns)}
@@ -731,11 +933,23 @@ def align_heatmap_rows(old_rows: list[dict[str, Any]], old_columns: list[str], c
     return aligned
 
 
-def build_breadth_payload(records: list[BoardRecord] | None = None, source_name: str = "东方财富行业热力宽度") -> dict[str, Any]:
+def build_breadth_payload(source: BreadthSource | list[BoardRecord] | None = None, source_name: str = "东方财富全市场行业板块宽度") -> dict[str, Any]:
     payload = base_payload("breadth")
-    records = records if records is not None else fetch_industry_boards()
+    if isinstance(source, BreadthSource):
+        breadth_source = source
+    else:
+        records = source if source is not None else fetch_industry_boards()
+        breadth_source = BreadthSource(
+            records=records,
+            name=source_name,
+            quality="proxy" if "代理" in source_name else "real",
+            universe="东方财富行业板块" if source_name.startswith("东方财富") else "监控池真实 quote",
+            industry_standard="东方财富行业分类" if source_name.startswith("东方财富") else "前端监控分组",
+            notes=["优先使用东方财富行业板块接口。", "当全市场真实源不可用时，降级为监控池代理宽度。"],
+        )
+    records = breadth_source.records
     if not records:
-        raise RuntimeError("No industry board records returned")
+        raise RuntimeError("No breadth records returned")
 
     # Keep a stable, readable industry order by current board list order.
     industry_names = [record.name for record in records]
@@ -777,19 +991,17 @@ def build_breadth_payload(records: list[BoardRecord] | None = None, source_name:
 
     data = payload.setdefault("data", {})
     data["source_algorithm"] = {
-        "name": source_name,
+        "name": breadth_source.name,
         "source_file": "scripts/update_live_data.py",
-        "universe": "东方财富行业板块" if source_name.startswith("东方财富") else "监控池真实 quote",
-        "industry_standard": "东方财富行业分类" if source_name.startswith("东方财富") else "前端监控分组",
+        "universe": breadth_source.universe,
+        "industry_standard": breadth_source.industry_standard,
         "lookback_days": 10,
         "ma_window_days": None,
         "price_field": "realtime_advancers",
         "formula": "行业上涨家数 / (上涨家数 + 下跌家数 + 平盘家数) * 100",
         "output_table": "data/live/breadth.json",
-        "notes": [
-            "优先使用东方财富行业板块接口。",
-            "当行业板块公开接口不可用时，使用真实 quote 按监控分组生成代理宽度。",
-        ],
+        "source_quality": breadth_source.quality,
+        "notes": breadth_source.notes,
     }
     data["summary"] = {
         **data.get("summary", {}),
@@ -813,7 +1025,7 @@ def build_breadth_payload(records: list[BoardRecord] | None = None, source_name:
         "columns": columns,
         "rows": rows,
     }
-    update_meta(payload, "live-breadth")
+    update_meta(payload, "live-breadth", source_quality=breadth_source.quality)
     return payload
 
 
@@ -971,6 +1183,215 @@ def trend_value_from_end(trend: list[dict[str, Any]], offset: int, default: Any 
     return trend[-1 - offset].get("value")
 
 
+
+def is_excluded_sentiment_minute(timestamp: datetime) -> bool:
+    return timestamp.strftime("%H:%M") in SENTIMENT_EXCLUDED_MINUTES
+
+
+def parse_sentiment_timestamp(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    candidates = [raw]
+    if " " in raw and "T" not in raw:
+        candidates.append(raw.replace(" ", "T", 1))
+    for candidate in candidates:
+        try:
+            parsed = datetime.fromisoformat(candidate)
+            return parsed.astimezone(HK_TZ) if parsed.tzinfo else parsed.replace(tzinfo=HK_TZ)
+        except ValueError:
+            continue
+    if re.fullmatch(r"\d{2}:\d{2}(:\d{2})?", raw):
+        today = now_hk().date()
+        try:
+            parsed_time = datetime.strptime(raw[:5], "%H:%M").time()
+        except ValueError:
+            return None
+        return datetime.combine(today, parsed_time, HK_TZ)
+    return None
+
+
+def normalize_sentiment_minute_row(row: dict[str, Any], default_symbol: str, default_name: str) -> SentimentMinuteRecord | None:
+    timestamp = parse_sentiment_timestamp(row.get("timestamp") or row.get("datetime") or row.get("date") or row.get("time"))
+    close = optional_number(row.get("close") or row.get("price") or row.get("last_price"))
+    volume = optional_number(row.get("volume") or row.get("vol") or row.get("money") or row.get("turnover"))
+    if timestamp is None or close is None or volume is None:
+        return None
+    return SentimentMinuteRecord(
+        timestamp=timestamp,
+        close=close,
+        volume=volume,
+        symbol=str(row.get("symbol") or default_symbol),
+        name=str(row.get("name") or default_name),
+    )
+
+
+def parse_sentiment_minute_text(text: str, default_symbol: str, default_name: str) -> list[SentimentMinuteRecord]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return []
+    delimiter = "\t" if "\t" in lines[0] else ","
+    headers = [part.strip().lower() for part in lines[0].split(delimiter)]
+    has_header = any(name in headers for name in ("time", "timestamp", "datetime", "close", "volume"))
+    records: list[SentimentMinuteRecord] = []
+    data_lines = lines[1:] if has_header else lines
+    for line in data_lines:
+        parts = [part.strip() for part in line.split(delimiter)]
+        if has_header:
+            row = {headers[index]: value for index, value in enumerate(parts) if index < len(headers)}
+        else:
+            row = {"time": parts[0] if parts else "", "close": parts[1] if len(parts) > 1 else "", "volume": parts[2] if len(parts) > 2 else ""}
+        record = normalize_sentiment_minute_row(row, default_symbol, default_name)
+        if record:
+            records.append(record)
+    return records
+
+
+def load_sentiment_minute_records() -> tuple[list[SentimentMinuteRecord], str, str, str]:
+    """Load real yy1min/retail sentiment minutes from a configured URL or file.
+
+    Supported env/config inputs:
+    - RETAIL_SENTIMENT_MINUTE_URL: JSON/CSV endpoint.
+    - RETAIL_SENTIMENT_MINUTE_PATH: JSON/CSV/TXT path; defaults to data/config/retail_sentiment_minutes.json.
+    Rows need timestamp/time, close/price and volume/vol fields.
+    """
+    default_symbol = os.getenv("RETAIL_SENTIMENT_SYMBOL", "159915.XSHE")
+    default_name = os.getenv("RETAIL_SENTIMENT_NAME", "创业板ETF")
+    source_url = os.getenv("RETAIL_SENTIMENT_MINUTE_URL", "").strip()
+    source_path = os.getenv("RETAIL_SENTIMENT_MINUTE_PATH", "").strip()
+    source_text = ""
+    source_file = ""
+    data_source = ""
+    if source_url:
+        source_text = http_text(source_url, timeout=18)
+        source_file = source_url
+        data_source = "configured retail sentiment minute URL"
+    else:
+        path = Path(source_path) if source_path else CONFIG_DIR / "retail_sentiment_minutes.json"
+        if not path.is_absolute():
+            path = ROOT / path
+        if not path.exists():
+            return [], str(path.relative_to(ROOT) if path.is_relative_to(ROOT) else path), "未配置真实分钟源", default_symbol
+        source_text = path.read_text(encoding="utf-8")
+        source_file = str(path.relative_to(ROOT) if path.is_relative_to(ROOT) else path)
+        data_source = "configured retail sentiment minute file"
+
+    records: list[SentimentMinuteRecord] = []
+    try:
+        payload = json.loads(source_text)
+        if isinstance(payload, dict):
+            default_symbol = str(payload.get("symbol") or default_symbol)
+            default_name = str(payload.get("name") or default_name)
+            raw_rows = payload.get("rows") or payload.get("data") or payload.get("minutes") or []
+        else:
+            raw_rows = payload
+        if isinstance(raw_rows, list):
+            for item in raw_rows:
+                if isinstance(item, dict):
+                    record = normalize_sentiment_minute_row(item, default_symbol, default_name)
+                    if record:
+                        records.append(record)
+    except json.JSONDecodeError:
+        records = parse_sentiment_minute_text(source_text, default_symbol, default_name)
+    return records, source_file, data_source, default_symbol
+
+
+def build_real_sentiment_signal() -> SentimentSignal | None:
+    records, source_file, data_source, default_symbol = load_sentiment_minute_records()
+    records = sorted((row for row in records if not is_excluded_sentiment_minute(row.timestamp)), key=lambda row: row.timestamp)
+    if len(records) < BRILLIANT_WINDOW_MINUTES + 3:
+        return None
+    volumes = [row.volume for row in records]
+    mean_volume = sum(volumes) / len(volumes)
+    variance = sum((value - mean_volume) ** 2 for value in volumes) / max(1, len(volumes) - 1)
+    std_volume = math.sqrt(variance)
+    surge_threshold = mean_volume + std_volume
+    surge_indexes = [index for index, row in enumerate(records) if row.volume > surge_threshold and index + BRILLIANT_WINDOW_MINUTES <= len(records)]
+    vols: list[float] = []
+    surge_events: list[dict[str, Any]] = []
+    for index in surge_indexes:
+        window = records[index:index + BRILLIANT_WINDOW_MINUTES]
+        returns: list[float] = []
+        for left, right in zip(window, window[1:]):
+            if left.close:
+                returns.append((right.close - left.close) * 100.0 / left.close)
+        if not returns:
+            continue
+        mean_return = sum(returns) / len(returns)
+        return_std = math.sqrt(sum((value - mean_return) ** 2 for value in returns) / max(1, len(returns) - 1))
+        vols.append(return_std)
+        first = records[index]
+        previous_volume = records[index - 1].volume if index else mean_volume
+        surge_events.append(
+            {
+                "time": first.timestamp.strftime("%H:%M"),
+                "volume_increase_ratio": round(first.volume / max(previous_volume, 1), 2),
+                "return_std": round(return_std, 4),
+                "price_change_pct": round((window[-1].close - first.close) * 100.0 / first.close, 4) if first.close else 0,
+            }
+        )
+    daily_brilliant_vol = round(sum(vols) / len(vols), 4) if vols else 0.0
+    warning_line = SENTIMENT_WARNING_LINE
+    status = "预警" if daily_brilliant_vol >= warning_line else "淡定"
+    latest = records[-1]
+    first = records[0]
+    temperature = round(max(0, min(100, daily_brilliant_vol * 650)))
+    return SentimentSignal(
+        source_quality="real",
+        source_name="真实 1 分钟耀眼波动率",
+        data_source=data_source,
+        source_file=source_file,
+        symbol=latest.symbol or default_symbol,
+        name=latest.name or latest.symbol or default_symbol,
+        close=latest.close,
+        sentiment_value=daily_brilliant_vol,
+        temperature=temperature,
+        surge_count=len(surge_events),
+        last_surge_time=surge_events[-1]["time"] if surge_events else None,
+        status=status,
+        warning_line=warning_line,
+        signal_detail=f"真实分钟源计算值 {'高于' if daily_brilliant_vol >= warning_line else '低于'}预警线 {warning_line:.2f}。",
+        time_window=f"{first.timestamp.strftime('%H:%M')} - {latest.timestamp.strftime('%H:%M')}",
+        excluded_minutes=list(SENTIMENT_EXCLUDED_MINUTES),
+        brilliant_window_minutes=BRILLIANT_WINDOW_MINUTES,
+        volatility_formula="成交量激增分钟及后续 4 分钟的 1 分钟收益率标准差均值",
+        surge_rule="volume > mean(volume) + std(volume)，并排除开盘/午后首分钟/尾盘集合竞价分钟",
+        trend_value=daily_brilliant_vol,
+    )
+
+
+def build_proxy_sentiment_signal(summary: dict[str, Any], industry_width: list[dict[str, Any]]) -> SentimentSignal:
+    overall = normalize_number(summary.get("market_width_pct"), 50)
+    strong_count = sum(1 for row in industry_width if normalize_number(row.get("width_pct")) >= 70)
+    avg_change = sum(normalize_number(row.get("change_pct")) for row in industry_width) / max(1, len(industry_width))
+    temperature = round(max(0, min(100, overall * 0.72 + strong_count * 1.5 + max(-5, min(5, avg_change)) * 2 + 18)))
+    sentiment_value = round(max(0.02, min(1.1, temperature / 650)), 4)
+    warning_line = SENTIMENT_WARNING_LINE
+    status = "预警" if sentiment_value >= warning_line else "淡定"
+    return SentimentSignal(
+        source_quality="proxy",
+        source_name="行业/指数宽度散户情绪代理指标",
+        data_source="market breadth proxy from data/live/breadth.json",
+        source_file="scripts/update_live_data.py",
+        symbol="BREADTH_PROXY",
+        name="代理指标：全市场宽度热度",
+        close=overall,
+        sentiment_value=sentiment_value,
+        temperature=temperature,
+        surge_count=strong_count,
+        last_surge_time=now_hk().strftime("%H:%M"),
+        status=status,
+        warning_line=warning_line,
+        signal_detail="真实散户情绪/耀眼波动率分钟源不可用，当前为全市场宽度代理指标。",
+        time_window="daily snapshot",
+        excluded_minutes=[],
+        brilliant_window_minutes=None,
+        volatility_formula="sentiment_value = clipped((market_width * 0.72 + strong_industries * 1.5 + avg_industry_change * 2 + 18) / 650)",
+        surge_rule="强势行业/指数桶数量（宽度 >= 70）替代分钟成交激增次数",
+        trend_value=sentiment_value,
+    )
+
+
 def build_sentiment_payload(breadth: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = base_payload("sentiment")
     if breadth is None:
@@ -978,69 +1399,80 @@ def build_sentiment_payload(breadth: dict[str, Any] | None = None) -> dict[str, 
     summary = breadth.get("data", {}).get("summary", {})
     industry_width = breadth.get("data", {}).get("industry_width", [])
 
-    overall = normalize_number(summary.get("market_width_pct"), 50)
-    strong_count = sum(1 for row in industry_width if normalize_number(row.get("width_pct")) >= 70)
-    avg_change = sum(normalize_number(row.get("change_pct")) for row in industry_width) / max(1, len(industry_width))
-    temperature = round(max(0, min(100, overall * 0.72 + strong_count * 1.5 + max(-5, min(5, avg_change)) * 2 + 18)))
-    sentiment_value = round(max(0.02, min(1.1, temperature / 650)), 4)
-    warning_line = 0.15
-    status = "预警" if sentiment_value >= warning_line else "淡定"
+    signal = build_real_sentiment_signal()
+    if signal is None:
+        signal = build_proxy_sentiment_signal(summary, industry_width)
     today = trade_date()
 
     data = payload.setdefault("data", {})
     trend = data.get("sentiment_trend") or []
-    trend = append_series(trend, {"date": today, "value": sentiment_value}, limit=80)
+    trend = append_series(trend, {"date": today, "value": signal.trend_value}, limit=80)
 
     data["source_algorithm"] = {
-        "name": "行业热力散户情绪代理指标",
-        "source_file": "scripts/update_live_data.py",
-        "data_source": "东方财富行业板块公开接口",
-        "time_window": "daily snapshot",
-        "surge_rule": "由总体行业热度、强势行业数量、行业涨跌幅合成",
-        "excluded_minutes": [],
-        "brilliant_window_minutes": None,
-        "volatility_formula": "sentiment_value = clipped(sentiment_temperature / 650)",
-        "output_fields": ["sentiment_value", "temperature", "strong_industry_count"],
+        "name": signal.source_name,
+        "source_file": signal.source_file,
+        "data_source": signal.data_source,
+        "source_quality": signal.source_quality,
+        "time_window": signal.time_window,
+        "surge_rule": signal.surge_rule,
+        "excluded_minutes": signal.excluded_minutes,
+        "brilliant_window_minutes": signal.brilliant_window_minutes,
+        "volatility_formula": signal.volatility_formula,
+        "warning_line": signal.warning_line,
+        "output_fields": ["daily_brilliant_vol", "surge_count", "close", "source_quality"],
     }
     data["summary"] = {
         **data.get("summary", {}),
-        "score": temperature,
-        "label": "活跃" if temperature >= 70 else "中性" if temperature >= 45 else "低迷",
-        "temperature": temperature,
-        "daily_brilliant_vol": sentiment_value,
-        "surge_count": strong_count,
-        "tracked_symbol": "INDUSTRY_HEAT",
-        "hot_topic_count": strong_count,
+        "score": signal.temperature,
+        "label": "活跃" if signal.temperature >= 70 else "中性" if signal.temperature >= 45 else "低迷",
+        "temperature": signal.temperature,
+        "daily_brilliant_vol": signal.sentiment_value,
+        "surge_count": signal.surge_count,
+        "tracked_symbol": signal.symbol,
+        "hot_topic_count": signal.surge_count,
+        "source_quality": signal.source_quality,
     }
     data["latest_snapshot"] = {
         "updated_at": iso_now(),
-        "update_frequency": "远端每日自动更新",
-        "symbol": "MARKET",
-        "name": "全市场行业热度",
-        "sentiment_value": sentiment_value,
-        "status": status,
-        "last_count": strong_count,
-        "warning_line": warning_line,
+        "update_frequency": "分钟源自动更新" if signal.source_quality == "real" else "真实源不可用时降级更新",
+        "symbol": signal.symbol,
+        "name": signal.name,
+        "sentiment_value": signal.sentiment_value,
+        "status": signal.status,
+        "last_count": signal.surge_count,
+        "warning_line": signal.warning_line,
+        "source_quality": signal.source_quality,
     }
     data["brilliant_volatility"] = {
-        "symbol": "INDUSTRY_HEAT",
-        "name": "行业热力",
-        "close": overall,
-        "daily_brilliant_vol": sentiment_value,
-        "surge_count": strong_count,
-        "last_surge_time": now_hk().strftime("%H:%M"),
-        "intraday_signal": status,
-        "signal_detail": "当前为公开行业热力合成的情绪代理指标；后续可替换为 yy1min 的真实 1 分钟耀眼波动率。",
-        "baseline": "industry heat proxy",
-        "window": "daily snapshot",
+        "symbol": signal.symbol,
+        "name": signal.name,
+        "close": signal.close,
+        "daily_brilliant_vol": signal.sentiment_value,
+        "surge_count": signal.surge_count,
+        "last_surge_time": signal.last_surge_time or "--",
+        "intraday_signal": signal.status,
+        "signal_detail": signal.signal_detail,
+        "baseline": signal.surge_rule,
+        "window": signal.time_window,
+        "source_quality": signal.source_quality,
     }
     data["sentiment_trend"] = trend
-    data["gauges"] = [
-        {"name": "总体行业热度", "value": overall, "detail": "来自市场宽度 live 数据"},
-        {"name": "强势行业数量", "value": min(100, strong_count * 4), "detail": f"{strong_count} 个行业宽度 >= 70"},
-        {"name": "平均行业涨跌", "value": round(max(0, min(100, 50 + avg_change * 10))), "detail": f"{avg_change:.2f}%"},
-        {"name": "情绪温度", "value": temperature, "detail": "合成代理指标"},
-    ]
+    if signal.source_quality == "real":
+        data["gauges"] = [
+            {"name": "耀眼波动率", "value": min(100, signal.sentiment_value * 650), "detail": f"预警线 {signal.warning_line:.2f}"},
+            {"name": "成交激增次数", "value": min(100, signal.surge_count * 4), "detail": f"窗口 {signal.time_window}"},
+            {"name": "排除分钟", "value": min(100, len(signal.excluded_minutes) * 10), "detail": "、".join(signal.excluded_minutes)},
+            {"name": "数据质量", "value": 100, "detail": "真实分钟源"},
+        ]
+    else:
+        overall = normalize_number(summary.get("market_width_pct"), 50)
+        avg_change = sum(normalize_number(row.get("change_pct")) for row in industry_width) / max(1, len(industry_width))
+        data["gauges"] = [
+            {"name": "总体行业/指数热度", "value": overall, "detail": "来自市场宽度 live 数据"},
+            {"name": "强势行业/指数数量", "value": min(100, signal.surge_count * 4), "detail": f"{signal.surge_count} 个宽度 >= 70"},
+            {"name": "平均涨跌", "value": round(max(0, min(100, 50 + avg_change * 10))), "detail": f"{avg_change:.2f}%"},
+            {"name": "数据质量", "value": 35, "detail": "代理指标"},
+        ]
     top_topics = sorted(industry_width, key=lambda row: normalize_number(row.get("width_pct")), reverse=True)[:8]
     data["topics"] = [
         {
@@ -1053,12 +1485,12 @@ def build_sentiment_payload(breadth: dict[str, Any] | None = None) -> dict[str, 
     ]
     data["warnings"] = [
         {
-            "level": "warning" if sentiment_value >= warning_line else "info",
-            "title": "情绪指标已自动更新",
-            "detail": f"当前情绪值 {sentiment_value:.4f}，预警线 {warning_line:.2f}。",
+            "level": "warning" if signal.sentiment_value >= signal.warning_line else "info",
+            "title": "情绪指标已自动更新" if signal.source_quality == "real" else "当前为代理指标",
+            "detail": f"当前情绪值 {signal.sentiment_value:.4f}，预警线 {signal.warning_line:.2f}。{signal.signal_detail}",
         }
     ]
-    update_meta(payload, "live-sentiment")
+    update_meta(payload, "live-sentiment", source_quality=signal.source_quality)
     return payload
 
 
@@ -1221,7 +1653,7 @@ def build_market_decision(market: dict[str, Any], etfs: list[dict[str, Any]]) ->
     }
 
 
-def update_meta(payload: dict[str, Any], run_prefix: str) -> None:
+def update_meta(payload: dict[str, Any], run_prefix: str, source_quality: str = "real") -> None:
     payload["meta"] = {
         **payload.get("meta", {}),
         "version": "1.0",
@@ -1232,6 +1664,7 @@ def update_meta(payload: dict[str, Any], run_prefix: str) -> None:
         "market_session": market_session(),
         "run_id": f"{run_prefix}-{now_hk().strftime('%Y%m%d-%H%M%S')}",
         "stale_seconds": 0,
+        "source_quality": source_quality,
     }
 
 
@@ -1264,19 +1697,13 @@ def main() -> None:
         if item["symbol"] not in watched_symbols
     ]
     quotes = fetch_quotes(quote_configs)
-    try:
-        industry_records = fetch_industry_boards()
-        breadth_source = "东方财富行业热力宽度"
-    except Exception as exc:
-        print(f"warning: eastmoney industry board fetch failed: {exc}")
-        industry_records = proxy_industry_boards_from_quotes(quotes)
-        breadth_source = "真实行情监控池代理宽度"
+    breadth_source = get_breadth_source(quotes)
 
     watchlist = build_watchlist_payload(quotes, watchlist_config)
     heatmap = build_heatmap_payload(quotes)
     etf_rankings = build_etf_rankings_payload(quotes)
-    sectors = build_sectors_payload(industry_records)
-    breadth = build_breadth_payload(industry_records, breadth_source)
+    sectors = build_sectors_payload(breadth_source.records)
+    breadth = build_breadth_payload(breadth_source)
     sentiment = build_sentiment_payload(breadth)
     macro = build_macro_payload()
     overview = build_overview_payload(breadth, sentiment, macro, heatmap, etf_rankings, sectors, watchlist)

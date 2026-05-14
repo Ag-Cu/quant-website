@@ -2,27 +2,29 @@
   "meta": {
     "version": "1.0",
     "source": "live",
-    "as_of": "2026-05-14T22:20:31+08:00",
+    "as_of": "2026-05-14T23:20:25+08:00",
     "trade_date": "2026-05-14",
     "timezone": "Asia/Hong_Kong",
     "market_session": "closed",
-    "run_id": "live-breadth-20260514-222031",
-    "stale_seconds": 0
+    "run_id": "live-breadth-20260514-232025",
+    "stale_seconds": 0,
+    "source_quality": "proxy"
   },
   "data": {
     "source_algorithm": {
       "name": "真实行情监控池代理宽度",
       "source_file": "scripts/update_live_data.py",
-      "universe": "监控池真实 quote",
-      "industry_standard": "前端监控分组",
+      "universe": "上一可用 breadth 快照",
+      "industry_standard": "前端监控分组/历史宽度列",
       "lookback_days": 10,
       "ma_window_days": null,
       "price_field": "realtime_advancers",
       "formula": "行业上涨家数 / (上涨家数 + 下跌家数 + 平盘家数) * 100",
       "output_table": "data/live/breadth.json",
+      "source_quality": "proxy",
       "notes": [
-        "优先使用东方财富行业板块接口。",
-        "当行业板块公开接口不可用时，使用真实 quote 按监控分组生成代理宽度。"
+        "真实全市场行业/指数成分宽度源不可用，降级为监控池代理指标。",
+        "监控池 quote 同样不可用，沿用上一可用宽度快照并标记为 proxy。"
       ]
     },
     "summary": {
