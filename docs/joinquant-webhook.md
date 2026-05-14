@@ -14,13 +14,16 @@ POST /api/v1/joinquant/signals
 
 ```bash
 export JOINQUANT_WEBHOOK_TOKEN="replace-with-a-long-random-token"
+export QUANT_ACTION_TOKEN="replace-with-a-long-action-token"
+export QUANT_REQUIRE_ACTION_TOKEN=true
 python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
-聚宽侧请求头带：
+聚宽侧请求头带 webhook token；如果后端配置了 `QUANT_ACTION_TOKEN` 或 `QUANT_REQUIRE_ACTION_TOKEN=true`，还需要同时携带操作令牌：
 
 ```text
 X-Webhook-Token: replace-with-a-long-random-token
+X-Action-Token: replace-with-a-long-action-token
 ```
 
 后端收到信号后会：
@@ -200,6 +203,7 @@ if success and g.enable_stop_loss_trigger:
 curl -X POST http://127.0.0.1:8000/api/v1/joinquant/signals \
   -H "Content-Type: application/json" \
   -H "X-Webhook-Token: replace-with-a-long-random-token" \
+  -H "X-Action-Token: replace-with-a-long-action-token" \
   -d '{"strategy_name":"五福闹新春 v4.3","recommendations":[{"symbol":"518880.XSHG","name":"黄金ETF","action":"buy","score":4.2,"suggested_weight_pct":100}],"events":[{"time":"13:10","label":"测试信号","status":"done"}]}'
 ```
 
