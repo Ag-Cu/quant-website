@@ -53,13 +53,21 @@
 
 ## 当前真实行情源
 
-`scripts/update_live_data.py` 当前使用三类真实行情源写入 `data/live`：
+`scripts/update_live_data.py` 当前使用多类真实行情源写入 `data/live`：
 
 - 新浪实时行情：A 股和 ETF quote，覆盖 `/api/v1/watchlist`、`/api/v1/market/heatmap`、`/api/v1/market/etf-rankings` 的相关字段。
-- Yahoo Finance chart：美股 quote、USD/CNH、美国 10Y 等跨市场指标。
+- Yahoo Finance chart：美股 quote、USD/CNH、美国 10Y、恒生科技等跨市场指标。
+- 财政部-中国国债收益率曲线/中债估值(CCDC)：覆盖 `/api/v1/macro` 的中国 1Y/10Y 国债收益率与日度 BP 变化。
+- 东方财富行情中心：覆盖 `/api/v1/macro` 的沪深300/中证1000/创业板指点位、涨跌幅以及沪深300 PE(TTM)，用于 `risk_preference_score` 和 `equity_bond_spread_pct`。
 - 东方财富行业板块：优先覆盖 `/api/v1/market/sectors` 和 `/api/v1/market/breadth`。如果东方财富公开接口断连，会用已经获取到的真实 quote 按监控分组生成代理宽度，仍然不读取 mock。
 
 当前环境有 `tushare` 包，但没有 `TUSHARE_TOKEN`。后续配置 token 后，可以把 A 股日线、指数、行业和财务字段切换到 Tushare；接口响应结构无需改变。
+
+### `/api/v1/macro` 可复现派生指标
+
+- `equity_bond_spread_pct = 100 / 沪深300 PE(TTM) - 中国 10Y 国债收益率`。其中 PE(TTM) 来自东方财富行情中心，中国 10Y 来自财政部-中国国债收益率曲线/中债估值(CCDC)。
+- `risk_preference_score = clip(50 + 6*沪深300日涨跌幅 + 4*中证1000日涨跌幅 + 5*(股债利差-3.0) - 0.15*中国10Y日变化BP - 3*USD/CNH日涨跌幅, 0, 100)`。
+- `rates[]`、`fx[]`、`risk_assets[]` 每行必须输出 `data_source` 与 `as_of`。当远端数据源不可用时，生成器才允许沿用上一期值，并在 `observations[]` 中追加 `level=warning` 的降级说明；正常情况下不得输出“暂沿用上一值”占位观察项。
 
 ## 后端最小实现
 
