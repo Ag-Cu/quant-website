@@ -185,10 +185,21 @@ ENDPOINTS: dict[str, EndpointSpec] = {
 }
 
 
+def env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_csv(name: str) -> list[str]:
+    return [value.strip() for value in os.getenv(name, "").split(",") if value.strip()]
+
+
 app = FastAPI(title="Quant Dashboard API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=env_csv("QUANT_ALLOWED_ORIGINS"),
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
@@ -856,6 +867,8 @@ def get_payload(path: str) -> dict[str, Any]:
 
 def verify_action_permission(request: Request) -> None:
     expected = os.getenv("QUANT_ACTION_TOKEN", "").strip()
+    if not expected and env_flag("QUANT_REQUIRE_ACTION_TOKEN"):
+        raise HTTPException(status_code=403, detail="权限不足：服务端未配置操作令牌")
     if not expected:
         return
     provided = (request.headers.get("x-action-token") or request.headers.get("authorization") or "").strip()
@@ -1205,7 +1218,8 @@ def watchlist_config() -> dict[str, Any]:
 
 
 @app.post("/api/v1/watchlist")
-def add_watchlist_item(response: Response, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def add_watchlist_item(request: Request, response: Response, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    verify_action_permission(request)
     item = normalize_watchlist_item(payload)
     config = load_watchlist_config()
     items = config["items"]
@@ -1219,9 +1233,11 @@ def add_watchlist_item(response: Response, payload: dict[str, Any] = Body(...)) 
 @app.delete("/api/v1/watchlist/{symbol}")
 def delete_watchlist_item(
     symbol: str,
+    request: Request,
     response: Response,
     market_region: str | None = Query(default=None, alias="market"),
 ) -> dict[str, Any]:
+    verify_action_permission(request)
     probe = normalize_watchlist_item({"symbol": symbol, "market_region": market_region} if market_region else {"symbol": symbol})
     raw_symbol = probe["symbol"]
     region = probe["market_region"]
@@ -1652,6 +1668,7 @@ def strategy_etf() -> dict[str, Any]:
 
 @app.post("/api/v1/joinquant/signals")
 def receive_joinquant_signals(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    verify_action_permission(request)
     verify_joinquant_token(request, payload)
     next_payload = build_etf_strategy_payload_from_joinquant(payload)
     received_at = now_hk().isoformat()

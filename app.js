@@ -929,7 +929,7 @@ function bindWatchlistInteractions() {
     setWatchlistStatus("正在保存并获取行情...");
     form.querySelector("button[type='submit']")?.setAttribute("disabled", "disabled");
     try {
-      const payload = await sendJson("/api/v1/watchlist", { method: "POST", body: JSON.stringify(body) });
+      const payload = await sendJson("/api/v1/watchlist", { method: "POST", headers: actionHeaders(), body: JSON.stringify(body) });
       const refreshMessage = watchlistRefreshMessage(payload, "已保存，行情稍后刷新");
       renderWatchlist(payload);
       updateShell(payload.meta || {}, payload.meta?.source === "cache" ? "cache" : "live");
@@ -948,7 +948,7 @@ function bindWatchlistInteractions() {
       button.textContent = "删除中";
       button.setAttribute("disabled", "disabled");
       try {
-        const payload = await sendJson(`/api/v1/watchlist/${encodeURIComponent(symbol)}?market=${encodeURIComponent(market || "")}`, { method: "DELETE" });
+        const payload = await sendJson(`/api/v1/watchlist/${encodeURIComponent(symbol)}?market=${encodeURIComponent(market || "")}`, { method: "DELETE", headers: actionHeaders() });
         const refreshMessage = watchlistRefreshMessage(payload, "已删除，行情稍后刷新");
         renderWatchlist(payload);
         updateShell(payload.meta || {}, payload.meta?.source === "cache" ? "cache" : "live");

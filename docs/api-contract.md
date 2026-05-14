@@ -73,6 +73,15 @@
 
 FastAPI 已在 `backend/main.py` 中实现上面的路径。字段可以先完整照着 `data/backend/**/*.json` 输出；后续新增字段不会影响前端，删除字段则需要同步前端渲染逻辑。
 
+## 跨域与写接口鉴权
+
+- CORS 来源必须通过环境变量 `QUANT_ALLOWED_ORIGINS` 显式配置白名单，多个来源用英文逗号分隔，例如 `https://quant.example.com,https://ops.example.com`；未配置时不向任意跨域来源开放。
+- 所有会写入配置、动作日志、导出文件或策略数据的写接口都需要操作令牌。客户端可以任选以下一种方式传递同一个 `QUANT_ACTION_TOKEN`：
+  - `X-Action-Token: <token>`
+  - `Authorization: Bearer <token>`
+- 生产或公网部署如需开启写操作，建议同时设置 `QUANT_ACTION_TOKEN` 和 `QUANT_REQUIRE_ACTION_TOKEN=true`。这样即使遗漏 `QUANT_ACTION_TOKEN`，服务端也会拒绝写请求，而不是无鉴权放行。
+- 当前前端会从 `localStorage.quant_action_token` 或 `window.QUANT_ACTION_TOKEN` 读取令牌，并在自选股新增/删除、持仓标记、信号确认、导出和调仓记录等写请求中发送。
+
 ## 总览聚合字段
 
 `/api/v1/dashboard/overview` 是前端首页的主接口。它应该由后端 API 聚合层组装，不建议让前端分别请求热力图、ETF 排名、板块表现和策略状态。
@@ -294,6 +303,8 @@ POST /api/v1/watchlist
 DELETE /api/v1/watchlist/{symbol}
 GET /api/v1/watchlist/{symbol}
 ```
+
+其中 `POST` 和 `DELETE` 属于写接口，必须携带 `X-Action-Token` 或 `Authorization: Bearer ...`。
 
 列表字段：
 
