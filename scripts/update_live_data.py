@@ -35,6 +35,7 @@ EASTMONEY_QUOTE_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get"
 SINA_KLINE_URL = "https://quotes.sina.cn/cn/api/openapi.php/CN_MarketDataService.getKLineData"
 SINA_QUOTE_URL = "https://hq.sinajs.cn/list={symbols}"
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+EASTMONEY_KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 
 WATCHLIST_CONFIG = [
     {"symbol": "NVDA", "name": "NVIDIA Corp", "logo": "N", "sector": "科技股", "provider": "yahoo", "provider_symbol": "NVDA"},
@@ -46,19 +47,46 @@ WATCHLIST_CONFIG = [
 ]
 
 HEATMAP_CONFIG = [
-    {"symbol": "NVDA", "name": "NVIDIA", "sector": "科技", "provider": "yahoo", "provider_symbol": "NVDA", "market_region": "us"},
-    {"symbol": "AAPL", "name": "Apple", "sector": "科技", "provider": "yahoo", "provider_symbol": "AAPL", "market_region": "us"},
-    {"symbol": "MSFT", "name": "Microsoft", "sector": "科技", "provider": "yahoo", "provider_symbol": "MSFT", "market_region": "us"},
-    {"symbol": "TSLA", "name": "Tesla", "sector": "科技", "provider": "yahoo", "provider_symbol": "TSLA", "market_region": "us"},
-    {"symbol": "JPM", "name": "JPMorgan", "sector": "金融", "provider": "yahoo", "provider_symbol": "JPM", "market_region": "us"},
-    {"symbol": "BAC", "name": "Bank of America", "sector": "金融", "provider": "yahoo", "provider_symbol": "BAC", "market_region": "us"},
-    {"symbol": "XOM", "name": "Exxon Mobil", "sector": "能源", "provider": "yahoo", "provider_symbol": "XOM", "market_region": "us"},
-    {"symbol": "JNJ", "name": "Johnson & Johnson", "sector": "医疗", "provider": "yahoo", "provider_symbol": "JNJ", "market_region": "us"},
-    {"symbol": "300308", "name": "中际旭创", "sector": "AI 链", "provider": "eastmoney", "market": "SZ", "market_region": "cn"},
-    {"symbol": "002463", "name": "沪电股份", "sector": "AI 链", "provider": "eastmoney", "market": "SZ", "market_region": "cn"},
-    {"symbol": "300476", "name": "胜宏科技", "sector": "AI 链", "provider": "eastmoney", "market": "SZ", "market_region": "cn"},
-    {"symbol": "600519", "name": "贵州茅台", "sector": "消费", "provider": "eastmoney", "market": "SH", "market_region": "cn"},
+    # US mega-cap and sector leaders. ``index_memberships`` powers the
+    # backend index grouping while keeping the quote fan-out explicit.
+    {"symbol": "NVDA", "name": "NVIDIA", "sector": "科技", "provider": "yahoo", "provider_symbol": "NVDA", "market_region": "us", "index_memberships": ["NASDAQ 100", "S&P 500"]},
+    {"symbol": "AAPL", "name": "Apple", "sector": "科技", "provider": "yahoo", "provider_symbol": "AAPL", "market_region": "us", "index_memberships": ["NASDAQ 100", "S&P 500"]},
+    {"symbol": "MSFT", "name": "Microsoft", "sector": "科技", "provider": "yahoo", "provider_symbol": "MSFT", "market_region": "us", "index_memberships": ["NASDAQ 100", "S&P 500"]},
+    {"symbol": "GOOGL", "name": "Alphabet", "sector": "科技", "provider": "yahoo", "provider_symbol": "GOOGL", "market_region": "us", "index_memberships": ["NASDAQ 100", "S&P 500"]},
+    {"symbol": "META", "name": "Meta", "sector": "科技", "provider": "yahoo", "provider_symbol": "META", "market_region": "us", "index_memberships": ["NASDAQ 100", "S&P 500"]},
+    {"symbol": "AMZN", "name": "Amazon", "sector": "消费", "provider": "yahoo", "provider_symbol": "AMZN", "market_region": "us", "index_memberships": ["NASDAQ 100", "S&P 500"]},
+    {"symbol": "TSLA", "name": "Tesla", "sector": "消费", "provider": "yahoo", "provider_symbol": "TSLA", "market_region": "us", "index_memberships": ["NASDAQ 100", "S&P 500"]},
+    {"symbol": "AVGO", "name": "Broadcom", "sector": "科技", "provider": "yahoo", "provider_symbol": "AVGO", "market_region": "us", "index_memberships": ["NASDAQ 100", "S&P 500"]},
+    {"symbol": "JPM", "name": "JPMorgan", "sector": "金融", "provider": "yahoo", "provider_symbol": "JPM", "market_region": "us", "index_memberships": ["S&P 500", "Dow 30"]},
+    {"symbol": "BAC", "name": "Bank of America", "sector": "金融", "provider": "yahoo", "provider_symbol": "BAC", "market_region": "us", "index_memberships": ["S&P 500"]},
+    {"symbol": "XOM", "name": "Exxon Mobil", "sector": "能源", "provider": "yahoo", "provider_symbol": "XOM", "market_region": "us", "index_memberships": ["S&P 500"]},
+    {"symbol": "JNJ", "name": "Johnson & Johnson", "sector": "医疗", "provider": "yahoo", "provider_symbol": "JNJ", "market_region": "us", "index_memberships": ["S&P 500", "Dow 30"]},
+    {"symbol": "LLY", "name": "Eli Lilly", "sector": "医疗", "provider": "yahoo", "provider_symbol": "LLY", "market_region": "us", "index_memberships": ["S&P 500"]},
+
+    # A-share leaders across broad indices and hot industries. Daily returns
+    # are loaded from Eastmoney K-line history in build_heatmap_payload.
+    {"symbol": "600519", "name": "贵州茅台", "sector": "消费", "provider": "eastmoney", "market": "SH", "market_region": "cn", "index_memberships": ["沪深300", "上证50"]},
+    {"symbol": "000858", "name": "五粮液", "sector": "消费", "provider": "eastmoney", "market": "SZ", "market_region": "cn", "index_memberships": ["沪深300"]},
+    {"symbol": "601318", "name": "中国平安", "sector": "金融", "provider": "eastmoney", "market": "SH", "market_region": "cn", "index_memberships": ["沪深300", "上证50"]},
+    {"symbol": "600036", "name": "招商银行", "sector": "金融", "provider": "eastmoney", "market": "SH", "market_region": "cn", "index_memberships": ["沪深300", "上证50"]},
+    {"symbol": "300750", "name": "宁德时代", "sector": "新能源", "provider": "eastmoney", "market": "SZ", "market_region": "cn", "index_memberships": ["沪深300", "创业板指"]},
+    {"symbol": "002594", "name": "比亚迪", "sector": "新能源", "provider": "eastmoney", "market": "SZ", "market_region": "cn", "index_memberships": ["沪深300"]},
+    {"symbol": "601012", "name": "隆基绿能", "sector": "新能源", "provider": "eastmoney", "market": "SH", "market_region": "cn", "index_memberships": ["沪深300"]},
+    {"symbol": "300308", "name": "中际旭创", "sector": "AI 链", "provider": "eastmoney", "market": "SZ", "market_region": "cn", "index_memberships": ["创业板指", "中证1000"]},
+    {"symbol": "002463", "name": "沪电股份", "sector": "AI 链", "provider": "eastmoney", "market": "SZ", "market_region": "cn", "index_memberships": ["沪深300"]},
+    {"symbol": "300476", "name": "胜宏科技", "sector": "AI 链", "provider": "eastmoney", "market": "SZ", "market_region": "cn", "index_memberships": ["创业板指", "中证1000"]},
+    {"symbol": "688981", "name": "中芯国际", "sector": "半导体", "provider": "eastmoney", "market": "SH", "market_region": "cn", "index_memberships": ["科创50"]},
+    {"symbol": "688256", "name": "寒武纪", "sector": "半导体", "provider": "eastmoney", "market": "SH", "market_region": "cn", "index_memberships": ["科创50"]},
+    {"symbol": "603501", "name": "韦尔股份", "sector": "半导体", "provider": "eastmoney", "market": "SH", "market_region": "cn", "index_memberships": ["沪深300"]},
+    {"symbol": "600276", "name": "恒瑞医药", "sector": "医药", "provider": "eastmoney", "market": "SH", "market_region": "cn", "index_memberships": ["沪深300"]},
+    {"symbol": "300760", "name": "迈瑞医疗", "sector": "医药", "provider": "eastmoney", "market": "SZ", "market_region": "cn", "index_memberships": ["沪深300", "创业板指"]},
+    {"symbol": "601899", "name": "紫金矿业", "sector": "周期", "provider": "eastmoney", "market": "SH", "market_region": "cn", "index_memberships": ["沪深300"]},
+    {"symbol": "600030", "name": "中信证券", "sector": "金融", "provider": "eastmoney", "market": "SH", "market_region": "cn", "index_memberships": ["沪深300", "上证50"]},
+    {"symbol": "000333", "name": "美的集团", "sector": "制造", "provider": "eastmoney", "market": "SZ", "market_region": "cn", "index_memberships": ["沪深300"]},
+    {"symbol": "600887", "name": "伊利股份", "sector": "消费", "provider": "eastmoney", "market": "SH", "market_region": "cn", "index_memberships": ["沪深300"]},
+    {"symbol": "002415", "name": "海康威视", "sector": "科技", "provider": "eastmoney", "market": "SZ", "market_region": "cn", "index_memberships": ["沪深300"]},
 ]
+
 
 ETF_CONFIG = [
     {"symbol": "512100", "name": "中证1000ETF", "market": "SH"},
@@ -456,6 +484,43 @@ def fetch_yahoo_history(symbol: str, period: str = "1M") -> list[float]:
     return [value for value in closes if value is not None]
 
 
+def fetch_eastmoney_daily_history(symbol: str, market: str | None = None, days: int = 110) -> list[float]:
+    """Fetch A-share daily close history from Eastmoney K-line API.
+
+    The returned series contains adjusted daily closes (fqt=1) sorted oldest to
+    newest. A 110 calendar-day window usually covers more than the 63 trading
+    days needed for 3M heatmap returns while keeping requests lightweight.
+    """
+    end = now_hk().date()
+    begin = end - timedelta(days=days)
+    params = {
+        "secid": eastmoney_market_id(symbol, market),
+        "klt": "101",
+        "fqt": "1",
+        "beg": begin.strftime("%Y%m%d"),
+        "end": end.strftime("%Y%m%d"),
+        "fields1": "f1,f2,f3,f4,f5,f6",
+        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+    }
+    data = http_json(f"{EASTMONEY_KLINE_URL}?{urllib.parse.urlencode(params)}")
+    klines = data.get("data", {}).get("klines", []) or []
+    closes: list[float] = []
+    for row in klines:
+        fields = str(row).split(",")
+        if len(fields) < 3:
+            continue
+        close = optional_number(fields[2])
+        if close is not None:
+            closes.append(close)
+    return closes
+
+
+def fetch_history_for_heatmap(item: dict[str, Any]) -> list[float]:
+    if item.get("provider") == "yahoo":
+        return fetch_yahoo_history(item.get("provider_symbol", item["symbol"]), "3M")
+    return fetch_eastmoney_daily_history(item["symbol"], item.get("market"))
+
+
 def period_return_from_prices(prices: list[float], period: str) -> float | None:
     clean = [value for value in prices if value is not None]
     if len(clean) < 2:
@@ -589,15 +654,15 @@ def build_heatmap_payload(quotes: dict[str, QuoteRecord]) -> dict[str, Any]:
         if quote is None:
             continue
         period_returns: dict[str, float] = {}
-        history_symbol = item.get("provider_symbol") if item.get("provider") == "yahoo" else yahoo_symbol(item["symbol"], item.get("market"))
+        history_label = item.get("provider_symbol", item["symbol"]) if item.get("provider") == "yahoo" else eastmoney_market_id(item["symbol"], item.get("market"))
         try:
-            history = fetch_yahoo_history(history_symbol, "3M")
+            history = fetch_history_for_heatmap(item)
             for period in ["1D", "5D", "1M", "3M"]:
                 value = period_return_from_prices(history, period)
                 if value is not None:
                     period_returns[period] = value
         except Exception as exc:
-            print(f"warning: yahoo history failed for {history_symbol}: {exc}")
+            print(f"warning: heatmap history failed for {history_label}: {exc}")
         cells.append(
             {
                 "symbol": item["symbol"],
@@ -609,6 +674,7 @@ def build_heatmap_payload(quotes: dict[str, QuoteRecord]) -> dict[str, Any]:
                 "price": quote.price,
                 "change_pct": quote.change_pct,
                 "returns": period_returns,
+                "index_memberships": item.get("index_memberships") or [],
                 "volume": quote.volume,
                 "market_cap": quote.market_cap,
                 "weight": heatmap_weight(quote),

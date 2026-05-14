@@ -535,11 +535,16 @@ function marketHeatmapTreemap(heatmap = {}, activeTimeframe = "1D", activeGroupB
         ${cells.length ? cells.map((cell) => {
           const weight = Math.max(10, Math.min(28, Number(cell.weight || cell.market_cap_weight || 14)));
           const row = Math.max(14, Math.min(26, Math.round(weight * 0.9)));
-          const change = Number(cell.change_pct || 0);
+          const returns = cell.returns && typeof cell.returns === "object" ? cell.returns : {};
+          const hasPeriodReturn = Object.prototype.hasOwnProperty.call(returns, activeTimeframe) && returns[activeTimeframe] !== null && returns[activeTimeframe] !== undefined;
+          const change = hasPeriodReturn ? Number(returns[activeTimeframe]) : null;
           const isCn = cell.market === "cn";
           const title = isCn ? (cell.display_name || cell.name || cell.symbol) : (cell.symbol || cell.name);
           const subtitle = isCn ? cell.symbol : (cell.display_name || cell.name);
-          return `<div class="treemap-cell ${toneByValue(change)}" style="grid-column: span ${weight}; grid-row: span ${row}; --cell:${heatmapScale(change)};" title="${escapeHtml(cell.market_label || "")} ${escapeHtml(cell.name)} / ${pctText(change)} / volume ${intText(cell.volume)}"><span class="sector-float">${escapeHtml(cell.market_label || "")} · ${escapeHtml(cell.sector)}</span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(subtitle || "")}</small><em>${pctText(change)}</em></div>`;
+          const changeLabel = hasPeriodReturn ? pctText(change) : "无历史数据";
+          const cellTone = hasPeriodReturn ? toneByValue(change) : "neutral";
+          const cellColor = hasPeriodReturn ? heatmapScale(change) : "#2A2F3C";
+          return `<div class="treemap-cell ${cellTone}" style="grid-column: span ${weight}; grid-row: span ${row}; --cell:${cellColor};" title="${escapeHtml(cell.market_label || "")} ${escapeHtml(cell.name)} / ${escapeHtml(activeTimeframe)} ${escapeHtml(changeLabel)} / volume ${intText(cell.volume)}"><span class="sector-float">${escapeHtml(cell.market_label || "")} · ${escapeHtml(cell.sector)}</span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(subtitle || "")}</small><em>${escapeHtml(changeLabel)}</em></div>`;
         }).join("") : `<div class="empty-state treemap-empty">暂无热力图数据</div>`}
       </div>
     </section>
