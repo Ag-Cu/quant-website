@@ -780,7 +780,6 @@ def run_live_data_refresh(timeout: int = 45) -> tuple[bool, str]:
 
 
 def available_path(spec: EndpointSpec) -> tuple[Path, str]:
-    ensure_fresh_live_data(spec)
     if spec.live_path and spec.live_path.exists():
         return spec.live_path, "live"
     if spec.live_key:
