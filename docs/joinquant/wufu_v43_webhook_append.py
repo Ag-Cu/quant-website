@@ -26,7 +26,7 @@ WEBHOOK_URL = "https://quantlife.site/api/v1/joinquant/signals"
 WEBHOOK_TOKEN = "6139de478f78edb474c56f19ec715e35eefb88dd289af28038e2ccb21b260b95"
 WEBHOOK_TIMEOUT = 5
 WEBHOOK_MIN_INTERVAL_SECONDS = 8
-WEBHOOK_MAX_LOG_LINES = 260
+WEBHOOK_MAX_LOG_LINES = 1000
 
 _webhook_last_sent_at = {}
 _webhook_log_buffer = []
@@ -274,7 +274,7 @@ def _webhook_pool_log_lines():
 def _webhook_collect_logs(context, stage, detail):
     _webhook_capture_log("info", "%s: %s" % (stage, detail or ""), stage)
     logs = []
-    logs.extend(_webhook_log_buffer[-120:])
+    logs.extend(_webhook_log_buffer[-420:])
     logs.extend(_webhook_pool_log_lines())
     logs.extend(_webhook_position_log_lines(context))
     logs.extend(_webhook_ranked_log_lines())

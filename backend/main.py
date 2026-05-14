@@ -37,7 +37,8 @@ JOINQUANT_SIGNAL_LOG_PATH = BACKEND_DIR / "strategies" / "joinquant-signals.json
 JOINQUANT_FULL_LOG_PATH = BACKEND_DIR / "strategies" / "joinquant-full-logs.jsonl"
 PERFORMANCE_NAV_PATH = BACKEND_DIR / "performance" / "net-values.json"
 STRATEGY_PICKS_PARTITION_DIR = BACKEND_DIR / "strategies" / "picks"
-MAX_STRATEGY_LOG_LINES = 300
+MAX_STRATEGY_LOG_LINES = 1000
+ETF_INLINE_LOG_LINES = 1000
 STATIC_PAGES = {
     "/": "index.html",
     "/index.html": "index.html",
@@ -1715,8 +1716,8 @@ def strategy_etf() -> dict[str, Any]:
     data = payload.get("data", {})
     logs = data.get("logs") if isinstance(data.get("logs"), list) else []
     if not logs:
-        logs = get_recent_strategy_logs(80, trade_date=payload.get("meta", {}).get("trade_date"))
-    data["logs"] = logs[-80:]
+        logs = get_recent_strategy_logs(ETF_INLINE_LOG_LINES, trade_date=payload.get("meta", {}).get("trade_date"))
+    data["logs"] = logs[-ETF_INLINE_LOG_LINES:]
     return payload
 
 
@@ -1733,7 +1734,7 @@ def receive_joinquant_signals(request: Request, payload: dict[str, Any] = Body(.
         next_payload["meta"]["trade_date"],
     )
     if stored_logs:
-        next_payload["data"]["logs"] = stored_logs[-80:]
+        next_payload["data"]["logs"] = stored_logs[-ETF_INLINE_LOG_LINES:]
     normalized_next_payload = normalize_payload(
         next_payload,
         ENDPOINTS["/api/v1/strategies/etf"],
@@ -1769,7 +1770,7 @@ def receive_joinquant_signals(request: Request, payload: dict[str, Any] = Body(.
 
 @app.get("/api/v1/strategies/etf/logs")
 def strategy_etf_logs(
-    limit: int = Query(default=200, ge=1, le=1000),
+    limit: int = Query(default=ETF_INLINE_LOG_LINES, ge=1, le=2000),
     trade_date: str | None = Query(default=None),
     run_id: str | None = Query(default=None),
 ) -> dict[str, Any]:

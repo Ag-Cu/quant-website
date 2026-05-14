@@ -42,6 +42,7 @@ const dom = {
 };
 
 const integerFormat = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 });
+const STRATEGY_LOG_DISPLAY_LIMIT = 1000;
 
 const performanceState = { strategy: "", benchmark: "CSI300", range: "1Y", from: "", to: "" };
 let activePage = document.body.dataset.page || "overview";
@@ -1197,9 +1198,10 @@ function bindSignalActions() {
 
 function strategyLogConsole(items = []) {
   if (!items?.length) return `<div class="empty-state">暂无策略日志</div>`;
+  const rows = items.slice(-STRATEGY_LOG_DISPLAY_LIMIT).reverse();
   return `
     <div class="strategy-log-console">
-      ${items.slice(-80).reverse().map((item) => {
+      ${rows.map((item) => {
         const level = String(item.level || "info").toLowerCase();
         const tone = level === "error" ? "negative" : level === "warning" ? "warning" : level === "debug" ? "blue" : "positive";
         const stamp = item.time || item.received_at || "";
@@ -1227,7 +1229,7 @@ function renderEtf(payload) {
       ${panel({ title: "风格环境", kicker: "Regime", span: "span-4", body: scoreBlock(regime.score, regime.label || "环境分", `风险预算 ${valueWithUnit(strategy.risk_budget_pct, "%", 0)}，现金 ${valueWithUnit(strategy.cash_weight_pct, "%", 0)}。`, (regime.factors || []).map((item) => ({ name: item.name, value: item.value, detail: item.detail }))) })}
       ${panel({ title: "当前持仓", kicker: "Positions", span: "span-8", body: table(["代码", "名称", "仓位", "成本", "现价", "当日涨跌", "浮动盈亏"], holdings.map((row) => `<tr><td class="mono">${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.name)}</td><td>${valueWithUnit(row.weight_pct, "%", 0)}</td><td>${valueText(row.cost, 3)}</td><td>${valueText(row.last_price, 3)}</td><td class="${toneClassByValue(row.day_change_pct)}">${pctText(row.day_change_pct)}</td><td class="${toneClassByValue(row.pnl_pct)}">${pctText(row.pnl_pct)}</td></tr>`), 780) })}
       ${panel({ title: "运行记录", kicker: "Events", span: "span-4", body: timeline(events) })}
-      ${panel({ title: "完整日志", kicker: "JoinQuant Logs", span: "span-12", tools: pill(`${intText(logs.length)} lines`, "blue"), body: strategyLogConsole(logs) })}
+      ${panel({ title: "完整日志", kicker: "JoinQuant Logs", span: "span-12", tools: pill(`${intText(Math.min(logs.length, STRATEGY_LOG_DISPLAY_LIMIT))} lines`, "blue"), body: strategyLogConsole(logs) })}
     </section>
   `;
   bindSignalActions();
