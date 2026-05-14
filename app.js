@@ -425,6 +425,7 @@ function summaryGrid(cards) {
 function table(headers, rows, minWidth = 880) {
   if (!rows?.length) return `<div class="empty-state">暂无数据</div>`;
   return `
+    <div class="table-scroll-hint" aria-hidden="true">左右滑动查看更多</div>
     <div class="table-wrap">
       <table class="data-table" style="min-width: ${minWidth}px;">
         <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
@@ -859,7 +860,7 @@ function renderWatchlist(payload) {
             const amplitudePosition = ((intradayCurrent - intradayLow) / Math.max(0.01, intradayHigh - intradayLow)) * 100;
             const weekPosition = row.week52_current !== undefined ? ((row.week52_current - row.week52_low) / Math.max(0.01, row.week52_high - row.week52_low)) * 100 : row.range;
             const market = row.market_region || row.market || (String(row.symbol).match(/^\\d+$/) ? "cn" : "us");
-            return `<article class="watch-row ${index === 0 ? "selected" : ""}" data-watch-symbol="${escapeHtml(row.symbol)}" data-watch-market="${escapeHtml(market)}"><div class="stock-cell"><span class="stock-logo">${escapeHtml(row.logo || row.symbol.slice(0, 1))}</span><div><strong>${escapeHtml(row.symbol)}</strong><small>${escapeHtml(row.name)}</small></div></div><span class="mono price">${valueText(row.price, 2)}</span><span class="change-badge ${toneByValue(change)}">${pctText(change)}</span><div>${rangeBar(amplitudePosition, "range")}</div><div class="volume-bar"><i style="--bar:${row.volume_ratio ?? 0}%;"></i><span>${intText(row.volume_ratio)}%</span></div><span>${escapeHtml(row.market_cap || row.marketCap || "--")}</span>${rangeBar(weekPosition, "week")}<button class="row-action danger" type="button" data-watch-delete="${escapeHtml(row.symbol)}" data-watch-market="${escapeHtml(market)}">删除</button></article>`;
+            return `<article class="watch-row ${index === 0 ? "selected" : ""}" data-watch-symbol="${escapeHtml(row.symbol)}" data-watch-market="${escapeHtml(market)}"><div class="stock-cell"><span class="stock-logo">${escapeHtml(row.logo || row.symbol.slice(0, 1))}</span><div><strong>${escapeHtml(row.symbol)}</strong><small>${escapeHtml(row.name)}</small></div></div><span class="mono price watch-price">${valueText(row.price, 2)}</span><span class="change-badge ${toneByValue(change)} watch-change">${pctText(change)}</span><details class="watch-card-detail"><summary>详情</summary><div class="watch-detail-grid"><span>日内区间</span>${rangeBar(amplitudePosition, "range")}<span>量比</span><div class="volume-bar"><i style="--bar:${row.volume_ratio ?? 0}%;"></i><span>${intText(row.volume_ratio)}%</span></div><span>市值</span><strong>${escapeHtml(row.market_cap || row.marketCap || "--")}</strong><span>52周位置</span>${rangeBar(weekPosition, "week")}</div></details><div class="watch-desktop-detail">${rangeBar(amplitudePosition, "range")}</div><div class="volume-bar watch-desktop-detail"><i style="--bar:${row.volume_ratio ?? 0}%;"></i><span>${intText(row.volume_ratio)}%</span></div><span class="watch-desktop-detail">${escapeHtml(row.market_cap || row.marketCap || "--")}</span><div class="watch-desktop-detail">${rangeBar(weekPosition, "week")}</div><button class="row-action danger" type="button" data-watch-delete="${escapeHtml(row.symbol)}" data-watch-market="${escapeHtml(market)}">删除</button></article>`;
           }).join("")}`).join("") : `<div class="empty-state">暂无自选股数据</div>`}
         </div>
       </div>
@@ -1021,6 +1022,17 @@ function renderPicks(payload) {
   bindPicksControls(payload);
 }
 
+
+function holdingCards(rows = []) {
+  if (!rows.length) return `<div class="empty-state">暂无数据</div>`;
+  return `<div class="holding-card-list">${rows.map((row) => {
+    const avgCost = row.avg_cost ?? row.cost;
+    const marketValue = row.market_value ?? row.weight_pct * 24800;
+    const pnlAmount = row.pnl_amount ?? row.pnl_pct;
+    return `<article class="holding-card ${Number(row.pnl_pct) >= 0 ? "profit-row" : "loss-row"}"><div class="holding-card-top"><div><span>股票</span><strong>${escapeHtml(row.symbol)}</strong><small>${escapeHtml(row.name)}</small></div><div><span>最新价</span><strong>${valueText(row.last_price, 2)}</strong></div><div><span>盈亏</span><strong class="${toneClassByValue(pnlAmount)}">${Number(pnlAmount) > 0 ? "+" : ""}¥${intText(pnlAmount)}</strong></div></div><div class="holding-card-core"><div><span>市值</span><strong>¥${intText(marketValue)}</strong></div><div><span>盈亏%</span><div class="pnl-bar ${toneByValue(row.pnl_pct)}"><i style="--bar:${Math.min(100, Math.abs(row.pnl_pct) * 8)}%;"></i><span>${pctText(row.pnl_pct)}</span></div></div></div><details class="holding-card-detail"><summary>展开次要字段</summary><div class="holding-detail-grid"><span>持仓均价</span><strong>${valueText(avgCost, 2)}</strong><span>持仓量</span><strong>${intText(row.quantity ?? row.weight_pct * 1000)}</strong><span>仓位占比</span><strong>${valueWithUnit(row.weight_pct, "%", 0)}</strong><span>持有天数</span><strong>${row.holding_days > 30 ? `${row.holding_days} 天` : `${row.holding_days} 天`}</strong></div></details><div class="action-cell"><button class="row-action" type="button" data-holding-mark="${escapeHtml(row.symbol)}">标记</button><button class="row-action" type="button" data-rebalance-record="${escapeHtml(row.symbol)}" data-weight="${escapeHtml(row.weight_pct)}">调仓记录</button><span class="action-status" data-action-status></span></div></article>`;
+  }).join("")}</div>`;
+}
+
 function renderHoldings(payload) {
   const summary = payload.data?.summary || {};
   const source = payload.data?.holdings || [];
@@ -1038,16 +1050,16 @@ function renderHoldings(payload) {
       title: "当前持仓",
       kicker: "Current Holdings",
       span: "span-12",
-      body: table(
+      body: `${holdingCards(source)}${table(
         ["股票", "持仓均价", "最新价", "持仓量", "市值", "盈亏额", "盈亏%", "仓位占比", "持有天数", "操作"],
         source.map((row) => {
           const avgCost = row.avg_cost ?? row.cost;
           const marketValue = row.market_value ?? row.weight_pct * 24800;
           const pnlAmount = row.pnl_amount ?? row.pnl_pct;
-          return `<tr class="${Number(row.pnl_pct) >= 0 ? "profit-row" : "loss-row"}"><td><strong>${escapeHtml(row.symbol)}</strong><br><small>${escapeHtml(row.name)}</small></td><td>${valueText(avgCost, 2)}</td><td>${valueText(row.last_price, 2)}</td><td>${intText(row.quantity ?? row.weight_pct * 1000)}</td><td>¥${intText(marketValue)}</td><td class="${toneClassByValue(pnlAmount)}">${Number(pnlAmount) > 0 ? "+" : ""}¥${intText(pnlAmount)}</td><td><div class="pnl-bar ${toneByValue(row.pnl_pct)}"><i style="--bar:${Math.min(100, Math.abs(row.pnl_pct) * 8)}%;"></i><span>${pctText(row.pnl_pct)}</span></div></td><td><div class="mini-donut" style="--score:${row.weight_pct}%;"></div></td><td>${row.holding_days > 30 ? tag(`${row.holding_days} 天`, "warning") : `${row.holding_days} 天`}</td><td><div class="action-cell"><button class="row-action" type="button" data-holding-mark="${escapeHtml(row.symbol)}">标记</button><button class="row-action" type="button" data-rebalance-record="${escapeHtml(row.symbol)}" data-weight="${escapeHtml(row.weight_pct)}">调仓记录</button><span class="action-status" data-action-status></span></div></td></tr>`;
+          return `<tr class="holding-card-row ${Number(row.pnl_pct) >= 0 ? "profit-row" : "loss-row"}"><td data-label="股票" class="holding-stock"><strong>${escapeHtml(row.symbol)}</strong><br><small>${escapeHtml(row.name)}</small></td><td data-label="持仓均价">${valueText(avgCost, 2)}</td><td data-label="最新价" class="holding-price">${valueText(row.last_price, 2)}</td><td data-label="持仓量">${intText(row.quantity ?? row.weight_pct * 1000)}</td><td data-label="市值" class="holding-market-value">¥${intText(marketValue)}</td><td data-label="盈亏额" class="${toneClassByValue(pnlAmount)}">${Number(pnlAmount) > 0 ? "+" : ""}¥${intText(pnlAmount)}</td><td data-label="盈亏%"><div class="pnl-bar ${toneByValue(row.pnl_pct)}"><i style="--bar:${Math.min(100, Math.abs(row.pnl_pct) * 8)}%;"></i><span>${pctText(row.pnl_pct)}</span></div></td><td data-label="仓位占比"><div class="mini-donut" style="--score:${row.weight_pct}%;"></div></td><td data-label="持有天数">${row.holding_days > 30 ? tag(`${row.holding_days} 天`, "warning") : `${row.holding_days} 天`}</td><td data-label="操作"><div class="action-cell"><button class="row-action" type="button" data-holding-mark="${escapeHtml(row.symbol)}">标记</button><button class="row-action" type="button" data-rebalance-record="${escapeHtml(row.symbol)}" data-weight="${escapeHtml(row.weight_pct)}">调仓记录</button><span class="action-status" data-action-status></span></div></td></tr>`;
         }),
         1100,
-      ),
+      )}`,
     })}
     ${panel({ title: "行业配置", kicker: "Allocation", span: "span-12", body: `<div class="allocation-panel"><div class="allocation-donut"></div>${barList(allocation.map((item) => ({ name: item.sector, value: item.weight_pct, unit: "%", detail: item.market_value ? `¥${intText(item.market_value)}` : "" })), { color: "var(--accent)" })}</div>` })}
   `;
@@ -1104,8 +1116,8 @@ function renderPerformance(payload) {
         </div>
       </div>
     </section>
-    ${panel({ title: "历史收益曲线", kicker: "Historical Performance", span: "span-12", body: equityChart(equity, benchmark) })}
     <section class="metric-strip">${metrics.map(([label, value, delta, tone]) => `<article class="perf-metric"><span>${label}</span><strong class="tone-${tone}">${value}</strong><small>${delta}</small></article>`).join("")}</section>
+    ${panel({ title: "历史收益曲线", kicker: "Historical Performance", span: "span-12 performance-chart-panel", body: equityChart(equity, benchmark) })}
     ${panel({ title: "月度收益热力", kicker: "Monthly Return Heatmap", span: "span-12", body: monthly.length ? `<div class="monthly-heat">${monthly.map((item) => { const value = Number(item.return_pct || 0); return `<span class="${toneByValue(value)}" title="${item.year || ""}-${item.month || ""} ${pctText(value)}">${pctText(value, 1)}</span>`; }).join("")}</div>` : `<div class="empty-state">暂无月度收益数据</div>` })}
   `;
   dom.app.querySelectorAll("[data-strategy]").forEach((button) => {
