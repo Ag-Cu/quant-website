@@ -264,7 +264,7 @@ ETF 页负责回答“宽基和行业 ETF 现在应该怎么配”。
 当前执行状态：
 
 1. 前端已经改为只通过 `/api/v1/...` 获取数据。
-2. 接口失败时显示“获取失败”，不再 fallback 到 mock。
+2. 接口失败时优先显示最近成功缓存并标记 stale；没有缓存时显示“获取失败”，不再 fallback 到 mock。
 3. FastAPI 后端已提供基础接口和刷新频率登记，当前从 `data/backend` / `data/live` 读取数据。
 
 下一步建议：
@@ -272,3 +272,10 @@ ETF 页负责回答“宽基和行业 ETF 现在应该怎么配”。
 1. 把 `data/backend` 的文件写入任务替换成真实行情、账户、策略和回测结果。
 2. 给策略任务补 `explanation`、`execution`、`invalidation`、`confidence`、`trigger_factors[]`。
 3. 给宽度、情绪、宏观页继续补交互控件和折叠算法说明。
+
+## 数据刷新降级策略
+
+- 每个页面在 `fetchPayload()` 成功返回后，会按 `quant:lastPayload:${activePage}` 写入最近成功 payload，内容包含 `payload`、数据 `mode` 和 `savedAt` 时间。
+- 页面级 `refresh()` 失败时，优先读取当前页面最近成功缓存并重新调用当前页面的 `config.render(cached.payload)`，顶部状态进入 stale：连接徽标显示“刷新失败 · 显示缓存”，页面顶部展示可关闭 warning banner，包含错误信息与缓存保存时间。
+- 只有当前页面没有最近成功缓存时，才使用完整错误态 `showError()` 覆盖页面，以避免已有可用决策信息被网络短暂抖动清空。
+- 总览页市场热力图的局部刷新失败时保留旧图，并在图表面板内展示轻量 warning；不会再用“获取失败”空状态覆盖整张热力图。

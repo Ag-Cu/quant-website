@@ -354,6 +354,12 @@ body.sidebar-collapsed .sidebar-toggle::before {
   color: var(--negative);
 }
 
+.connection-badge.stale {
+  border-color: rgba(255, 181, 71, 0.34);
+  background: rgba(255, 181, 71, 0.12);
+  color: var(--warning);
+}
+
 .market-clock {
   display: grid;
   gap: 2px;
@@ -395,6 +401,58 @@ body.sidebar-collapsed .sidebar-toggle::before {
   width: min(1540px, 100%);
   margin: 0 auto;
   padding: 24px;
+}
+
+.stale-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 181, 71, 0.3);
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, rgba(255, 181, 71, 0.14), rgba(255, 181, 71, 0.05));
+  color: var(--ink);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.18);
+}
+
+.stale-banner strong,
+.stale-banner span {
+  display: block;
+}
+
+.stale-banner strong {
+  margin-bottom: 4px;
+  color: var(--warning);
+  font-size: 13px;
+}
+
+.stale-banner span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.stale-banner button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(255, 181, 71, 0.3);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--warning);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.stale-banner button:hover,
+.stale-banner button:focus-visible {
+  border-color: rgba(255, 181, 71, 0.56);
+  outline: none;
 }
 
 .page-footer {
@@ -801,6 +859,20 @@ body.sidebar-collapsed .sidebar-toggle::before {
 
 .heatmap-panel {
   min-height: 520px;
+}
+
+.heatmap-panel.is-refreshing {
+  opacity: 0.86;
+}
+
+.heatmap-stale-note {
+  margin: 0 24px 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 181, 71, 0.26);
+  border-radius: 12px;
+  background: rgba(255, 181, 71, 0.1);
+  color: var(--warning);
+  font-size: 12px;
 }
 
 .heatmap-toolbar {
