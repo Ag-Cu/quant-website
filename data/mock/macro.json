@@ -16,33 +16,125 @@
       "ten_year_yield_pct": 2.31,
       "us_ten_year_yield_pct": 4.47,
       "usd_cnh": 7.19,
-      "equity_bond_spread_pct": 3.84
+      "equity_bond_spread_pct": 3.84,
+      "risk_preference_formula": "clip(50 + 6*CSI300_1D% + 4*CSI1000_1D% + 5*(equity_bond_spread_pct-3.0) - 0.15*CN10Y_daily_bp - 3*USDCNH_1D%)",
+      "equity_bond_spread_formula": "CSI300 earnings yield (100 / PE_TTM) - ChinaBond 10Y treasury yield"
     },
     "rates": [
-      { "name": "中国 10Y 国债", "value": 2.31, "unit": "%", "change_bp": -1.6 },
-      { "name": "中国 1Y 国债", "value": 1.62, "unit": "%", "change_bp": -0.8 },
-      { "name": "美国 10Y 国债", "value": 4.47, "unit": "%", "change_bp": 2.4 },
-      { "name": "中美 10Y 利差", "value": -216, "unit": "bp", "change_bp": -4.0 }
+      {
+        "name": "中国 10Y 国债",
+        "value": 2.31,
+        "unit": "%",
+        "change_bp": -1.6,
+        "data_source": "财政部-中国国债收益率曲线/中债估值(CCDC)",
+        "as_of": "2026-05-12T14:56:00+08:00"
+      },
+      {
+        "name": "中国 1Y 国债",
+        "value": 1.62,
+        "unit": "%",
+        "change_bp": -0.8,
+        "data_source": "财政部-中国国债收益率曲线/中债估值(CCDC)",
+        "as_of": "2026-05-12T14:56:00+08:00"
+      },
+      {
+        "name": "美国 10Y 国债",
+        "value": 4.47,
+        "unit": "%",
+        "change_bp": 2.4,
+        "data_source": "Yahoo Finance chart",
+        "as_of": "2026-05-12T14:56:00+08:00"
+      },
+      {
+        "name": "中美 10Y 利差",
+        "value": -216,
+        "unit": "bp",
+        "change_bp": -4.0,
+        "data_source": "ChinaBond + Yahoo Finance chart",
+        "as_of": "2026-05-12T14:56:00+08:00"
+      }
     ],
     "fx": [
-      { "name": "USD/CNH", "value": 7.19, "change_pct": 0.08 },
-      { "name": "美元指数", "value": 104.3, "change_pct": -0.12 },
-      { "name": "离岸人民币波动率", "value": 5.8, "change_pct": 0.21 }
+      {
+        "name": "USD/CNH",
+        "value": 7.19,
+        "change_pct": 0.08,
+        "data_source": "Yahoo Finance chart",
+        "as_of": "2026-05-12T14:56:00+08:00"
+      },
+      {
+        "name": "美元指数",
+        "value": 104.3,
+        "change_pct": -0.12,
+        "data_source": "macro sample",
+        "as_of": "2026-05-12T14:56:00+08:00"
+      },
+      {
+        "name": "离岸人民币波动率",
+        "value": 5.8,
+        "change_pct": 0.21,
+        "data_source": "macro sample",
+        "as_of": "2026-05-12T14:56:00+08:00"
+      }
     ],
     "risk_assets": [
-      { "name": "沪深300", "value": 3928.6, "change_pct": 0.72 },
-      { "name": "中证1000", "value": 5861.2, "change_pct": 1.24 },
-      { "name": "恒生科技", "value": 4236.5, "change_pct": -0.34 },
-      { "name": "创业板指", "value": 2024.8, "change_pct": -0.18 }
+      {
+        "name": "沪深300",
+        "value": 3928.6,
+        "change_pct": 0.72,
+        "data_source": "东方财富行情中心",
+        "as_of": "2026-05-12T14:56:00+08:00"
+      },
+      {
+        "name": "中证1000",
+        "value": 5861.2,
+        "change_pct": 1.24,
+        "data_source": "东方财富行情中心",
+        "as_of": "2026-05-12T14:56:00+08:00"
+      },
+      {
+        "name": "恒生科技",
+        "value": 4236.5,
+        "change_pct": -0.34,
+        "data_source": "Yahoo Finance chart",
+        "as_of": "2026-05-12T14:56:00+08:00"
+      },
+      {
+        "name": "创业板指",
+        "value": 2024.8,
+        "change_pct": -0.18,
+        "data_source": "东方财富行情中心",
+        "as_of": "2026-05-12T14:56:00+08:00"
+      }
     ],
     "calendar": [
-      { "date": "2026-05-13", "event": "中国社融数据窗口", "importance": "high" },
-      { "date": "2026-05-15", "event": "MLF 操作观察", "importance": "mid" },
-      { "date": "2026-05-16", "event": "美国通胀预期数据", "importance": "mid" }
+      {
+        "date": "2026-05-13",
+        "event": "中国社融数据窗口",
+        "importance": "high"
+      },
+      {
+        "date": "2026-05-15",
+        "event": "MLF 操作观察",
+        "importance": "mid"
+      },
+      {
+        "date": "2026-05-16",
+        "event": "美国通胀预期数据",
+        "importance": "mid"
+      }
     ],
     "observations": [
-      { "level": "info", "title": "利率压力有限", "detail": "国内长端利率小幅回落，对权益估值约束暂不明显。" },
-      { "level": "warning", "title": "汇率仍需观察", "detail": "USD/CNH 接近 7.20，外部流动性扰动可能放大盘中波动。" }
+      {
+        "level": "info",
+        "title": "利率压力有限",
+        "detail": "国内长端利率小幅回落，对权益估值约束暂不明显。"
+      },
+      {
+        "level": "warning",
+        "title": "汇率仍需观察",
+        "detail": "USD/CNH 接近 7.20，外部流动性扰动可能放大盘中波动。"
+      }
     ]
   }
 }

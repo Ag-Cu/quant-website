@@ -16,6 +16,7 @@ import re
 import tempfile
 import urllib.parse
 import urllib.request
+from html import unescape
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -146,6 +147,14 @@ def trade_date() -> str:
 def mmdd() -> str:
     return now_hk().strftime("%m-%d")
 
+
+def parse_hk_datetime(timestamp: int | float | None) -> str:
+    if timestamp is None:
+        return iso_now()
+    try:
+        return datetime.fromtimestamp(float(timestamp), timezone.utc).astimezone(HK_TZ).replace(microsecond=0).isoformat()
+    except (OSError, ValueError, TypeError):
+        return iso_now()
 
 def http_json(url: str, timeout: int = 18) -> dict[str, Any]:
     req = urllib.request.Request(
@@ -1063,6 +1072,11 @@ def build_sentiment_payload(breadth: dict[str, Any] | None = None) -> dict[str, 
 
 
 def yahoo_latest(symbol: str) -> tuple[float | None, float | None]:
+    quote = yahoo_latest_detail(symbol)
+    return quote["value"], quote["change_pct"]
+
+
+def yahoo_latest_detail(symbol: str) -> dict[str, Any]:
     quoted = urllib.parse.quote(symbol, safe="")
     url = f"{YAHOO_CHART_URL.format(symbol=quoted)}?range=5d&interval=1d"
     data = http_json(url)
@@ -1074,7 +1088,106 @@ def yahoo_latest(symbol: str) -> tuple[float | None, float | None]:
     change_pct = None
     if len(cleaned) >= 2 and cleaned[-2]:
         change_pct = round((cleaned[-1] - cleaned[-2]) * 100.0 / cleaned[-2], 2)
-    return (normalize_number(price, None) if price is not None else None, change_pct)
+    return {
+        "value": normalize_number(price, None) if price is not None else None,
+        "change_pct": change_pct,
+        "data_source": "Yahoo Finance chart",
+        "as_of": parse_hk_datetime(meta.get("regularMarketTime")),
+    }
+
+
+def fetch_chinabond_treasury_curve() -> dict[str, dict[str, Any]]:
+    """Fetch the MOF/ChinaBond China government yield curve.
+
+    The public MOF-ChinaBond page is updated on trading days around 17:30 China
+    time and includes current yield plus daily/monthly/yearly basis-point
+    changes for standard maturities.
+    """
+    url = "https://yield.chinabond.com.cn/cbweb-czb-web/czb/czbIndex?locale=cn_ZH&nameType=1"
+    text = http_text(url, timeout=18)
+    text = unescape(text)
+    compact = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text))
+    as_of_match = re.search(r"(20\d{2}[-年/]\d{1,2}[-月/]\d{1,2})", compact)
+    as_of = as_of_match.group(1).replace("年", "-").replace("月", "-").replace("日", "") if as_of_match else trade_date()
+    curve: dict[str, dict[str, Any]] = {}
+    for tenor in ("3月", "6月", "1年", "2年", "3年", "5年", "7年", "10年", "30年"):
+        match = re.search(rf"{tenor}\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)", compact)
+        if not match:
+            continue
+        curve[tenor] = {
+            "value": optional_number(match.group(1)),
+            "change_bp": optional_number(match.group(2)),
+            "month_change_bp": optional_number(match.group(3)),
+            "year_change_bp": optional_number(match.group(4)),
+            "data_source": "财政部-中国国债收益率曲线/中债估值(CCDC)",
+            "as_of": as_of,
+        }
+    if not curve:
+        raise RuntimeError("ChinaBond curve table not found")
+    return curve
+
+
+def fetch_eastmoney_index_metrics() -> dict[str, dict[str, Any]]:
+    configs = {
+        "CSI300": {"secid": "1.000300", "name": "沪深300"},
+        "CSI1000": {"secid": "1.000852", "name": "中证1000"},
+        "CHINEXT": {"secid": "0.399006", "name": "创业板指"},
+    }
+    params = {
+        "fltt": "2",
+        "invt": "2",
+        "fields": "f12,f14,f2,f3,f4,f18,f162,f167,f168",
+        "secids": ",".join(item["secid"] for item in configs.values()),
+    }
+    data = http_json(f"{EASTMONEY_QUOTE_URL}?{urllib.parse.urlencode(params)}")
+    rows = data.get("data", {}).get("diff", []) or []
+    by_code = {str(row.get("f12") or "").strip(): row for row in rows}
+    metrics: dict[str, dict[str, Any]] = {}
+    for key, config in configs.items():
+        code = config["secid"].split(".", 1)[1]
+        row = by_code.get(code)
+        if not row:
+            continue
+        metrics[key] = {
+            "name": config["name"],
+            "value": optional_number(row.get("f2")),
+            "change_pct": optional_number(row.get("f3")),
+            "previous_close": optional_number(row.get("f18")),
+            "pe_ttm": optional_number(row.get("f162")),
+            "pb": optional_number(row.get("f167")),
+            "data_source": "东方财富行情中心",
+            "as_of": iso_now(),
+        }
+    return metrics
+
+
+def compute_equity_bond_spread_pct(index_metrics: dict[str, dict[str, Any]], china10y: float | None) -> float | None:
+    pe_ttm = (index_metrics.get("CSI300") or {}).get("pe_ttm")
+    if pe_ttm is None or pe_ttm <= 0 or china10y is None:
+        return None
+    earnings_yield_pct = 100.0 / pe_ttm
+    return round(earnings_yield_pct - china10y, 2)
+
+
+def compute_risk_preference_score(
+    index_metrics: dict[str, dict[str, Any]],
+    equity_bond_spread_pct: float | None,
+    china10y_change_bp: float | None,
+    usd_cnh_change_pct: float | None,
+) -> float | None:
+    csi300_change = (index_metrics.get("CSI300") or {}).get("change_pct")
+    csi1000_change = (index_metrics.get("CSI1000") or {}).get("change_pct")
+    if csi300_change is None or equity_bond_spread_pct is None:
+        return None
+    small_cap_component = csi1000_change if csi1000_change is not None else csi300_change
+    rate_component = 0 if china10y_change_bp is None else -0.15 * china10y_change_bp
+    fx_component = 0 if usd_cnh_change_pct is None else -3.0 * usd_cnh_change_pct
+    raw_score = 50 + 6.0 * csi300_change + 4.0 * small_cap_component + 5.0 * (equity_bond_spread_pct - 3.0) + rate_component + fx_component
+    return round(max(0, min(100, raw_score)))
+
+
+def enrich_macro_row(row: dict[str, Any], data_source: str, as_of: str) -> dict[str, Any]:
+    return {**row, "data_source": row.get("data_source") or data_source, "as_of": row.get("as_of") or as_of}
 
 
 
@@ -1275,50 +1388,126 @@ def build_macro_payload() -> dict[str, Any]:
     payload = base_payload("macro")
     data = payload.setdefault("data", {})
     previous_summary = data.get("summary", {})
+    observations: list[dict[str, Any]] = [
+        {
+            "level": "info",
+            "title": "宏观数据已自动更新",
+            "detail": "利率、外汇与风险资产均记录 data_source/as_of；若远端不可用才降级沿用上一值。",
+        }
+    ]
 
     try:
-        usd_cnh, usd_cnh_change = yahoo_latest("USDCNH=X")
+        usd_cnh_quote = yahoo_latest_detail("USDCNH=X")
     except Exception as exc:
         print(f"warning: yahoo macro fetch failed for USDCNH=X: {exc}")
-        usd_cnh = previous_summary.get("usd_cnh")
-        usd_cnh_change = None
+        usd_cnh_quote = {
+            "value": previous_summary.get("usd_cnh"),
+            "change_pct": None,
+            "data_source": "previous macro snapshot",
+            "as_of": payload.get("meta", {}).get("as_of") or iso_now(),
+        }
+        observations.append({"level": "warning", "title": "USD/CNH 降级沿用上一值", "detail": f"Yahoo Finance 图表接口不可用：{exc}"})
+
     try:
-        us10y, us10y_change = yahoo_latest("^TNX")
+        us10y_quote = yahoo_latest_detail("^TNX")
     except Exception as exc:
         print(f"warning: yahoo macro fetch failed for ^TNX: {exc}")
-        us10y = previous_summary.get("us_ten_year_yield_pct")
-        us10y_change = None
-    if us10y is not None:
-        us10y = round(us10y, 3)
+        us10y_quote = {
+            "value": previous_summary.get("us_ten_year_yield_pct"),
+            "change_pct": None,
+            "data_source": "previous macro snapshot",
+            "as_of": payload.get("meta", {}).get("as_of") or iso_now(),
+        }
+        observations.append({"level": "warning", "title": "美国 10Y 降级沿用上一值", "detail": f"Yahoo Finance 图表接口不可用：{exc}"})
+    if us10y_quote.get("value") is not None:
+        # Yahoo ^TNX is quoted in yield percentage points (e.g. 44.7 = 4.47%).
+        raw_us10y = normalize_number(us10y_quote.get("value"))
+        us10y_quote["value"] = round(raw_us10y / 10.0 if raw_us10y > 20 else raw_us10y, 3)
 
-    china10y = previous_summary.get("ten_year_yield_pct", 2.31)
-    risk_score = previous_summary.get("risk_preference_score", 60)
-    spread = None
-    if us10y is not None and china10y is not None:
-        spread = round(normalize_number(china10y) - normalize_number(us10y), 2)
+    try:
+        china_curve = fetch_chinabond_treasury_curve()
+    except Exception as exc:
+        print(f"warning: chinabond macro fetch failed: {exc}")
+        china_curve = {}
+        observations.append({"level": "warning", "title": "中国国债收益率降级沿用上一值", "detail": f"财政部-中国国债收益率曲线/中债估值接口不可用：{exc}"})
+    china10y_quote = china_curve.get("10年") or {
+        "value": previous_summary.get("ten_year_yield_pct"),
+        "change_bp": None,
+        "data_source": "previous macro snapshot",
+        "as_of": payload.get("meta", {}).get("as_of") or iso_now(),
+    }
+    china1y_quote = china_curve.get("1年")
+    china10y = optional_number(china10y_quote.get("value"))
+    us10y = optional_number(us10y_quote.get("value"))
+    spread = round((china10y - us10y) * 100, 1) if china10y is not None and us10y is not None else None
+
+    try:
+        index_metrics = fetch_eastmoney_index_metrics()
+    except Exception as exc:
+        print(f"warning: eastmoney macro index fetch failed: {exc}")
+        index_metrics = {}
+        observations.append({"level": "warning", "title": "权益估值/指数降级沿用上一值", "detail": f"东方财富指数行情接口不可用：{exc}"})
+
+    try:
+        hstech_quote = yahoo_latest_detail("^HSTECH")
+    except Exception as exc:
+        print(f"warning: yahoo macro fetch failed for ^HSTECH: {exc}")
+        hstech_quote = {"value": None, "change_pct": None, "data_source": "Yahoo Finance chart", "as_of": iso_now()}
+        observations.append({"level": "warning", "title": "恒生科技指数暂不可用", "detail": f"Yahoo Finance 图表接口不可用：{exc}"})
+
+    equity_bond_spread = compute_equity_bond_spread_pct(index_metrics, china10y)
+    if equity_bond_spread is None:
+        equity_bond_spread = optional_number(previous_summary.get("equity_bond_spread_pct"))
+        observations.append({"level": "warning", "title": "股债利差降级沿用上一值", "detail": "缺少沪深300 PE(TTM) 或中国 10Y 收益率，无法按 100/PE_TTM-10Y 公式重算。"})
+    risk_score = compute_risk_preference_score(index_metrics, equity_bond_spread, optional_number(china10y_quote.get("change_bp")), usd_cnh_quote.get("change_pct"))
+    if risk_score is None:
+        risk_score = optional_number(previous_summary.get("risk_preference_score")) or 50
+        observations.append({"level": "warning", "title": "风险偏好分降级沿用上一值", "detail": "缺少指数涨跌或股债利差，无法按可复现公式重算。"})
+
+    risk_assets = []
+    for key in ("CSI300", "CSI1000", "CHINEXT"):
+        metric = index_metrics.get(key)
+        if metric:
+            risk_assets.append(
+                {
+                    "name": metric["name"],
+                    "value": metric.get("value"),
+                    "change_pct": metric.get("change_pct"),
+                    "data_source": metric.get("data_source"),
+                    "as_of": metric.get("as_of"),
+                }
+            )
+    if hstech_quote.get("value") is not None:
+        risk_assets.insert(2, {"name": "恒生科技", "value": hstech_quote.get("value"), "change_pct": hstech_quote.get("change_pct"), "data_source": hstech_quote.get("data_source"), "as_of": hstech_quote.get("as_of")})
+    if not risk_assets:
+        risk_assets = [
+            enrich_macro_row(row, "previous macro snapshot", payload.get("meta", {}).get("as_of") or iso_now())
+            for row in data.get("risk_assets", [])
+        ]
 
     data["summary"] = {
         **previous_summary,
         "risk_preference_score": risk_score,
-        "label": "中性",
+        "risk_preference_formula": "clip(50 + 6*CSI300_1D% + 4*CSI1000_1D% + 5*(equity_bond_spread_pct-3.0) - 0.15*CN10Y_daily_bp - 3*USDCNH_1D%)",
+        "label": "偏强" if risk_score >= 70 else "中性偏强" if risk_score >= 60 else "中性" if risk_score >= 40 else "偏弱",
         "ten_year_yield_pct": china10y,
         "us_ten_year_yield_pct": us10y,
-        "usd_cnh": usd_cnh,
-        "equity_bond_spread_pct": previous_summary.get("equity_bond_spread_pct", 3.84),
+        "usd_cnh": usd_cnh_quote.get("value"),
+        "equity_bond_spread_pct": equity_bond_spread,
+        "equity_bond_spread_formula": "CSI300 earnings yield (100 / PE_TTM) - ChinaBond 10Y treasury yield",
     }
     data["rates"] = [
-        {"name": "中国 10Y 国债", "value": china10y, "unit": "%", "change_bp": 0},
-        {"name": "美国 10Y 国债", "value": us10y, "unit": "%", "change_bp": None if us10y_change is None else round(us10y_change * 100, 1)},
-        {"name": "中美 10Y 利差", "value": None if spread is None else round(spread * 100), "unit": "bp", "change_bp": 0},
+        {"name": "中国 10Y 国债", "value": china10y, "unit": "%", "change_bp": china10y_quote.get("change_bp"), "data_source": china10y_quote.get("data_source"), "as_of": china10y_quote.get("as_of")},
+        *([{"name": "中国 1Y 国债", "value": china1y_quote.get("value"), "unit": "%", "change_bp": china1y_quote.get("change_bp"), "data_source": china1y_quote.get("data_source"), "as_of": china1y_quote.get("as_of")}] if china1y_quote else []),
+        {"name": "美国 10Y 国债", "value": us10y, "unit": "%", "change_bp": None if us10y_quote.get("change_pct") is None else round(us10y_quote["change_pct"] * 10, 1), "data_source": us10y_quote.get("data_source"), "as_of": us10y_quote.get("as_of")},
+        {"name": "中美 10Y 利差", "value": spread, "unit": "bp", "change_bp": None, "data_source": "ChinaBond + Yahoo Finance chart", "as_of": max(str(china10y_quote.get("as_of") or ""), str(us10y_quote.get("as_of") or ""))},
     ]
     data["fx"] = [
-        {"name": "USD/CNH", "value": usd_cnh, "change_pct": usd_cnh_change},
-        *[row for row in data.get("fx", []) if row.get("name") != "USD/CNH"],
+        {"name": "USD/CNH", "value": usd_cnh_quote.get("value"), "change_pct": usd_cnh_quote.get("change_pct"), "data_source": usd_cnh_quote.get("data_source"), "as_of": usd_cnh_quote.get("as_of")},
+        *[enrich_macro_row(row, "previous macro snapshot", payload.get("meta", {}).get("as_of") or iso_now()) for row in data.get("fx", []) if row.get("name") != "USD/CNH"],
     ][:4]
-    data["observations"] = [
-        {"level": "info", "title": "宏观数据已自动更新", "detail": "USD/CNH 与美国 10Y 来自 Yahoo Finance 公共图表接口。"},
-        {"level": "warning", "title": "中国 10Y 暂沿用上一值", "detail": "后续接入 AKShare/Tushare 后可替换为真实中国国债收益率。"},
-    ]
+    data["risk_assets"] = risk_assets[:4]
+    data["observations"] = observations
     update_meta(payload, "live-macro")
     return payload
 
