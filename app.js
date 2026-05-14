@@ -5,7 +5,7 @@ const PAGE_CONFIG = {
   watchlist: { endpoint: "/api/v1/watchlist", refreshMs: 15_000, render: renderWatchlist },
   picks: { endpoint: "/api/v1/strategies/picks", refreshMs: 300_000, render: renderPicks },
   holdings: { endpoint: "/api/v1/portfolio/holdings", refreshMs: 30_000, render: renderHoldings },
-  performance: { endpoint: "/api/v1/performance", refreshMs: 300_000, render: renderPerformance },
+  performance: { endpoint: buildPerformanceEndpoint, refreshMs: 300_000, render: renderPerformance },
   etf: { endpoint: "/api/v1/strategies/etf", refreshMs: 300_000, render: renderEtf },
   "small-cap": { endpoint: "/api/v1/strategies/small-cap", refreshMs: 300_000, render: renderSmallCap },
   breadth: { endpoint: "/api/v1/market/breadth", refreshMs: 60_000, render: renderBreadth },
@@ -38,6 +38,55 @@ const dom = {
 };
 
 const integerFormat = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 });
+
+const performanceState = { strategy: "", benchmark: "CSI300", range: "1Y", from: "", to: "" };
+let activePage = document.body.dataset.page || "overview";
+
+function formatDateParam(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function addMonths(date, months) {
+  const next = new Date(date);
+  next.setUTCMonth(next.getUTCMonth() + months);
+  return next;
+}
+
+function syncPerformanceRange(range) {
+  performanceState.range = range;
+  const today = new Date();
+  performanceState.to = formatDateParam(today);
+  if (range === "3M") {
+    performanceState.from = formatDateParam(addMonths(today, -3));
+  } else if (range === "1Y") {
+    performanceState.from = formatDateParam(addMonths(today, -12));
+  } else {
+    performanceState.from = "";
+    performanceState.to = "";
+  }
+}
+
+function buildPerformanceEndpoint() {
+  const params = new URLSearchParams();
+  if (performanceState.strategy) params.set("strategy", performanceState.strategy);
+  if (performanceState.benchmark) params.set("benchmark", performanceState.benchmark);
+  if (performanceState.from) params.set("from", performanceState.from);
+  if (performanceState.to) params.set("to", performanceState.to);
+  const query = params.toString();
+  return `/api/v1/performance${query ? `?${query}` : ""}`;
+}
+
+async function refreshPerformance() {
+  if (activePage !== "performance") return;
+  showLoading();
+  try {
+    const { payload, mode } = await fetchPayload(PAGE_CONFIG.performance);
+    renderPerformance(payload);
+    updateShell(payload.meta || {}, mode);
+  } catch (error) {
+    showError(error);
+  }
+}
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#039;" })[char]);
@@ -83,7 +132,8 @@ async function sendJson(path, options = {}) {
 
 async function fetchPayload(config) {
   if (!config.endpoint) throw new Error("页面未配置数据接口");
-  const payload = await requestJson(joinUrl(API_BASE, config.endpoint));
+  const endpoint = typeof config.endpoint === "function" ? config.endpoint() : config.endpoint;
+  const payload = await requestJson(joinUrl(API_BASE, endpoint));
   const mode = payload.meta?.source === "cache" ? "cache" : "live";
   return { payload, mode };
 }
@@ -851,9 +901,18 @@ function renderHoldings(payload) {
 function renderPerformance(payload) {
   const data = payload.data || {};
   const metricsData = data.metrics || {};
+  if (data.strategy && !performanceState.strategy) performanceState.strategy = data.strategy;
+  if (data.benchmark_id && !performanceState.benchmark) performanceState.benchmark = data.benchmark_id;
   const equity = data.equity_curve?.length ? data.equity_curve.map((item) => Number(item.return_pct)) : [];
   const benchmark = data.benchmark_curve?.length ? data.benchmark_curve.map((item) => Number(item.return_pct)) : [];
   const monthly = data.monthly_returns || [];
+  const strategies = data.strategies?.length ? data.strategies : [{ id: data.strategy || "momentum", label: data.strategy_label || "动量策略" }];
+  const benchmarks = data.benchmarks?.length ? data.benchmarks : [{ id: data.benchmark_id || "CSI300", label: data.benchmark || "沪深300" }];
+  const ranges = [
+    { id: "3M", label: "3M" },
+    { id: "1Y", label: "1Y" },
+    { id: "ALL", label: "全部" },
+  ];
   const metrics = [
     ["年化收益率", pctText(metricsData.annual_return_pct), "Annualized", toneByValue(metricsData.annual_return_pct)],
     ["最大回撤", pctText(metricsData.max_drawdown_pct), "Max drawdown", toneByValue(metricsData.max_drawdown_pct)],
@@ -865,11 +924,42 @@ function renderPerformance(payload) {
     ["Alpha", pctText(metricsData.alpha_pct), `vs ${data.benchmark || "基准"}`, toneByValue(metricsData.alpha_pct)],
   ];
   dom.app.innerHTML = `
-    <section class="strategy-toolbar"><div class="mini-tabs"><button class="active">${escapeHtml(data.strategy_label || "动量策略")}</button><button>ETF 轮动</button><button>小盘股</button></div><div class="toolbar"><label><input type="checkbox" checked /> 对比 ${escapeHtml(data.benchmark || "沪深300")}</label><label><input type="checkbox" /> 标普500</label><div class="mini-tabs"><button>3M</button><button class="active">1Y</button><button>全部</button></div></div></section>
+    <section class="strategy-toolbar">
+      <div class="mini-tabs" data-performance-strategies>
+        ${strategies.map((item) => `<button type="button" data-strategy="${escapeHtml(item.id)}" class="${item.id === data.strategy ? "active" : ""}">${escapeHtml(item.label)}</button>`).join("")}
+      </div>
+      <div class="toolbar">
+        ${benchmarks.map((item) => `<label><input type="checkbox" data-benchmark="${escapeHtml(item.id)}" ${item.id === data.benchmark_id ? "checked" : ""} /> 对比 ${escapeHtml(item.label)}</label>`).join("")}
+        <div class="mini-tabs" data-performance-ranges>
+          ${ranges.map((item) => `<button type="button" data-range="${item.id}" class="${item.id === performanceState.range ? "active" : ""}">${item.label}</button>`).join("")}
+        </div>
+      </div>
+    </section>
     ${panel({ title: "历史收益曲线", kicker: "Historical Performance", span: "span-12", body: equityChart(equity, benchmark) })}
     <section class="metric-strip">${metrics.map(([label, value, delta, tone]) => `<article class="perf-metric"><span>${label}</span><strong class="tone-${tone}">${value}</strong><small>${delta}</small></article>`).join("")}</section>
     ${panel({ title: "月度收益热力", kicker: "Monthly Return Heatmap", span: "span-12", body: monthly.length ? `<div class="monthly-heat">${monthly.map((item) => { const value = Number(item.return_pct || 0); return `<span class="${toneByValue(value)}" title="${item.year || ""}-${item.month || ""} ${pctText(value)}">${pctText(value, 1)}</span>`; }).join("")}</div>` : `<div class="empty-state">暂无月度收益数据</div>` })}
   `;
+  dom.app.querySelectorAll("[data-strategy]").forEach((button) => {
+    button.addEventListener("click", () => {
+      performanceState.strategy = button.dataset.strategy || "";
+      refreshPerformance();
+    });
+  });
+  dom.app.querySelectorAll("[data-benchmark]").forEach((input) => {
+    input.addEventListener("change", () => {
+      performanceState.benchmark = input.checked ? (input.dataset.benchmark || "") : "none";
+      dom.app.querySelectorAll("[data-benchmark]").forEach((other) => {
+        if (other !== input) other.checked = false;
+      });
+      refreshPerformance();
+    });
+  });
+  dom.app.querySelectorAll("[data-range]").forEach((button) => {
+    button.addEventListener("click", () => {
+      syncPerformanceRange(button.dataset.range || "1Y");
+      refreshPerformance();
+    });
+  });
 }
 
 function compactInstrumentCards(items) {
@@ -1032,8 +1122,9 @@ function shouldPauseAutoRefresh(page) {
 
 async function init() {
   installShell();
-  const page = document.body.dataset.page || "overview";
+  const page = activePage;
   const config = PAGE_CONFIG[page] || PAGE_CONFIG.overview;
+  if (page === "performance" && !performanceState.from && performanceState.range !== "ALL") syncPerformanceRange(performanceState.range);
   let refreshing = false;
 
   updatePageHeading(page);

@@ -38,7 +38,7 @@
 | 总览 | `/api/v1/dashboard/overview` | 盘中实时，约 30s | `data/backend/dashboard/overview.json`，可优先读 `data/live/overview.json` |
 | 今日选股 | `/api/v1/strategies/picks` | 每日收盘后或策略任务完成后 | `data/backend/strategies/picks.json` |
 | 当前持仓 | `/api/v1/portfolio/holdings` | 盘中实时，约 30s | `data/backend/portfolio/holdings.json` |
-| 历史收益 | `/api/v1/performance` | 每日收盘后 | `data/backend/performance/overview.json` |
+| 历史收益 | `/api/v1/performance` | 每日收盘后 | `data/backend/performance/net-values.json` |
 | 自选股 | `/api/v1/watchlist` | 盘中实时，约 15s | `data/backend/watchlist/list.json` |
 | 市场热力图 | `/api/v1/market/heatmap` | 盘中实时，约 30s | `data/backend/market/heatmap.json` |
 | 板块表现 | `/api/v1/market/sectors` | 盘中实时，约 60s | `data/backend/market/sectors.json` |

@@ -1,0 +1,735 @@
+{
+  "meta": {
+    "version": "1.0",
+    "source": "backtest-live-nav",
+    "as_of": "2026-05-12T15:30:00+08:00",
+    "trade_date": "2026-05-12",
+    "timezone": "Asia/Hong_Kong",
+    "market_session": "closed",
+    "run_id": "performance-nav-20260512-1530"
+  },
+  "data": {
+    "default_strategy": "momentum",
+    "default_benchmark": "CSI300",
+    "strategies": {
+      "momentum": {
+        "label": "动量策略",
+        "engine": "backtest+live-account",
+        "nav": [
+          {
+            "date": "2024-01-01",
+            "net_value": 1.0,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-02-01",
+            "net_value": 1.024,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-03-01",
+            "net_value": 1.011,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-04-01",
+            "net_value": 1.048,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-05-01",
+            "net_value": 1.032,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-06-01",
+            "net_value": 1.065,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-07-01",
+            "net_value": 1.081,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-08-01",
+            "net_value": 1.074,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-09-01",
+            "net_value": 1.112,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-10-01",
+            "net_value": 1.13,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-11-01",
+            "net_value": 1.121,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-12-01",
+            "net_value": 1.164,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-01-01",
+            "net_value": 1.182,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-02-01",
+            "net_value": 1.217,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-03-01",
+            "net_value": 1.193,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-04-01",
+            "net_value": 1.238,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-05-01",
+            "net_value": 1.265,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-06-01",
+            "net_value": 1.296,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-07-01",
+            "net_value": 1.284,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-08-01",
+            "net_value": 1.329,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-09-01",
+            "net_value": 1.362,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-10-01",
+            "net_value": 1.348,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-11-01",
+            "net_value": 1.391,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-12-01",
+            "net_value": 1.425,
+            "source": "backtest"
+          },
+          {
+            "date": "2026-01-01",
+            "net_value": 1.44,
+            "source": "live"
+          },
+          {
+            "date": "2026-02-01",
+            "net_value": 1.468,
+            "source": "live"
+          },
+          {
+            "date": "2026-03-01",
+            "net_value": 1.456,
+            "source": "live"
+          },
+          {
+            "date": "2026-04-01",
+            "net_value": 1.492,
+            "source": "live"
+          },
+          {
+            "date": "2026-05-01",
+            "net_value": 1.514,
+            "source": "live"
+          }
+        ],
+        "annotations": [
+          {
+            "date": "2026-01-01",
+            "label": "切换实盘净值",
+            "detail": "2026 起使用账户同步净值续接回测曲线"
+          }
+        ]
+      },
+      "etf_rotation": {
+        "label": "ETF 轮动",
+        "engine": "backtest+live-account",
+        "nav": [
+          {
+            "date": "2024-01-01",
+            "net_value": 1.0,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-02-01",
+            "net_value": 1.011,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-03-01",
+            "net_value": 1.007,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-04-01",
+            "net_value": 1.028,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-05-01",
+            "net_value": 1.039,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-06-01",
+            "net_value": 1.051,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-07-01",
+            "net_value": 1.045,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-08-01",
+            "net_value": 1.067,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-09-01",
+            "net_value": 1.08,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-10-01",
+            "net_value": 1.072,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-11-01",
+            "net_value": 1.094,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-12-01",
+            "net_value": 1.118,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-01-01",
+            "net_value": 1.124,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-02-01",
+            "net_value": 1.13,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-03-01",
+            "net_value": 1.117,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-04-01",
+            "net_value": 1.146,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-05-01",
+            "net_value": 1.16,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-06-01",
+            "net_value": 1.174,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-07-01",
+            "net_value": 1.181,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-08-01",
+            "net_value": 1.199,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-09-01",
+            "net_value": 1.21,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-10-01",
+            "net_value": 1.204,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-11-01",
+            "net_value": 1.228,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-12-01",
+            "net_value": 1.24,
+            "source": "backtest"
+          },
+          {
+            "date": "2026-01-01",
+            "net_value": 1.252,
+            "source": "live"
+          },
+          {
+            "date": "2026-02-01",
+            "net_value": 1.261,
+            "source": "live"
+          },
+          {
+            "date": "2026-03-01",
+            "net_value": 1.27,
+            "source": "live"
+          },
+          {
+            "date": "2026-04-01",
+            "net_value": 1.288,
+            "source": "live"
+          },
+          {
+            "date": "2026-05-01",
+            "net_value": 1.296,
+            "source": "live"
+          }
+        ],
+        "annotations": [
+          {
+            "date": "2026-01-01",
+            "label": "切换实盘净值",
+            "detail": "2026 起使用账户同步净值续接回测曲线"
+          }
+        ]
+      },
+      "small_cap": {
+        "label": "小盘股",
+        "engine": "backtest+live-account",
+        "nav": [
+          {
+            "date": "2024-01-01",
+            "net_value": 1.0,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-02-01",
+            "net_value": 1.032,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-03-01",
+            "net_value": 1.008,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-04-01",
+            "net_value": 1.064,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-05-01",
+            "net_value": 1.041,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-06-01",
+            "net_value": 1.105,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-07-01",
+            "net_value": 1.136,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-08-01",
+            "net_value": 1.099,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-09-01",
+            "net_value": 1.182,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-10-01",
+            "net_value": 1.215,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-11-01",
+            "net_value": 1.176,
+            "source": "backtest"
+          },
+          {
+            "date": "2024-12-01",
+            "net_value": 1.268,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-01-01",
+            "net_value": 1.301,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-02-01",
+            "net_value": 1.375,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-03-01",
+            "net_value": 1.322,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-04-01",
+            "net_value": 1.408,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-05-01",
+            "net_value": 1.463,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-06-01",
+            "net_value": 1.512,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-07-01",
+            "net_value": 1.448,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-08-01",
+            "net_value": 1.555,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-09-01",
+            "net_value": 1.624,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-10-01",
+            "net_value": 1.581,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-11-01",
+            "net_value": 1.667,
+            "source": "backtest"
+          },
+          {
+            "date": "2025-12-01",
+            "net_value": 1.743,
+            "source": "backtest"
+          },
+          {
+            "date": "2026-01-01",
+            "net_value": 1.779,
+            "source": "live"
+          },
+          {
+            "date": "2026-02-01",
+            "net_value": 1.834,
+            "source": "live"
+          },
+          {
+            "date": "2026-03-01",
+            "net_value": 1.792,
+            "source": "live"
+          },
+          {
+            "date": "2026-04-01",
+            "net_value": 1.876,
+            "source": "live"
+          },
+          {
+            "date": "2026-05-01",
+            "net_value": 1.918,
+            "source": "live"
+          }
+        ],
+        "annotations": [
+          {
+            "date": "2026-01-01",
+            "label": "切换实盘净值",
+            "detail": "2026 起使用账户同步净值续接回测曲线"
+          }
+        ]
+      }
+    },
+    "benchmarks": {
+      "CSI300": {
+        "label": "沪深300",
+        "nav": [
+          {
+            "date": "2024-01-01",
+            "net_value": 1.0
+          },
+          {
+            "date": "2024-02-01",
+            "net_value": 1.008
+          },
+          {
+            "date": "2024-03-01",
+            "net_value": 0.994
+          },
+          {
+            "date": "2024-04-01",
+            "net_value": 1.012
+          },
+          {
+            "date": "2024-05-01",
+            "net_value": 1.001
+          },
+          {
+            "date": "2024-06-01",
+            "net_value": 1.02
+          },
+          {
+            "date": "2024-07-01",
+            "net_value": 1.031
+          },
+          {
+            "date": "2024-08-01",
+            "net_value": 1.018
+          },
+          {
+            "date": "2024-09-01",
+            "net_value": 1.045
+          },
+          {
+            "date": "2024-10-01",
+            "net_value": 1.052
+          },
+          {
+            "date": "2024-11-01",
+            "net_value": 1.039
+          },
+          {
+            "date": "2024-12-01",
+            "net_value": 1.064
+          },
+          {
+            "date": "2025-01-01",
+            "net_value": 1.071
+          },
+          {
+            "date": "2025-02-01",
+            "net_value": 1.08
+          },
+          {
+            "date": "2025-03-01",
+            "net_value": 1.059
+          },
+          {
+            "date": "2025-04-01",
+            "net_value": 1.078
+          },
+          {
+            "date": "2025-05-01",
+            "net_value": 1.092
+          },
+          {
+            "date": "2025-06-01",
+            "net_value": 1.101
+          },
+          {
+            "date": "2025-07-01",
+            "net_value": 1.086
+          },
+          {
+            "date": "2025-08-01",
+            "net_value": 1.113
+          },
+          {
+            "date": "2025-09-01",
+            "net_value": 1.12
+          },
+          {
+            "date": "2025-10-01",
+            "net_value": 1.109
+          },
+          {
+            "date": "2025-11-01",
+            "net_value": 1.135
+          },
+          {
+            "date": "2025-12-01",
+            "net_value": 1.148
+          },
+          {
+            "date": "2026-01-01",
+            "net_value": 1.156
+          },
+          {
+            "date": "2026-02-01",
+            "net_value": 1.162
+          },
+          {
+            "date": "2026-03-01",
+            "net_value": 1.149
+          },
+          {
+            "date": "2026-04-01",
+            "net_value": 1.171
+          },
+          {
+            "date": "2026-05-01",
+            "net_value": 1.18
+          }
+        ]
+      },
+      "SP500": {
+        "label": "标普500",
+        "nav": [
+          {
+            "date": "2024-01-01",
+            "net_value": 1.0
+          },
+          {
+            "date": "2024-02-01",
+            "net_value": 1.014
+          },
+          {
+            "date": "2024-03-01",
+            "net_value": 1.022
+          },
+          {
+            "date": "2024-04-01",
+            "net_value": 1.038
+          },
+          {
+            "date": "2024-05-01",
+            "net_value": 1.045
+          },
+          {
+            "date": "2024-06-01",
+            "net_value": 1.061
+          },
+          {
+            "date": "2024-07-01",
+            "net_value": 1.058
+          },
+          {
+            "date": "2024-08-01",
+            "net_value": 1.079
+          },
+          {
+            "date": "2024-09-01",
+            "net_value": 1.092
+          },
+          {
+            "date": "2024-10-01",
+            "net_value": 1.108
+          },
+          {
+            "date": "2024-11-01",
+            "net_value": 1.114
+          },
+          {
+            "date": "2024-12-01",
+            "net_value": 1.132
+          },
+          {
+            "date": "2025-01-01",
+            "net_value": 1.141
+          },
+          {
+            "date": "2025-02-01",
+            "net_value": 1.158
+          },
+          {
+            "date": "2025-03-01",
+            "net_value": 1.146
+          },
+          {
+            "date": "2025-04-01",
+            "net_value": 1.169
+          },
+          {
+            "date": "2025-05-01",
+            "net_value": 1.184
+          },
+          {
+            "date": "2025-06-01",
+            "net_value": 1.197
+          },
+          {
+            "date": "2025-07-01",
+            "net_value": 1.202
+          },
+          {
+            "date": "2025-08-01",
+            "net_value": 1.226
+          },
+          {
+            "date": "2025-09-01",
+            "net_value": 1.239
+          },
+          {
+            "date": "2025-10-01",
+            "net_value": 1.244
+          },
+          {
+            "date": "2025-11-01",
+            "net_value": 1.265
+          },
+          {
+            "date": "2025-12-01",
+            "net_value": 1.272
+          },
+          {
+            "date": "2026-01-01",
+            "net_value": 1.288
+          },
+          {
+            "date": "2026-02-01",
+            "net_value": 1.3
+          },
+          {
+            "date": "2026-03-01",
+            "net_value": 1.291
+          },
+          {
+            "date": "2026-04-01",
+            "net_value": 1.316
+          },
+          {
+            "date": "2026-05-01",
+            "net_value": 1.327
+          }
+        ]
+      }
+    }
+  }
+}
