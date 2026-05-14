@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import csv
 import json
 import hmac
+import io
 import os
 import re
 import subprocess
@@ -15,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 
@@ -28,6 +30,7 @@ WATCHLIST_CONFIG_PATH = CONFIG_DIR / "watchlist.json"
 ETF_STRATEGY_PATH = BACKEND_DIR / "strategies" / "etf.json"
 JOINQUANT_SIGNAL_LOG_PATH = BACKEND_DIR / "strategies" / "joinquant-signals.jsonl"
 JOINQUANT_FULL_LOG_PATH = BACKEND_DIR / "strategies" / "joinquant-full-logs.jsonl"
+STRATEGY_PICKS_PARTITION_DIR = BACKEND_DIR / "strategies" / "picks"
 MAX_STRATEGY_LOG_LINES = 300
 STATIC_PAGES = {
     "/": "index.html",
@@ -778,6 +781,183 @@ def get_payload(path: str) -> dict[str, Any]:
     return normalize_payload(payload, spec, source, data_path)
 
 
+def normalize_filter_value(value: Any) -> str:
+    return re.sub(r"[\s_-]+", "", str(value or "").strip().lower())
+
+
+def normalize_trade_date(value: str | None) -> str | None:
+    if not value:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(HK_TZ).strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+    try:
+        return datetime.strptime(raw[:10], "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="date 必须使用 YYYY-MM-DD 格式") from exc
+
+
+def strategy_aliases(data: dict[str, Any]) -> set[str]:
+    aliases = {
+        normalize_filter_value(data.get("strategy")),
+        normalize_filter_value(data.get("strategy_id")),
+        normalize_filter_value(data.get("strategy_label")),
+    }
+    return {item for item in aliases if item}
+
+
+def strategy_matches_data(data: dict[str, Any], strategy: str | None) -> bool:
+    target = normalize_filter_value(strategy)
+    if not target:
+        return True
+    return target in strategy_aliases(data)
+
+
+def pick_matches_strategy(item: dict[str, Any], strategy: str | None, fallback_data: dict[str, Any]) -> bool:
+    target = normalize_filter_value(strategy)
+    if not target:
+        return True
+    item_values = [
+        item.get("strategy"),
+        item.get("strategy_id"),
+        item.get("strategy_label"),
+        item.get("strategy_name"),
+    ]
+    explicit = [normalize_filter_value(value) for value in item_values if value not in {None, ""}]
+    if explicit:
+        return target in explicit
+    return strategy_matches_data(fallback_data, strategy)
+
+
+def pick_trade_date(item: dict[str, Any], fallback_date: str) -> str:
+    raw = item.get("trade_date") or item.get("date") or fallback_date
+    try:
+        return normalize_trade_date(str(raw)) or fallback_date
+    except HTTPException:
+        return str(raw or fallback_date)
+
+
+def pick_partition_candidates(strategy: str | None, trade_date: str | None) -> list[Path]:
+    if not trade_date and not strategy:
+        return []
+    candidates: list[Path] = []
+    strategy_key = normalize_filter_value(strategy)
+    safe_strategy = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(strategy or "").strip())
+    if trade_date and strategy_key:
+        candidates.extend(
+            [
+                STRATEGY_PICKS_PARTITION_DIR / trade_date / f"{safe_strategy}.json",
+                STRATEGY_PICKS_PARTITION_DIR / strategy_key / f"{trade_date}.json",
+                STRATEGY_PICKS_PARTITION_DIR / f"{trade_date}_{safe_strategy}.json",
+            ]
+        )
+    if trade_date:
+        candidates.extend(
+            [
+                STRATEGY_PICKS_PARTITION_DIR / trade_date / "picks.json",
+                STRATEGY_PICKS_PARTITION_DIR / f"{trade_date}.json",
+            ]
+        )
+    if strategy_key:
+        candidates.append(STRATEGY_PICKS_PARTITION_DIR / strategy_key / "latest.json")
+    return candidates
+
+
+def load_strategy_picks_base(strategy: str | None, trade_date: str | None) -> dict[str, Any]:
+    spec = ENDPOINTS["/api/v1/strategies/picks"]
+    for path in pick_partition_candidates(strategy, trade_date):
+        if path.exists() and path.is_file():
+            return normalize_payload(load_json(path), spec, "backend", path)
+    return get_payload("/api/v1/strategies/picks")
+
+
+def empty_picks_payload(payload: dict[str, Any], reason: str, message: str, strategy: str | None, trade_date: str | None) -> dict[str, Any]:
+    data = payload.setdefault("data", {})
+    data["items"] = []
+    data["count"] = 0
+    data["empty_reason"] = reason
+    data["empty_message"] = message
+    if strategy:
+        data["strategy"] = strategy
+        data.setdefault("strategy_label", strategy)
+    if trade_date:
+        data["trade_date"] = trade_date
+        payload.setdefault("meta", {})["trade_date"] = trade_date
+    return payload
+
+
+def filtered_strategy_picks(strategy: str | None = None, date: str | None = None) -> dict[str, Any]:
+    trade_date = normalize_trade_date(date)
+    payload = load_strategy_picks_base(strategy, trade_date)
+    data = payload.setdefault("data", {})
+    items = data.get("items")
+    query = {"strategy": strategy, "date": trade_date}
+    payload.setdefault("meta", {})["query"] = query
+
+    if not isinstance(items, list):
+        return empty_picks_payload(payload, "api_no_data", "接口返回结构中没有可用的选股列表。", strategy, trade_date)
+    if not items:
+        return empty_picks_payload(payload, "api_no_data", "接口暂无选股数据。", strategy, trade_date)
+
+    default_date = str(data.get("trade_date") or payload.get("meta", {}).get("trade_date") or "")
+    date_filtered = [
+        item for item in items
+        if isinstance(item, dict) and (not trade_date or pick_trade_date(item, default_date) == trade_date)
+    ]
+    if trade_date and not date_filtered:
+        return empty_picks_payload(payload, "date_no_picks", f"{trade_date} 暂无选股结果。", strategy, trade_date)
+
+    strategy_filtered = [
+        item for item in date_filtered
+        if isinstance(item, dict) and pick_matches_strategy(item, strategy, data)
+    ]
+    if strategy and not strategy_filtered:
+        return empty_picks_payload(payload, "filter_no_match", "当前策略筛选条件没有匹配的选股结果。", strategy, trade_date)
+
+    data["items"] = strategy_filtered
+    data["count"] = len(strategy_filtered)
+    if strategy and strategy_matches_data(data, strategy):
+        data["strategy"] = data.get("strategy") or strategy
+    elif strategy:
+        data["strategy"] = strategy
+        data.setdefault("strategy_label", strategy)
+    if trade_date:
+        data["trade_date"] = trade_date
+        payload["meta"]["trade_date"] = trade_date
+    data.pop("empty_reason", None)
+    data.pop("empty_message", None)
+    return payload
+
+
+def strategy_picks_csv(payload: dict[str, Any]) -> str:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["trade_date", "strategy", "symbol", "name", "score", "confidence", "entry_price", "stop_loss", "take_profit", "tags", "explanation", "invalidation"])
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    for item in data.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        writer.writerow([
+            data.get("trade_date") or payload.get("meta", {}).get("trade_date") or "",
+            item.get("strategy") or item.get("strategy_label") or data.get("strategy") or data.get("strategy_label") or "",
+            item.get("symbol") or "",
+            item.get("name") or "",
+            item.get("score") or "",
+            item.get("confidence") or "",
+            item.get("entry_price") or item.get("entry") or "",
+            item.get("stop_loss") or item.get("stop") or "",
+            item.get("take_profit") or item.get("target") or "",
+            ";".join(str(tag) for tag in item.get("tags") or []),
+            item.get("explanation") or "",
+            item.get("invalidation") or "",
+        ])
+    return buffer.getvalue()
+
+
 @app.get("/api/v1/health")
 def health() -> dict[str, Any]:
     specs = []
@@ -894,9 +1074,25 @@ def strategy_picks(
     strategy: str | None = Query(default=None),
     date: str | None = Query(default=None),
 ) -> dict[str, Any]:
-    payload = get_payload("/api/v1/strategies/picks")
-    payload["meta"]["query"] = {"strategy": strategy, "date": date}
-    return payload
+    return filtered_strategy_picks(strategy=strategy, date=date)
+
+
+@app.get("/api/v1/strategies/picks/export")
+def export_strategy_picks(
+    strategy: str | None = Query(default=None),
+    date: str | None = Query(default=None),
+) -> StreamingResponse:
+    payload = filtered_strategy_picks(strategy=strategy, date=date)
+    csv_text = strategy_picks_csv(payload)
+    trade_date = payload.get("data", {}).get("trade_date") or payload.get("meta", {}).get("trade_date") or now_hk().strftime("%Y-%m-%d")
+    raw_strategy = normalize_filter_value(strategy or payload.get("data", {}).get("strategy") or "all") or "all"
+    strategy_key = re.sub(r"[^A-Za-z0-9_.-]+", "-", raw_strategy).strip("-") or "all"
+    filename = f"strategy-picks-{trade_date}-{strategy_key}.csv"
+    return StreamingResponse(
+        iter([csv_text]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/v1/portfolio/holdings")
