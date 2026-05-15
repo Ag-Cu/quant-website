@@ -1845,6 +1845,27 @@ body.sidebar-collapsed .sidebar-toggle::before {
   gap: 6px;
 }
 
+.holding-signal-tags,
+.holding-exit-alert {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.holding-exit-alert {
+  max-width: 260px;
+  flex-direction: column;
+}
+
+.holding-exit-alert small,
+.muted-text {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .chart-panel {
   overflow-x: auto;
 }
@@ -1911,6 +1932,39 @@ body.sidebar-collapsed .sidebar-toggle::before {
 
 .perf-metric strong {
   font-size: 22px;
+}
+
+.source-status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.source-status-grid > div {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.source-status-grid span,
+.source-status-grid small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-status-grid strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .monthly-heat {
@@ -2084,6 +2138,7 @@ body.sidebar-collapsed .sidebar-toggle::before {
 
 @media (max-width: 1240px) {
   .summary-grid,
+  .source-status-grid,
   .pick-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2172,6 +2227,7 @@ body.sidebar-collapsed .sidebar-toggle::before {
 
   .summary-grid,
   .decision-metrics,
+  .source-status-grid,
   .signal-card-grid,
   .split-detail,
   .heatmap-grid,
@@ -2544,6 +2600,8 @@ button.is-loading {
   }
 
   body[data-page="holdings"] .holding-stock,
+  body[data-page="holdings"] .holding-strategy-signal,
+  body[data-page="holdings"] .holding-exit-cell,
   body[data-page="holdings"] .holding-market-value,
   body[data-page="holdings"] .data-table td:last-child,
   body[data-page="holdings"] .data-table td:nth-child(7) {
@@ -2555,7 +2613,7 @@ button.is-loading {
     font-size: 18px;
   }
 
-  body[data-page="holdings"] .data-table td:nth-child(n+4):nth-child(-n+9) {
+  body[data-page="holdings"] .data-table td:nth-child(n+4):nth-child(-n+10) {
     display: none;
   }
 

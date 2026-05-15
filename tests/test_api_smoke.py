@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
+import backend.main as backend_main
 from backend.main import ENDPOINTS, app
 
 
@@ -63,3 +66,312 @@ def test_joinquant_webhook_rejects_missing_token(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("JOINQUANT_WEBHOOK_TOKEN", "test-joinquant-token")
     response = client.post("/api/v1/joinquant/signals", json={"data": {}})
     assert response.status_code == 401
+
+
+def test_joinquant_webhook_routes_small_cap_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    client: TestClient,
+) -> None:
+    monkeypatch.setenv("JOINQUANT_WEBHOOK_TOKEN", "test-joinquant-token")
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    storage_path = tmp_path / "data/backend/strategies/small-cap.json"
+    signal_log_path = tmp_path / "data/backend/strategies/joinquant-signals.jsonl"
+    full_log_path = tmp_path / "data/backend/strategies/joinquant-full-logs.jsonl"
+    monkeypatch.setattr(backend_main, "SMALL_CAP_STRATEGY_PATH", storage_path)
+    monkeypatch.setattr(backend_main, "JOINQUANT_SIGNAL_LOG_PATH", signal_log_path)
+    monkeypatch.setattr(backend_main, "JOINQUANT_FULL_LOG_PATH", full_log_path)
+
+    response = client.post(
+        "/api/v1/joinquant/signals",
+        headers={"X-Webhook-Token": "test-joinquant-token"},
+        json={
+            "strategy_id": "small-cap-momentum",
+            "strategy_name": "涨停基因小市值轮动V2.2",
+            "trade_date": "2026-05-15",
+            "run_id": "jq-small-cap-test",
+            "signals": [{"symbol": "300476.XSHE", "name": "胜宏科技", "signal": "buy", "score": 90}],
+            "logs": [{"time": "2026-05-15 10:30:00", "stage": "weekly_buy", "message": "买入执行完成"}],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["meta"]["storage_path"] == "data/backend/strategies/small-cap.json"
+    assert payload["data"]["strategy"]["id"] == "small-cap-momentum"
+    assert payload["data"]["signals"][0]["symbol"] == "300476"
+    assert payload["data"]["logs"][0]["strategy_id"] == "small-cap-momentum"
+    assert storage_path.exists()
+    assert signal_log_path.exists()
+    assert full_log_path.exists()
+
+
+def test_small_cap_endpoint_hides_seed_signals_until_joinquant_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    client: TestClient,
+) -> None:
+    small_cap_path = tmp_path / "data/backend/strategies/small-cap.json"
+    small_cap_path.parent.mkdir(parents=True)
+    small_cap_path.write_text(
+        """
+        {
+          "meta": {"version": "1.0", "source": "live", "as_of": "2026-05-12T14:56:00+08:00", "trade_date": "2026-05-12", "timezone": "Asia/Hong_Kong", "market_session": "open", "run_id": "backend-small-20260512-1456"},
+          "data": {
+            "strategy": {"id": "small-cap-momentum", "name": "小盘股动量", "status": "running"},
+            "summary": {"signal_count": 4, "buy_count": 2, "hold_count": 4},
+            "signals": [{"symbol": "300476", "name": "胜宏科技", "signal": "buy"}, {"symbol": "002281", "name": "光迅科技", "signal": "buy"}, {"symbol": "688256", "name": "寒武纪-U", "signal": "watch"}, {"symbol": "603893", "name": "瑞芯微", "signal": "reduce"}],
+            "holdings": [{"symbol": "002463", "name": "沪电股份"}],
+            "themes": [],
+            "risk": {},
+            "events": [],
+            "logs": []
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    full_log_path = tmp_path / "data/backend/strategies/joinquant-full-logs.jsonl"
+    full_log_path.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(backend_main, "SMALL_CAP_STRATEGY_PATH", small_cap_path)
+    monkeypatch.setattr(backend_main, "JOINQUANT_FULL_LOG_PATH", full_log_path)
+
+    response = client.get("/api/v1/strategies/small-cap")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["source"] == "joinquant-pending"
+    assert payload["data"]["signals"] == []
+    assert payload["data"]["holdings"] == []
+    assert payload["data"]["ignored_seed_signal_count"] == 4
+
+
+def test_portfolio_holdings_include_joinquant_strategy_outputs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    client: TestClient,
+) -> None:
+    holdings_path = tmp_path / "data/backend/portfolio/holdings.json"
+    small_cap_path = tmp_path / "data/backend/strategies/small-cap.json"
+    etf_path = tmp_path / "data/backend/strategies/etf.json"
+    full_log_path = tmp_path / "data/backend/strategies/joinquant-full-logs.jsonl"
+    holdings_path.parent.mkdir(parents=True)
+    small_cap_path.parent.mkdir(parents=True)
+    holdings_path.write_text(
+        """
+        {
+          "meta": {"version": "1.0", "source": "test", "as_of": "2026-05-15T10:31:00+08:00", "trade_date": "2026-05-15", "timezone": "Asia/Hong_Kong", "market_session": "open", "run_id": "holdings-test"},
+          "data": {
+            "summary": {"total_market_value": 100000, "position_count": 1},
+            "holdings": [{"symbol": "000001", "name": "静态假持仓", "strategy_id": "manual", "avg_cost": 10.0, "last_price": 10.0, "quantity": 1000, "market_value": 10000, "pnl_amount": 0, "pnl_pct": 0, "weight_pct": 10, "holding_days": 3}],
+            "allocation": []
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    small_cap_path.write_text(
+        """
+        {
+          "meta": {"version": "1.0", "source": "joinquant", "as_of": "2026-05-15T10:30:00+08:00", "trade_date": "2026-05-15", "timezone": "Asia/Hong_Kong", "market_session": "open", "run_id": "small-cap-test"},
+          "data": {
+            "strategy": {"id": "small-cap-momentum", "name": "涨停基因小市值轮动", "status": "running"},
+            "summary": {},
+            "signals": [{"symbol": "300476.XSHE", "name": "胜宏科技", "signal": "sell", "signal_label": "卖出", "score": 80, "suggested_range": "开板卖出"}],
+            "holdings": [{"symbol": "300476.XSHE", "name": "胜宏科技", "cost": 42.0, "last_price": 43.0, "quantity": 1000, "market_value": 43000, "pnl_amount": 1000, "pnl_pct": 2.38, "weight_pct": 43, "holding_days": 3}],
+            "themes": [],
+            "risk": {},
+            "events": [],
+            "logs": [{"time": "2026-05-15 10:29:00", "level": "warning", "message": "胜宏科技 300476.XSHE 涨停打开，卖出"}]
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    etf_path.write_text(
+        """
+        {
+          "meta": {"version": "1.0", "source": "joinquant", "as_of": "2026-05-15T10:30:00+08:00", "trade_date": "2026-05-15", "timezone": "Asia/Hong_Kong", "market_session": "open", "run_id": "etf-test"},
+          "data": {"strategy": {"id": "joinquant-wufu-etf-v43", "name": "五福 ETF"}, "summary": {}, "recommendations": [{"symbol": "159915.XSHE", "name": "创业板ETF", "action": "buy"}], "holdings": [], "regime": {}, "events": [], "logs": []}
+        }
+        """,
+        encoding="utf-8",
+    )
+    full_log_path.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(backend_main, "SMALL_CAP_STRATEGY_PATH", small_cap_path)
+    monkeypatch.setattr(backend_main, "ETF_STRATEGY_PATH", etf_path)
+    monkeypatch.setattr(backend_main, "JOINQUANT_FULL_LOG_PATH", full_log_path)
+
+    response = client.get("/api/v1/portfolio/holdings")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["holdings"] == []
+    assert payload["data"]["source"] == "joinquant-pending"
+    assert payload["data"]["static_holdings_ignored_count"] == 1
+    assert payload["data"]["summary"]["position_count"] == 0
+
+    small_cap_path.write_text(small_cap_path.read_text(encoding="utf-8").replace("small-cap-test", "jq-small-cap-20260515-103000"), encoding="utf-8")
+    etf_path.write_text(etf_path.read_text(encoding="utf-8").replace("etf-test", "jq-wufu-20260515-103000"), encoding="utf-8")
+
+    response = client.get("/api/v1/portfolio/holdings")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    holding = payload["data"]["holdings"][0]
+    assert [item["symbol"] for item in payload["data"]["holdings"]] == ["300476"]
+    assert payload["data"]["source"] == "joinquant"
+    assert payload["data"]["summary"]["position_count"] == 1
+    assert payload["data"]["summary"]["total_market_value"] == 43000
+    assert holding["strategy_signals"][0]["strategy_id"] == "small-cap-momentum"
+    assert holding["strategy_signals"][0]["action"] == "sell"
+    assert holding["quantity"] == 1000
+    assert holding["exit_alerts"]
+    assert payload["data"]["strategy_outputs"]["signals"][0]["symbol"] in {"300476", "159915"}
+    assert any(alert["symbol"] == "300476" for alert in payload["data"]["strategy_outputs"]["sell_alerts"])
+
+
+def patch_joinquant_paths(monkeypatch: pytest.MonkeyPatch, tmp_path) -> dict[str, object]:
+    paths = {
+        "small_cap": tmp_path / "data/backend/strategies/small-cap.json",
+        "etf": tmp_path / "data/backend/strategies/etf.json",
+        "signal_log": tmp_path / "data/backend/strategies/joinquant-signals.jsonl",
+        "full_log": tmp_path / "data/backend/strategies/joinquant-full-logs.jsonl",
+        "snapshots": tmp_path / "data/backend/performance/joinquant-snapshots.jsonl",
+        "ledger": tmp_path / "data/backend/performance/joinquant-nav.jsonl",
+        "benchmarks": tmp_path / "data/backend/performance/benchmarks-live.json",
+    }
+    monkeypatch.setenv("JOINQUANT_WEBHOOK_TOKEN", "test-joinquant-token")
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(backend_main, "SMALL_CAP_STRATEGY_PATH", paths["small_cap"])
+    monkeypatch.setattr(backend_main, "ETF_STRATEGY_PATH", paths["etf"])
+    monkeypatch.setattr(backend_main, "JOINQUANT_SIGNAL_LOG_PATH", paths["signal_log"])
+    monkeypatch.setattr(backend_main, "JOINQUANT_FULL_LOG_PATH", paths["full_log"])
+    monkeypatch.setattr(backend_main, "PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH", paths["snapshots"])
+    monkeypatch.setattr(backend_main, "PERFORMANCE_JOINQUANT_NAV_PATH", paths["ledger"])
+    monkeypatch.setattr(backend_main, "PERFORMANCE_BENCHMARK_NAV_PATH", paths["benchmarks"])
+    monkeypatch.setattr(backend_main, "PERFORMANCE_STALE_SECONDS", 10_000_000)
+    monkeypatch.setattr(backend_main, "BENCHMARK_CACHE_SECONDS", 10_000_000)
+    paths["full_log"].parent.mkdir(parents=True, exist_ok=True)
+    paths["full_log"].write_text("", encoding="utf-8")
+    return paths
+
+
+def write_live_benchmark_cache(path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "meta": {"version": "1.0", "source": "eastmoney", "as_of": "2026-05-15T10:30:00+08:00", "trade_date": "2026-05-15", "timezone": "Asia/Hong_Kong", "market_session": "open", "run_id": "benchmark-test"},
+                "data": {
+                    "benchmarks": {
+                        "CSI300": {"id": "CSI300", "label": "沪深300", "source": "eastmoney", "source_name": "东方财富行情中心", "as_of": "2026-05-15T10:30:00+08:00", "trade_date": "2026-05-15", "stale_seconds": 10, "status": "live", "nav": [{"date": "2026-05-14", "value": 1000}, {"date": "2026-05-15", "value": 1006}]},
+                        "CSI1000": {"id": "CSI1000", "label": "中证1000", "source": "eastmoney", "source_name": "东方财富行情中心", "as_of": "2026-05-15T10:30:00+08:00", "trade_date": "2026-05-15", "stale_seconds": 10, "status": "live", "nav": [{"date": "2026-05-14", "value": 1000}, {"date": "2026-05-15", "value": 1010}]},
+                    }
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def post_performance_snapshot(client: TestClient, run_id: str, as_of: str, total_value: float) -> None:
+    response = client.post(
+        "/api/v1/joinquant/signals",
+        headers={"X-Webhook-Token": "test-joinquant-token"},
+        json={
+            "strategy_id": "jq-new-alpha",
+            "strategy_name": "新策略 Alpha",
+            "trade_date": as_of[:10],
+            "as_of": as_of,
+            "run_id": run_id,
+            "portfolio": {"total_value": total_value, "cash": 20000, "available_cash": 20000},
+            "holdings": [
+                {"symbol": "300476.XSHE", "name": "胜宏科技", "quantity": 1000, "last_price": 41.2, "market_value": 41200},
+                {"symbol": "002463.XSHE", "name": "沪电股份", "quantity": 800, "last_price": 48.5, "market_value": 38800},
+            ],
+            "trades": [{"trade_id": f"{run_id}-1", "symbol": "300476.XSHE", "action": "buy", "quantity": 1000, "price": 41.2}],
+            "signals": [{"symbol": "300476.XSHE", "name": "胜宏科技", "signal": "buy"}],
+            "logs": [{"time": as_of, "stage": "trade", "message": "调仓完成"}],
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["performance_snapshot"]["total_value"] == total_value
+
+
+def test_joinquant_webhook_persists_performance_nav_and_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    client: TestClient,
+) -> None:
+    paths = patch_joinquant_paths(monkeypatch, tmp_path)
+    write_live_benchmark_cache(paths["benchmarks"])
+
+    post_performance_snapshot(client, "jq-new-alpha-run-1", "2026-05-14T10:30:00+08:00", 100000)
+    post_performance_snapshot(client, "jq-new-alpha-run-2", "2026-05-15T10:30:00+08:00", 101200)
+    post_performance_snapshot(client, "jq-new-alpha-run-2", "2026-05-15T10:30:00+08:00", 101200)
+
+    response = client.get("/api/v1/performance?strategy=jq-new-alpha&benchmark=none&from=2026-05-14&to=2026-05-15")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    curve = payload["data"]["equity_curve"]
+    assert payload["meta"]["source"] == "joinquant"
+    assert payload["data"]["strategy"] == "jq-new-alpha"
+    assert any(item["id"] == "jq-new-alpha" and item["label"] == "新策略 Alpha" for item in payload["data"]["strategies"])
+    assert len(curve) == 2
+    assert curve[-1]["value"] == 1.012
+    assert curve[-1]["return_pct"] == 1.2
+    assert curve[-1]["total_value"] == 101200
+    assert curve[-1]["cash"] == 20000
+    assert curve[-1]["positions_market_value"] == 80000
+    assert curve[-1]["reconciliation_diff"] == 1200
+    assert curve[-1]["run_id"] == "jq-new-alpha-run-2"
+    assert curve[-1]["as_of"] == "2026-05-15T10:30:00+08:00"
+    assert curve[-1]["trace"]["raw_webhook_log"].endswith("joinquant-signals.jsonl")
+    ledger_rows = [json.loads(line) for line in paths["ledger"].read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len([row for row in ledger_rows if row["snapshot_id"].endswith("jq-new-alpha-run-2|2026-05-15T10:30:00+08:00")]) == 1
+
+
+def test_performance_strategy_switch_does_not_fallback_to_static_seed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    client: TestClient,
+) -> None:
+    paths = patch_joinquant_paths(monkeypatch, tmp_path)
+    write_live_benchmark_cache(paths["benchmarks"])
+    post_performance_snapshot(client, "jq-new-alpha-run-1", "2026-05-15T10:30:00+08:00", 100000)
+
+    response = client.get("/api/v1/performance?strategy=missing-strategy")
+
+    assert response.status_code == 404
+    assert "策略净值不存在" in response.text
+
+
+def test_performance_uses_live_benchmark_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    client: TestClient,
+) -> None:
+    paths = patch_joinquant_paths(monkeypatch, tmp_path)
+    write_live_benchmark_cache(paths["benchmarks"])
+    post_performance_snapshot(client, "jq-new-alpha-run-1", "2026-05-15T10:30:00+08:00", 100000)
+
+    response = client.get("/api/v1/performance?strategy=jq-new-alpha&benchmark=CSI1000")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["benchmark_id"] == "CSI1000"
+    assert payload["data"]["benchmark_status"]["source"] == "eastmoney"
+    assert payload["data"]["benchmark_status"]["trade_date"] == "2026-05-15"
+    assert payload["data"]["benchmark_status"]["stale_seconds"] is not None
+    assert payload["data"]["benchmark_curve"][-1]["return_pct"] == 1.0

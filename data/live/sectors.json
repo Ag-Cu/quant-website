@@ -2,16 +2,16 @@
   "meta": {
     "version": "1.0",
     "source": "live",
-    "as_of": "2026-05-14T22:20:31+08:00",
+    "as_of": "2026-05-14T22:22:30+08:00",
     "trade_date": "2026-05-14",
     "timezone": "Asia/Hong_Kong",
     "market_session": "closed",
-    "run_id": "live-sectors-20260514-222031",
+    "run_id": "live-sectors-20260514-222230",
     "stale_seconds": 0
   },
   "data": {
     "period": "1D",
-    "updated_at": "2026-05-14T22:20:31+08:00",
+    "updated_at": "2026-05-14T22:22:30+08:00",
     "sectors": [
       {
         "id": "proxy-2",

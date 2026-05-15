@@ -200,6 +200,21 @@ class JoinQuantEtfStrategyPayload(ApiPayload):
     data: JoinQuantEtfStrategyData
 
 
+class SmallCapStrategyData(ContractModel):
+    strategy: dict[str, Any]
+    summary: dict[str, Any]
+    signals: list[Any]
+    holdings: list[Any]
+    themes: list[Any]
+    risk: dict[str, Any]
+    events: list[Any] = Field(default_factory=list)
+    logs: list[Any] = Field(default_factory=list)
+
+
+class SmallCapStrategyPayload(ApiPayload):
+    data: SmallCapStrategyData
+
+
 PayloadModel = TypeVar("PayloadModel", bound=BaseModel)
 
 
@@ -215,6 +230,7 @@ PAYLOAD_SCHEMAS: dict[str, type[BaseModel]] = {
     "/api/v1/market/sentiment": SentimentPayload,
     "/api/v1/macro": MacroPayload,
     "/api/v1/strategies/etf": JoinQuantEtfStrategyPayload,
+    "/api/v1/strategies/small-cap": SmallCapStrategyPayload,
 }
 
 LIVE_PAYLOAD_SCHEMAS: dict[str, type[BaseModel]] = {
@@ -280,6 +296,7 @@ def json_schema_bundle() -> dict[str, Any]:
                 "SentimentPayload": SentimentPayload,
                 "MacroPayload": MacroPayload,
                 "JoinQuantEtfStrategyPayload": JoinQuantEtfStrategyPayload,
+                "SmallCapStrategyPayload": SmallCapStrategyPayload,
             }.items()
         },
     }

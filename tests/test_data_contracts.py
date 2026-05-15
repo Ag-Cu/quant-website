@@ -91,6 +91,8 @@ DATA_FIELD_TYPES: dict[str, dict[str, str]] = {
         "holdings": "array",
         "themes": "array",
         "risk": "object",
+        "events": "array",
+        "logs": "array",
     },
     "portfolio/holdings.json": {"summary": "object", "holdings": "array", "allocation": "array"},
     "performance/net-values.json": {
@@ -99,6 +101,7 @@ DATA_FIELD_TYPES: dict[str, dict[str, str]] = {
         "strategies": "object",
         "benchmarks": "object",
     },
+    "performance/benchmarks-live.json": {"benchmarks": "object"},
     "performance/overview.json": {
         "strategy": "string",
         "strategy_label": "string",

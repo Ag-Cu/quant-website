@@ -155,6 +155,8 @@
       "concentration_pct": 18,
       "stop_watch_count": 1,
       "volatility_score": 64
-    }
+    },
+    "events": [],
+    "logs": []
   }
 }

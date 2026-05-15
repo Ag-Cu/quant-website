@@ -7,7 +7,7 @@ const PAGE_CONFIG = {
   watchlist: { endpoint: "/api/v1/watchlist", refreshMs: 15_000, render: renderWatchlist },
   picks: { endpoint: "/api/v1/strategies/picks", refreshMs: 300_000, render: renderPicks },
   holdings: { endpoint: "/api/v1/portfolio/holdings", refreshMs: 30_000, render: renderHoldings },
-  performance: { endpoint: buildPerformanceEndpoint, refreshMs: 300_000, render: renderPerformance },
+  performance: { endpoint: buildPerformanceEndpoint, refreshMs: 30_000, render: renderPerformance },
   etf: { endpoint: "/api/v1/strategies/etf", refreshMs: 300_000, render: renderEtf },
   "small-cap": { endpoint: "/api/v1/strategies/small-cap", refreshMs: 300_000, render: renderSmallCap },
   breadth: { endpoint: "/api/v1/market/breadth", refreshMs: 60_000, render: renderBreadth },
@@ -277,6 +277,14 @@ function pctText(value, digits = 2) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "--";
   const number = Number(value);
   return `${number > 0 ? "+" : ""}${number.toFixed(digits)}%`;
+}
+
+function secondsText(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "--";
+  const seconds = Math.max(0, Number(value));
+  if (seconds < 60) return `${Math.round(seconds)} 秒`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} 分钟`;
+  return `${(seconds / 3600).toFixed(1)} 小时`;
 }
 
 function valueWithUnit(value, unit = "", digits = 2) {
@@ -1071,10 +1079,35 @@ function renderPicks(payload) {
   bindPicksControls(payload);
 }
 
+function strategySignalTags(signals = []) {
+  if (!signals.length) return `<span class="muted-text">--</span>`;
+  return `<div class="holding-signal-tags">${signals.slice(0, 3).map((item) => tag(`${item.strategy_name || "策略"} · ${item.action_label || "--"}`, actionTone(item.action))).join("")}</div>`;
+}
+
+function exitAlertCell(alerts = []) {
+  if (!alerts.length) return `<span class="muted-text">--</span>`;
+  return alerts.slice(0, 2).map((item) => {
+    const tone = item.action === "reduce" || item.action === "trim" ? "warning" : "negative";
+    return `<div class="holding-exit-alert">${tag(item.action_label || "卖出/风控", tone)}<small>${escapeHtml(item.strategy_name || "策略")} · ${escapeHtml(item.reason || "--")}</small></div>`;
+  }).join("");
+}
+
+function strategyOutputReason(row) {
+  const parts = [];
+  if (row.reason) parts.push(row.reason);
+  if (row.suggested_weight_pct !== null && row.suggested_weight_pct !== undefined) parts.push(`目标 ${valueWithUnit(row.suggested_weight_pct, "%", 0)}`);
+  if (row.score !== null && row.score !== undefined) parts.push(`分数 ${valueText(row.score, 0)}`);
+  return parts.join(" · ") || "--";
+}
+
 function renderHoldings(payload) {
   const summary = payload.data?.summary || {};
   const source = payload.data?.holdings || [];
   const allocation = payload.data?.allocation || [];
+  const strategyOutputs = payload.data?.strategy_outputs || {};
+  const outputSignals = strategyOutputs.signals || [];
+  const sellAlerts = strategyOutputs.sell_alerts || [];
+  const holdingHeaders = ["股票", "策略信号", "卖出/风控", "持仓均价", "最新价", "持仓量", "市值", "盈亏额", "盈亏%", "仓位占比", "持有天数", "操作"];
   const totalPnl = source.reduce((sum, item) => sum + Number(item.pnl_pct || 0), 0);
   dom.app.innerHTML = `
     ${summaryGrid([
@@ -1089,15 +1122,34 @@ function renderHoldings(payload) {
       kicker: "Current Holdings",
       span: "span-12",
       body: table(
-        ["股票", "持仓均价", "最新价", "持仓量", "市值", "盈亏额", "盈亏%", "仓位占比", "持有天数", "操作"],
+        holdingHeaders,
         source.map((row) => {
           const avgCost = row.avg_cost ?? row.cost;
-          const marketValue = row.market_value ?? row.weight_pct * 24800;
+          const marketValue = row.market_value;
           const pnlAmount = row.pnl_amount ?? row.pnl_pct;
-          return `<tr class="${Number(row.pnl_pct) >= 0 ? "profit-row" : "loss-row"}"><td><strong>${escapeHtml(row.symbol)}</strong><br><small>${escapeHtml(row.name)}</small></td><td>${valueText(avgCost, 2)}</td><td>${valueText(row.last_price, 2)}</td><td>${intText(row.quantity ?? row.weight_pct * 1000)}</td><td>¥${intText(marketValue)}</td><td class="${toneClassByValue(pnlAmount)}">${Number(pnlAmount) > 0 ? "+" : ""}¥${intText(pnlAmount)}</td><td><div class="pnl-bar ${toneByValue(row.pnl_pct)}"><i style="--bar:${Math.min(100, Math.abs(row.pnl_pct) * 8)}%;"></i><span>${pctText(row.pnl_pct)}</span></div></td><td><div class="mini-donut" style="--score:${row.weight_pct}%;"></div></td><td>${row.holding_days > 30 ? tag(`${row.holding_days} 天`, "warning") : `${row.holding_days} 天`}</td><td><div class="action-cell"><button class="row-action" type="button" data-holding-mark="${escapeHtml(row.symbol)}">标记</button><button class="row-action" type="button" data-rebalance-record="${escapeHtml(row.symbol)}" data-weight="${escapeHtml(row.weight_pct)}">调仓记录</button><span class="action-status" data-action-status></span></div></td></tr>`;
+          const holdingDays = row.holding_days === null || row.holding_days === undefined || Number.isNaN(Number(row.holding_days)) ? "--" : `${intText(row.holding_days)} 天`;
+          return `<tr class="holding-card-row ${Number(row.pnl_pct) >= 0 ? "profit-row" : "loss-row"}"><td class="holding-stock" data-label="股票"><strong>${escapeHtml(row.symbol)}</strong><br><small>${escapeHtml(row.name)}</small></td><td class="holding-strategy-signal" data-label="策略信号">${strategySignalTags(row.strategy_signals || [])}</td><td class="holding-exit-cell" data-label="卖出/风控">${exitAlertCell(row.exit_alerts || [])}</td><td data-label="持仓均价">${valueText(avgCost, 2)}</td><td class="holding-price" data-label="最新价">${valueText(row.last_price, 2)}</td><td data-label="持仓量">${intText(row.quantity)}</td><td class="holding-market-value" data-label="市值">${marketValue === null || marketValue === undefined ? "--" : `¥${intText(marketValue)}`}</td><td data-label="盈亏额" class="${toneClassByValue(pnlAmount)}">${pnlAmount === null || pnlAmount === undefined ? "--" : `${Number(pnlAmount) > 0 ? "+" : ""}¥${intText(pnlAmount)}`}</td><td data-label="盈亏%"><div class="pnl-bar ${toneByValue(row.pnl_pct)}"><i style="--bar:${Math.min(100, Math.abs(row.pnl_pct) * 8)}%;"></i><span>${pctText(row.pnl_pct)}</span></div></td><td data-label="仓位占比"><div class="mini-donut" style="--score:${row.weight_pct || 0}%;"></div></td><td data-label="持有天数">${Number(row.holding_days) > 30 ? tag(holdingDays, "warning") : escapeHtml(holdingDays)}</td><td data-label="操作"><div class="action-cell"><button class="row-action" type="button" data-holding-mark="${escapeHtml(row.symbol)}">标记</button><button class="row-action" type="button" data-rebalance-record="${escapeHtml(row.symbol)}" data-weight="${escapeHtml(row.weight_pct || 0)}">调仓记录</button><span class="action-status" data-action-status></span></div></td></tr>`;
         }),
-        1100,
+        1500,
       ),
+    })}
+    ${panel({
+      title: "聚宽策略输出",
+      kicker: "JoinQuant Signals",
+      span: "span-8",
+      tools: pill(`${intText(outputSignals.length)} 条`, "blue"),
+      body: table(
+        ["策略", "股票", "动作", "理由", "更新时间"],
+        outputSignals.map((row) => `<tr><td>${escapeHtml(row.strategy_name || "--")}</td><td><strong>${escapeHtml(row.symbol)}</strong><br><small>${escapeHtml(row.name || "")}</small></td><td>${tag(row.action_label || "--", actionTone(row.action))}</td><td>${escapeHtml(strategyOutputReason(row))}</td><td>${formatDateTime(row.updated_at)}</td></tr>`),
+        880,
+      ),
+    })}
+    ${panel({
+      title: "实时卖出/风控",
+      kicker: "Sell Alerts",
+      span: "span-4",
+      tools: pill(`${intText(sellAlerts.length)} 条`, sellAlerts.length ? "warning" : "blue"),
+      body: sellAlerts.length ? `<div class="alert-list">${sellAlerts.slice(0, 8).map((row) => `<article class="alert-item"><div class="inline-between"><strong>${escapeHtml(row.symbol || row.strategy_name || "策略级风控")}</strong>${tag(row.action_label || "卖出/风控", row.level === "error" ? "negative" : "warning")}</div><span>${escapeHtml(row.strategy_name || "--")} · ${escapeHtml(row.reason || "--")}</span><small>${formatDateTime(row.time)}</small></article>`).join("")}</div>` : `<div class="empty-state">暂无卖出或风控提醒</div>`,
     })}
     ${panel({ title: "行业配置", kicker: "Allocation", span: "span-12", body: `<div class="allocation-panel"><div class="allocation-donut"></div>${barList(allocation.map((item) => ({ name: item.sector, value: item.weight_pct, unit: "%", detail: item.market_value ? `¥${intText(item.market_value)}` : "" })), { color: "var(--accent)" })}</div>` })}
   `;
@@ -1127,6 +1179,16 @@ function renderPerformance(payload) {
   const monthly = data.monthly_returns || [];
   const strategies = data.strategies?.length ? data.strategies : [{ id: data.strategy || "momentum", label: data.strategy_label || "动量策略" }];
   const benchmarks = data.benchmarks?.length ? data.benchmarks : [{ id: data.benchmark_id || "CSI300", label: data.benchmark || "沪深300" }];
+  const navSource = data.nav_source || {};
+  const benchmarkStatus = data.benchmark_status || {};
+  const reconciliation = data.reconciliation || {};
+  const sourceTone = navSource.source === "joinquant" ? "positive" : navSource.source === "joinquant-stale" ? "warning" : "neutral";
+  const sourceCards = [
+    metricCard("策略净值来源", navSource.source || payload.meta?.source || "--", `最后上报 ${formatDateTime(navSource.last_seen || payload.meta?.last_seen)}`, sourceTone),
+    metricCard("上报延迟", secondsText(navSource.stale_seconds ?? payload.meta?.stale_seconds), `阈值 ${secondsText(navSource.stale_after_seconds)}`, sourceTone),
+    metricCard("账户总资产", reconciliation.total_value === null || reconciliation.total_value === undefined ? "--" : `¥${intText(reconciliation.total_value)}`, `现金 ¥${intText(reconciliation.cash)}`, "neutral"),
+    metricCard("对账差额", reconciliation.diff === null || reconciliation.diff === undefined ? "--" : `¥${intText(reconciliation.diff)}`, "total - cash - positions", Math.abs(Number(reconciliation.diff || 0)) <= 1 ? "positive" : "warning"),
+  ];
   const ranges = [
     { id: "3M", label: "3M" },
     { id: "1Y", label: "1Y" },
@@ -1154,7 +1216,19 @@ function renderPerformance(payload) {
         </div>
       </div>
     </section>
+    ${summaryGrid(sourceCards)}
     ${panel({ title: "历史收益曲线", kicker: "Historical Performance", span: "span-12", body: equityChart(equity, benchmark) })}
+    ${panel({
+      title: "实时链路状态",
+      kicker: "JoinQuant Performance Chain",
+      span: "span-12",
+      body: `<div class="source-status-grid">
+        <div><span>策略快照</span><strong>${escapeHtml(navSource.source || payload.meta?.source || "--")}</strong><small>${escapeHtml(navSource.snapshot_path || "--")}</small></div>
+        <div><span>净值流水</span><strong>${intText(navSource.point_count)} 点</strong><small>${escapeHtml(navSource.storage_path || "--")}</small></div>
+        <div><span>基准来源</span><strong>${escapeHtml(benchmarkStatus.source_name || benchmarkStatus.source || "--")}</strong><small>${escapeHtml(benchmarkStatus.trade_date || "--")} · ${secondsText(benchmarkStatus.stale_seconds)}</small></div>
+        <div><span>当前请求</span><strong>${escapeHtml(data.strategy || "--")}</strong><small>${escapeHtml(data.benchmark_id || "无基准")}</small></div>
+      </div>`,
+    })}
     <section class="metric-strip">${metrics.map(([label, value, delta, tone]) => `<article class="perf-metric"><span>${label}</span><strong class="tone-${tone}">${value}</strong><small>${delta}</small></article>`).join("")}</section>
     ${panel({ title: "月度收益热力", kicker: "Monthly Return Heatmap", span: "span-12", body: monthly.length ? `<div class="monthly-heat">${monthly.map((item) => { const value = Number(item.return_pct || 0); return `<span class="${toneByValue(value)}" title="${item.year || ""}-${item.month || ""} ${pctText(value)}">${pctText(value, 1)}</span>`; }).join("")}</div>` : `<div class="empty-state">暂无月度收益数据</div>` })}
   `;
@@ -1236,7 +1310,7 @@ function renderEtf(payload) {
 }
 
 function renderSmallCap(payload) {
-  const { strategy = {}, summary = {}, signals = [], holdings = [], themes = [], risk = {} } = payload.data || {};
+  const { strategy = {}, summary = {}, signals = [], holdings = [], themes = [], risk = {}, events = [], logs = [] } = payload.data || {};
   dom.app.innerHTML = `
     ${pageDecisionBrief({ kicker: strategy.name || "Small Cap Strategy", title: strategy.decision_title || "暂无策略结论", detail: strategy.decision_detail || `候选池 ${intText(strategy.candidate_count)} / ${intText(strategy.universe_size)}，当前仓位 ${valueWithUnit(summary.exposure_pct, "%", 0)}。`, tone: strategy.decision_tone || "blue", metrics: [{ label: "买入候选", value: summary.buy_count === undefined ? "--" : `${summary.buy_count} 只` }, { label: "仓位状态", value: valueWithUnit(summary.exposure_pct, "%", 0) }, { label: "单票上限", value: valueWithUnit(strategy.max_position_pct, "%", 0) }, { label: "止损条件", value: strategy.stop_policy || "--" }] })}
     ${summaryGrid([metricCard("今日信号", summary.signal_count === undefined ? "--" : `${summary.signal_count} 只`, `${summary.buy_count ?? "--"} 只买入`), metricCard("策略仓位", valueWithUnit(summary.exposure_pct, "%", 0), `换手 ${valueWithUnit(summary.turnover_pct, "%", 0)}`), metricCard("当日盈亏", pctText(summary.day_pnl_pct), `浮盈 ${pctText(summary.floating_pnl_pct)}`, toneByValue(summary.day_pnl_pct)), metricCard("候选池", `${intText(strategy.candidate_count)} / ${intText(strategy.universe_size)}`, `单票上限 ${valueWithUnit(strategy.max_position_pct, "%", 0)}`)])}
@@ -1245,6 +1319,8 @@ function renderSmallCap(payload) {
       ${panel({ title: "风控", kicker: "Risk", span: "span-4", body: `<div class="stack">${barList([{ name: "流动性通过率", value: risk.liquidity_pass_pct, detail: "候选池过滤" }, { name: "最大集中度", value: risk.concentration_pct, detail: "单一持仓" }, { name: "波动压力", value: risk.volatility_score, detail: "短期波动" }], { color: "var(--warning)" })}<p class="note">${escapeHtml(strategy.stop_policy || "")}</p></div>` })}
       ${panel({ title: "当前持仓", kicker: "Positions", span: "span-8", body: table(["代码", "名称", "主题", "仓位", "成本", "现价", "当日涨跌", "浮动盈亏", "天数"], holdings.map((row) => `<tr><td class="mono">${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.theme)}</td><td>${valueWithUnit(row.weight_pct, "%", 0)}</td><td>${valueText(row.cost, 2)}</td><td>${valueText(row.last_price, 2)}</td><td class="${toneClassByValue(row.day_change_pct)}">${pctText(row.day_change_pct)}</td><td class="${toneClassByValue(row.pnl_pct)}">${pctText(row.pnl_pct)}</td><td>${intText(row.holding_days)}</td></tr>`), 980) })}
       ${panel({ title: "主题暴露", kicker: "Themes", span: "span-4", body: barList(themes.map((item) => ({ name: item.name, value: item.exposure_pct, detail: `宽度 ${valueWithUnit(item.breadth_pct, "%", 0)}`, unit: "%" }))) })}
+      ${panel({ title: "运行记录", kicker: "Events", span: "span-4", body: timeline(events) })}
+      ${panel({ title: "完整日志", kicker: "JoinQuant Logs", span: "span-8", tools: pill(`${intText(Math.min(logs.length, STRATEGY_LOG_DISPLAY_LIMIT))} lines`, "blue"), body: strategyLogConsole(logs) })}
     </section>
   `;
   bindSignalActions();

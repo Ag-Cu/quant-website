@@ -36,4 +36,4 @@ export function buildEndpoint(target = state) {
   return `/api/v1/performance${query ? `?${query}` : ""}`;
 }
 
-export const config = { endpoint: buildEndpoint, refreshMs: 300_000 };
+export const config = { endpoint: buildEndpoint, refreshMs: 30_000 };

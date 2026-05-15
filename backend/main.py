@@ -10,6 +10,9 @@ import re
 import subprocess
 import sys
 import tempfile
+import urllib.parse
+import urllib.request
+import hashlib
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -33,12 +36,23 @@ WATCHLIST_CONFIG_PATH = CONFIG_DIR / "watchlist.json"
 ACTION_LOG_PATH = BACKEND_DIR / "actions" / "action-log.jsonl"
 EXPORT_DIR = BACKEND_DIR / "exports"
 ETF_STRATEGY_PATH = BACKEND_DIR / "strategies" / "etf.json"
+SMALL_CAP_STRATEGY_PATH = BACKEND_DIR / "strategies" / "small-cap.json"
 JOINQUANT_SIGNAL_LOG_PATH = BACKEND_DIR / "strategies" / "joinquant-signals.jsonl"
 JOINQUANT_FULL_LOG_PATH = BACKEND_DIR / "strategies" / "joinquant-full-logs.jsonl"
 PERFORMANCE_NAV_PATH = BACKEND_DIR / "performance" / "net-values.json"
+PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH = BACKEND_DIR / "performance" / "joinquant-snapshots.jsonl"
+PERFORMANCE_JOINQUANT_NAV_PATH = BACKEND_DIR / "performance" / "joinquant-nav.jsonl"
+PERFORMANCE_BENCHMARK_NAV_PATH = BACKEND_DIR / "performance" / "benchmarks-live.json"
 STRATEGY_PICKS_PARTITION_DIR = BACKEND_DIR / "strategies" / "picks"
 MAX_STRATEGY_LOG_LINES = 1000
 ETF_INLINE_LOG_LINES = 1000
+PERFORMANCE_STALE_SECONDS = 900
+BENCHMARK_CACHE_SECONDS = 3_600
+REAL_BENCHMARKS = {
+    "CSI300": {"label": "沪深300", "secid": "1.000300", "sina_symbol": "sh000300", "source_name": "东方财富行情中心/新浪财经"},
+    "CSI1000": {"label": "中证1000", "secid": "1.000852", "sina_symbol": "sh000852", "source_name": "东方财富行情中心/新浪财经"},
+    "CHINEXT": {"label": "创业板指", "secid": "0.399006", "sina_symbol": "sz399006", "source_name": "东方财富行情中心/新浪财经"},
+}
 STATIC_PAGES = {
     "/": "index.html",
     "/index.html": "index.html",
@@ -112,8 +126,8 @@ ENDPOINTS: dict[str, EndpointSpec] = {
         "/api/v1/performance",
         "performance/net-values",
         "daily",
-        86_400,
-        "历史绩效曲线，收盘后由回测和实盘净值任务更新。",
+        30,
+        "历史绩效曲线，由聚宽 webhook 实盘账户快照实时更新。",
     ),
     "/api/v1/market/heatmap": EndpointSpec(
         "/api/v1/market/heatmap",
@@ -268,6 +282,34 @@ def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
         file.write("\n")
 
 
+def load_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as file:
+        for line in file:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict):
+                rows.append(value)
+    return rows
+
+
+def write_jsonl_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as file:
+        for row in rows:
+            file.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")))
+            file.write("\n")
+        tmp_name = file.name
+    os.replace(tmp_name, path)
+
+
 def read_jsonl_tail(path: Path, limit: int = 100) -> list[dict[str, Any]]:
     if not path.exists():
         return []
@@ -294,13 +336,22 @@ def normalize_log_level(value: Any) -> str:
     return "info"
 
 
-def normalize_strategy_logs(payload: dict[str, Any], received_at: str, run_id: str, trade_date: str) -> list[dict[str, Any]]:
+def normalize_strategy_logs(
+    payload: dict[str, Any],
+    received_at: str,
+    run_id: str,
+    trade_date: str,
+    strategy_id: str | None = None,
+) -> list[dict[str, Any]]:
     data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
     raw_logs = data.get("logs") or data.get("log_lines") or data.get("full_logs") or []
     if isinstance(raw_logs, str):
         raw_logs = raw_logs.splitlines()
     if not isinstance(raw_logs, list):
         return []
+
+    strategy = data.get("strategy") if isinstance(data.get("strategy"), dict) else {}
+    log_strategy_id = str(strategy_id or data.get("strategy_id") or strategy.get("id") or "").strip()
 
     rows: list[dict[str, Any]] = []
     for index, item in enumerate(raw_logs[-MAX_STRATEGY_LOG_LINES:]):
@@ -321,6 +372,7 @@ def normalize_strategy_logs(payload: dict[str, Any], received_at: str, run_id: s
                 "received_at": received_at,
                 "run_id": run_id,
                 "trade_date": trade_date,
+                "strategy_id": log_strategy_id,
                 "sequence": index + 1,
                 "time": timestamp,
                 "stage": stage,
@@ -331,19 +383,37 @@ def normalize_strategy_logs(payload: dict[str, Any], received_at: str, run_id: s
     return rows
 
 
-def append_strategy_logs(payload: dict[str, Any], received_at: str, run_id: str, trade_date: str) -> list[dict[str, Any]]:
-    rows = normalize_strategy_logs(payload, received_at, run_id, trade_date)
+def append_strategy_logs(
+    payload: dict[str, Any],
+    received_at: str,
+    run_id: str,
+    trade_date: str,
+    strategy_id: str | None = None,
+) -> list[dict[str, Any]]:
+    rows = normalize_strategy_logs(payload, received_at, run_id, trade_date, strategy_id)
     for row in rows:
         append_jsonl(JOINQUANT_FULL_LOG_PATH, row)
     return rows
 
 
-def get_recent_strategy_logs(limit: int = 80, trade_date: str | None = None, run_id: str | None = None) -> list[dict[str, Any]]:
+def get_recent_strategy_logs(
+    limit: int = 80,
+    trade_date: str | None = None,
+    run_id: str | None = None,
+    strategy_id: str | None = None,
+) -> list[dict[str, Any]]:
     rows = read_jsonl_tail(JOINQUANT_FULL_LOG_PATH, max(limit * 4, limit))
     if trade_date:
         rows = [row for row in rows if row.get("trade_date") == trade_date]
     if run_id:
         rows = [row for row in rows if row.get("run_id") == run_id]
+    if strategy_id:
+        rows = [
+            row
+            for row in rows
+            if row.get("strategy_id") == strategy_id
+            or (strategy_id == "joinquant-wufu-etf-v43" and not row.get("strategy_id"))
+        ]
     return rows[-limit:]
 
 
@@ -396,6 +466,45 @@ def to_int(value: Any, default: int = 0) -> int:
     if number is None:
         return default
     return int(number)
+
+
+def parse_hk_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        text = text.replace("Z", "+00:00")
+        parsed = None
+        for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                parsed = datetime.fromisoformat(text) if fmt.startswith("%Y-%m-%dT") else datetime.strptime(text, fmt)
+                break
+            except ValueError:
+                continue
+        if parsed is None:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=HK_TZ)
+    return parsed.astimezone(HK_TZ).replace(microsecond=0)
+
+
+def iso_hk(value: Any, fallback: datetime | None = None) -> str:
+    parsed = parse_hk_datetime(value) or fallback or now_hk()
+    return parsed.astimezone(HK_TZ).replace(microsecond=0).isoformat()
+
+
+def seconds_since(value: Any, now: datetime | None = None) -> int | None:
+    parsed = parse_hk_datetime(value)
+    if parsed is None:
+        return None
+    return max(0, int(((now or now_hk()) - parsed).total_seconds()))
+
+
+def stable_json_hash(payload: dict[str, Any]) -> str:
+    body = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
 
 
 def cn_code_parts(raw_symbol: Any) -> tuple[str, str]:
@@ -472,20 +581,30 @@ def normalize_joinquant_signal(item: dict[str, Any], rank: int) -> dict[str, Any
 def normalize_joinquant_holding(item: dict[str, Any], total_value: float | None) -> dict[str, Any]:
     symbol, _market = cn_code_parts(item.get("symbol") or item.get("code") or item.get("etf"))
     market_value = to_float(item.get("market_value") or item.get("value"))
+    quantity = to_float(item.get("quantity") or item.get("amount") or item.get("total_amount") or item.get("shares"))
     weight_pct = to_float(item.get("weight_pct"))
+    last_price = to_float(item.get("last_price") or item.get("price"))
+    if market_value is None and quantity is not None and last_price is not None:
+        market_value = quantity * last_price
     if weight_pct is None and market_value is not None and total_value:
         weight_pct = market_value / total_value * 100
     cost = to_float(item.get("cost") or item.get("avg_cost"))
-    last_price = to_float(item.get("last_price") or item.get("price"))
     pnl_pct = to_float(item.get("pnl_pct"))
     if pnl_pct is None and cost and last_price:
         pnl_pct = (last_price / cost - 1) * 100
+    pnl_amount = to_float(item.get("pnl_amount") or item.get("profit_loss"))
+    if pnl_amount is None and cost is not None and last_price is not None and quantity is not None:
+        pnl_amount = (last_price - cost) * quantity
     return {
         "symbol": symbol,
         "name": str(item.get("name") or item.get("etf_name") or symbol or "--"),
         "weight_pct": weight_pct or 0,
         "cost": cost,
+        "avg_cost": cost,
         "last_price": last_price,
+        "quantity": quantity,
+        "market_value": market_value,
+        "pnl_amount": pnl_amount,
         "day_change_pct": to_float(item.get("day_change_pct") or item.get("change_pct"), 0),
         "pnl_pct": pnl_pct or 0,
     }
@@ -580,7 +699,7 @@ def build_etf_strategy_payload_from_joinquant(payload: dict[str, Any]) -> dict[s
     trade_date = str(data.get("trade_date") or now.strftime("%Y-%m-%d"))
     as_of = str(data.get("as_of") or now.isoformat())
     run_id = str(data.get("run_id") or f"joinquant-etf-{now.strftime('%Y%m%d-%H%M%S')}")
-    latest_logs = normalize_strategy_logs(payload, now.isoformat(), run_id, trade_date)[-80:]
+    latest_logs = normalize_strategy_logs(payload, now.isoformat(), run_id, trade_date, "joinquant-wufu-etf-v43")[-ETF_INLINE_LOG_LINES:]
 
     return {
         "meta": {
@@ -634,6 +753,684 @@ def build_etf_strategy_payload_from_joinquant(payload: dict[str, Any]) -> dict[s
             },
         },
     }
+
+
+def normalize_small_cap_signal(item: dict[str, Any], rank: int, default_weight_pct: float) -> dict[str, Any]:
+    symbol, _market = cn_code_parts(item.get("symbol") or item.get("code") or item.get("stock"))
+    action, label = normalize_action(item.get("signal") or item.get("action"))
+    score = to_float(item.get("score") or item.get("rank_score"), max(0, 100 - (rank - 1) * 6))
+    if score is None:
+        score = 0
+    if abs(score) <= 10:
+        score = score * 10
+    last_price = to_float(item.get("last_price") or item.get("price"))
+    suggested_range = str(item.get("suggested_range") or item.get("range") or "")
+    if not suggested_range and last_price:
+        suggested_range = f"{last_price:.2f}"
+    return {
+        "symbol": symbol,
+        "name": str(item.get("name") or symbol or "--"),
+        "theme": str(item.get("theme") or item.get("industry") or item.get("sector") or "--"),
+        "signal": action,
+        "signal_label": str(item.get("signal_label") or item.get("action_label") or label),
+        "score": round(max(0, min(100, score))),
+        "suggested_range": suggested_range or "--",
+        "last_price": last_price,
+        "change_pct": to_float(item.get("change_pct") or item.get("day_change_pct"), 0),
+        "risk": str(item.get("risk") or "mid"),
+        "liquidity": str(item.get("liquidity") or "正常"),
+        "invalidation": str(item.get("invalidation") or item.get("stop_policy") or "触发止损或风控条件"),
+        "suggested_weight_pct": to_float(item.get("suggested_weight_pct") or item.get("target_weight_pct"), default_weight_pct),
+    }
+
+
+def normalize_small_cap_holding(item: dict[str, Any], total_value: float | None, now: datetime) -> dict[str, Any]:
+    symbol, _market = cn_code_parts(item.get("symbol") or item.get("code") or item.get("stock"))
+    market_value = to_float(item.get("market_value") or item.get("value"))
+    quantity = to_float(item.get("quantity") or item.get("amount") or item.get("total_amount") or item.get("shares"))
+    weight_pct = to_float(item.get("weight_pct"))
+    last_price = to_float(item.get("last_price") or item.get("price"))
+    if market_value is None and quantity is not None and last_price is not None:
+        market_value = quantity * last_price
+    if weight_pct is None and market_value is not None and total_value:
+        weight_pct = market_value / total_value * 100
+    cost = to_float(item.get("cost") or item.get("avg_cost"))
+    pnl_pct = to_float(item.get("pnl_pct"))
+    if pnl_pct is None and cost and last_price:
+        pnl_pct = (last_price / cost - 1) * 100
+    pnl_amount = to_float(item.get("pnl_amount") or item.get("profit_loss"))
+    if pnl_amount is None and cost is not None and last_price is not None and quantity is not None:
+        pnl_amount = (last_price - cost) * quantity
+    holding_days = to_int(item.get("holding_days"), 0)
+    entry_date = str(item.get("entry_date") or "")
+    if not holding_days and entry_date:
+        try:
+            holding_days = max(0, (now.date() - date.fromisoformat(entry_date[:10])).days)
+        except ValueError:
+            holding_days = 0
+    return {
+        "symbol": symbol,
+        "name": str(item.get("name") or symbol or "--"),
+        "theme": str(item.get("theme") or item.get("industry") or item.get("sector") or "--"),
+        "weight_pct": weight_pct or 0,
+        "cost": cost,
+        "avg_cost": cost,
+        "last_price": last_price,
+        "quantity": quantity,
+        "market_value": market_value,
+        "pnl_amount": pnl_amount,
+        "day_change_pct": to_float(item.get("day_change_pct") or item.get("change_pct"), 0),
+        "pnl_pct": pnl_pct or 0,
+        "holding_days": holding_days,
+    }
+
+
+def small_cap_theme_rows(signals: list[dict[str, Any]], holdings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    exposure: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    for row in holdings:
+        theme = str(row.get("theme") or "--")
+        exposure[theme] = exposure.get(theme, 0) + (to_float(row.get("weight_pct"), 0) or 0)
+    for row in signals:
+        theme = str(row.get("theme") or "--")
+        counts[theme] = counts.get(theme, 0) + 1
+        exposure.setdefault(theme, 0)
+    return [
+        {
+            "name": theme,
+            "exposure_pct": round(weight, 2),
+            "breadth_pct": min(100, max(0, counts.get(theme, 0) * 12 + weight)),
+        }
+        for theme, weight in sorted(exposure.items(), key=lambda item: item[1], reverse=True)[:8]
+    ]
+
+
+def build_small_cap_strategy_payload_from_joinquant(payload: dict[str, Any]) -> dict[str, Any]:
+    now = now_hk()
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    strategy_input = data.get("strategy") if isinstance(data.get("strategy"), dict) else {}
+    summary_input = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+    risk_input = data.get("risk") if isinstance(data.get("risk"), dict) else {}
+    portfolio_input = data.get("portfolio") if isinstance(data.get("portfolio"), dict) else {}
+    total_value = to_float(portfolio_input.get("total_value") or data.get("total_value"))
+
+    stock_num = max(1, to_int(strategy_input.get("stock_num") or data.get("stock_num"), 6))
+    default_weight_pct = round(100 / stock_num, 2)
+    raw_signals = data.get("signals") or data.get("recommendations") or data.get("targets") or []
+    if not isinstance(raw_signals, list):
+        raw_signals = []
+    signals = [
+        normalize_small_cap_signal(item, index + 1, default_weight_pct)
+        for index, item in enumerate(raw_signals)
+        if isinstance(item, dict)
+    ]
+
+    raw_holdings = data.get("holdings") or data.get("positions") or []
+    if not isinstance(raw_holdings, list):
+        raw_holdings = []
+    holdings = [
+        normalize_small_cap_holding(item, total_value, now)
+        for item in raw_holdings
+        if isinstance(item, dict)
+    ]
+
+    raw_events = data.get("events") or []
+    if not isinstance(raw_events, list):
+        raw_events = []
+    events = [normalize_joinquant_event(item) for item in raw_events if isinstance(item, dict)]
+
+    buy_count = sum(1 for row in signals if row.get("signal") in {"buy", "add"})
+    hold_count = len(holdings)
+    exposure_pct = to_float(summary_input.get("exposure_pct") or portfolio_input.get("current_exposure_pct"))
+    if exposure_pct is None:
+        exposure_pct = sum(to_float(item.get("weight_pct"), 0) or 0 for item in holdings)
+    trade_date = str(data.get("trade_date") or now.strftime("%Y-%m-%d"))
+    as_of = str(data.get("as_of") or now.isoformat())
+    run_id = str(data.get("run_id") or f"joinquant-small-cap-{now.strftime('%Y%m%d-%H%M%S')}")
+    latest_logs = normalize_strategy_logs(payload, now.isoformat(), run_id, trade_date, "small-cap-momentum")[-ETF_INLINE_LOG_LINES:]
+    decision_title = str(strategy_input.get("decision_title") or data.get("decision_title") or "小市值策略已更新")
+    decision_detail = str(
+        strategy_input.get("decision_detail")
+        or data.get("decision_detail")
+        or f"目标 {len(signals)} 只，持仓 {hold_count} 只，仓位 {round(exposure_pct or 0, 1)}%。"
+    )
+
+    return {
+        "meta": {
+            "version": "1.0",
+            "source": "joinquant",
+            "as_of": as_of,
+            "trade_date": trade_date,
+            "timezone": "Asia/Hong_Kong",
+            "market_session": market_session(now),
+            "run_id": run_id,
+        },
+        "data": {
+            "strategy": {
+                "id": "small-cap-momentum",
+                "name": str(strategy_input.get("name") or data.get("strategy_name") or "涨停基因小市值轮动"),
+                "status": str(strategy_input.get("status") or data.get("status") or "running"),
+                "universe_size": to_int(strategy_input.get("universe_size") or data.get("universe_size"), 0),
+                "candidate_count": to_int(strategy_input.get("candidate_count") or data.get("candidate_count"), len(signals)),
+                "max_position_pct": to_float(strategy_input.get("max_position_pct"), default_weight_pct),
+                "stop_policy": str(
+                    strategy_input.get("stop_policy")
+                    or data.get("stop_policy")
+                    or f"个股止损 {round((1 - to_float(data.get('stoploss_limit'), 0.91)) * 100)}% / 大盘趋势止损"
+                ),
+                "decision_title": decision_title,
+                "decision_detail": decision_detail,
+                "decision_tone": str(strategy_input.get("decision_tone") or data.get("decision_tone") or "blue"),
+            },
+            "summary": {
+                "signal_count": to_int(summary_input.get("signal_count"), len(signals)),
+                "buy_count": to_int(summary_input.get("buy_count"), buy_count),
+                "hold_count": to_int(summary_input.get("hold_count"), hold_count),
+                "exposure_pct": exposure_pct or 0,
+                "day_pnl_pct": to_float(summary_input.get("day_pnl_pct") or portfolio_input.get("day_pnl_pct"), 0),
+                "floating_pnl_pct": to_float(summary_input.get("floating_pnl_pct") or portfolio_input.get("floating_pnl_pct"), 0),
+                "turnover_pct": to_float(summary_input.get("turnover_pct"), 0),
+            },
+            "signals": signals,
+            "holdings": holdings,
+            "themes": data.get("themes") if isinstance(data.get("themes"), list) else small_cap_theme_rows(signals, holdings),
+            "risk": {
+                "liquidity_pass_pct": to_float(risk_input.get("liquidity_pass_pct"), 100),
+                "concentration_pct": to_float(risk_input.get("concentration_pct"), max((to_float(row.get("weight_pct"), 0) or 0 for row in holdings), default=0)),
+                "stop_watch_count": to_int(risk_input.get("stop_watch_count"), 0),
+                "volatility_score": to_float(risk_input.get("volatility_score"), 50),
+            },
+            "events": events or [{"time": now.strftime("%H:%M"), "label": decision_title, "detail": decision_detail, "status": "done"}],
+            "logs": latest_logs,
+        },
+    }
+
+
+def joinquant_strategy_target(payload: dict[str, Any]) -> tuple[str, str, Path, str]:
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    strategy = data.get("strategy") if isinstance(data.get("strategy"), dict) else {}
+    raw_id = str(data.get("strategy_id") or strategy.get("id") or "").strip()
+    raw_name = str(data.get("strategy_name") or strategy.get("name") or "").strip()
+    text = f"{raw_id} {raw_name}".lower()
+    if raw_id == "small-cap-momentum" or "small-cap" in text or "小市值" in text or "涨停基因" in text:
+        return "/api/v1/strategies/small-cap", "small-cap-momentum", SMALL_CAP_STRATEGY_PATH, "small_cap"
+    return "/api/v1/strategies/etf", raw_id or "joinquant-wufu-etf-v43", ETF_STRATEGY_PATH, "etf"
+
+
+STRATEGY_DEFINITIONS = [
+    {
+        "endpoint": "/api/v1/strategies/etf",
+        "path_name": "ETF_STRATEGY_PATH",
+        "default_id": "joinquant-wufu-etf-v43",
+        "default_name": "ETF 策略",
+        "page": "etf.html",
+        "signal_key": "recommendations",
+        "action_key": "action",
+        "label_key": "action_label",
+    },
+    {
+        "endpoint": "/api/v1/strategies/small-cap",
+        "path_name": "SMALL_CAP_STRATEGY_PATH",
+        "default_id": "small-cap-momentum",
+        "default_name": "小市值策略",
+        "page": "small-cap.html",
+        "signal_key": "signals",
+        "action_key": "signal",
+        "label_key": "signal_label",
+    },
+]
+SELL_SIGNAL_ACTIONS = {"sell", "stop", "reduce", "trim"}
+SELL_LOG_KEYWORDS = ("卖出", "止损", "开板", "放量", "换手", "清仓", "全部清仓", "sell", "stop", "reduce", "trim")
+GLOBAL_SELL_KEYWORDS = ("大盘止损", "全部清仓", "清仓")
+CN_SYMBOL_PATTERN = re.compile(r"(?<!\d)(?:[013568]\d{5}|[45]\d{5})(?:\.(?:XSHG|XSHE|SH|SZ))?(?!\d)", re.I)
+
+
+def portfolio_symbol_key(value: Any) -> str:
+    symbol, _market = cn_code_parts(value)
+    return symbol.strip().upper()
+
+
+def strategy_path_from_definition(definition: dict[str, Any]) -> Path:
+    path_name = str(definition.get("path_name") or "")
+    path = globals().get(path_name)
+    return path if isinstance(path, Path) else BACKEND_DIR / "strategies" / f"{definition['default_id']}.json"
+
+
+def load_strategy_payload_for_holdings(definition: dict[str, Any]) -> dict[str, Any] | None:
+    path = strategy_path_from_definition(definition)
+    if not path.exists():
+        return None
+    try:
+        payload = load_json(path)
+    except HTTPException:
+        return None
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    spec = ENDPOINTS[str(definition["endpoint"])]
+    return normalize_payload(payload, spec, str(meta.get("source") or "backend"), path)
+
+
+def is_real_joinquant_snapshot(payload: dict[str, Any]) -> bool:
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    if str(meta.get("source") or "").strip().lower() != "joinquant":
+        return False
+    run_id = str(meta.get("run_id") or "").strip().lower()
+    return not any(marker in run_id for marker in ("test", "smoke", "fixture", "demo", "联调"))
+
+
+def strategy_context_from_payload(definition: dict[str, Any], payload: dict[str, Any]) -> dict[str, str]:
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    strategy = data.get("strategy") if isinstance(data.get("strategy"), dict) else {}
+    strategy_id = str(strategy.get("id") or definition.get("default_id") or "").strip()
+    return {
+        "strategy_id": strategy_id,
+        "strategy_name": str(strategy.get("name") or definition.get("default_name") or strategy_id),
+        "strategy_page": str(definition.get("page") or ""),
+    }
+
+
+def strategy_output_row(
+    item: dict[str, Any],
+    definition: dict[str, Any],
+    payload: dict[str, Any],
+    context: dict[str, str],
+    index: int,
+    source: str,
+) -> dict[str, Any] | None:
+    symbol = portfolio_symbol_key(item.get("symbol") or item.get("code") or item.get("stock") or item.get("etf"))
+    if not symbol:
+        return None
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    action_key = str(definition.get("action_key") or "action")
+    label_key = str(definition.get("label_key") or "action_label")
+    raw_action = item.get(action_key) or item.get("action") or item.get("signal") or ("hold" if source == "holding" else "watch")
+    action, default_label = normalize_action(raw_action)
+    if source == "holding" and action == "watch":
+        action, default_label = "hold", "策略持有"
+    weight_pct = to_float(item.get("suggested_weight_pct") or item.get("target_weight_pct") or item.get("weight_pct"))
+    reason = str(
+        item.get("reason")
+        or item.get("suggested_range")
+        or item.get("invalidation")
+        or item.get("theme")
+        or item.get("sector")
+        or ""
+    )
+    if source == "holding" and not reason and weight_pct is not None:
+        reason = f"策略仓位 {round(weight_pct, 2)}%"
+    label = str(item.get(label_key) or item.get("action_label") or item.get("signal_label") or default_label)
+    return {
+        "strategy_id": context["strategy_id"],
+        "strategy_name": context["strategy_name"],
+        "strategy_page": context["strategy_page"],
+        "source": source,
+        "symbol": symbol,
+        "name": str(item.get("name") or item.get("etf_name") or symbol),
+        "action": action,
+        "action_label": label,
+        "rank": to_int(item.get("rank"), index + 1),
+        "score": to_float(item.get("score")),
+        "suggested_weight_pct": weight_pct,
+        "last_price": to_float(item.get("last_price") or item.get("price")),
+        "reason": reason,
+        "updated_at": str(meta.get("as_of") or ""),
+        "trade_date": str(meta.get("trade_date") or ""),
+        "run_id": str(meta.get("run_id") or ""),
+    }
+
+
+def strategy_portfolio_holding_row(
+    item: dict[str, Any],
+    payload: dict[str, Any],
+    context: dict[str, str],
+    index: int,
+) -> dict[str, Any]:
+    symbol = portfolio_symbol_key(item.get("symbol") or item.get("code") or item.get("stock") or item.get("etf"))
+    avg_cost = to_float(item.get("avg_cost") or item.get("cost"))
+    last_price = to_float(item.get("last_price") or item.get("price"))
+    quantity = to_float(item.get("quantity") or item.get("amount") or item.get("total_amount") or item.get("shares"))
+    market_value = to_float(item.get("market_value") or item.get("value"))
+    if market_value is None and quantity is not None and last_price is not None:
+        market_value = quantity * last_price
+    pnl_amount = to_float(item.get("pnl_amount") or item.get("profit_loss"))
+    if pnl_amount is None and avg_cost is not None and last_price is not None and quantity is not None:
+        pnl_amount = (last_price - avg_cost) * quantity
+    pnl_pct = to_float(item.get("pnl_pct"))
+    if pnl_pct is None and avg_cost and last_price is not None:
+        pnl_pct = (last_price / avg_cost - 1) * 100
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    sector = str(item.get("sector") or item.get("theme") or item.get("industry") or ("ETF" if context["strategy_id"] == "joinquant-wufu-etf-v43" else "--"))
+    return {
+        "symbol": symbol,
+        "raw_symbol": str(item.get("symbol") or item.get("code") or item.get("stock") or item.get("etf") or symbol),
+        "name": str(item.get("name") or item.get("etf_name") or symbol or "--"),
+        "strategy_id": context["strategy_id"],
+        "strategy_name": context["strategy_name"],
+        "strategy_page": context["strategy_page"],
+        "source": "joinquant",
+        "sector": sector,
+        "avg_cost": avg_cost,
+        "cost": avg_cost,
+        "last_price": last_price,
+        "quantity": quantity,
+        "market_value": market_value,
+        "pnl_amount": pnl_amount,
+        "pnl_pct": pnl_pct if pnl_pct is not None else 0,
+        "weight_pct": to_float(item.get("weight_pct"), 0) or 0,
+        "day_change_pct": to_float(item.get("day_change_pct") or item.get("change_pct"), 0),
+        "holding_days": to_int(item.get("holding_days"), 0),
+        "entry_date": str(item.get("entry_date") or ""),
+        "notes": str(item.get("notes") or item.get("reason") or ""),
+        "rank": index + 1,
+        "strategy_updated_at": str(meta.get("as_of") or ""),
+        "trade_date": str(meta.get("trade_date") or ""),
+        "run_id": str(meta.get("run_id") or ""),
+    }
+
+
+def strategy_portfolio_summary(rows: list[dict[str, Any]], strategies: list[dict[str, Any]]) -> dict[str, Any]:
+    market_values = [value for value in (to_float(row.get("market_value")) for row in rows) if value is not None]
+    pnl_amounts = [value for value in (to_float(row.get("pnl_amount")) for row in rows) if value is not None]
+    total_market_value = sum(market_values) if market_values else None
+    day_changes = [to_float(row.get("day_change_pct"), 0) or 0 for row in rows]
+    total_return_pct = None
+    if total_market_value:
+        total_return_pct = sum((to_float(row.get("pnl_pct"), 0) or 0) * (to_float(row.get("market_value"), 0) or 0) for row in rows) / total_market_value
+    elif rows:
+        total_return_pct = sum(to_float(row.get("pnl_pct"), 0) or 0 for row in rows) / len(rows)
+    weights = [to_float(row.get("weight_pct"), 0) or 0 for row in rows]
+    exposure_pct = sum(weights) if len(strategies) <= 1 else None
+    return {
+        "total_market_value": round(total_market_value, 2) if total_market_value is not None else None,
+        "day_pnl_amount": None,
+        "day_pnl_pct": round(sum(day_changes) / len(day_changes), 2) if day_changes else None,
+        "total_return_pct": round(total_return_pct, 2) if total_return_pct is not None else None,
+        "exposure_pct": round(exposure_pct, 2) if exposure_pct is not None else None,
+        "position_count": len(rows),
+        "sector_diversity": len({str(row.get("sector") or "--") for row in rows}),
+        "source": "joinquant",
+        "strategy_count": len(strategies),
+    }
+
+
+def strategy_portfolio_allocation(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, float]] = {}
+    for row in rows:
+        sector = str(row.get("sector") or "--")
+        bucket = grouped.setdefault(sector, {"market_value": 0, "weight_pct": 0})
+        bucket["market_value"] += to_float(row.get("market_value"), 0) or 0
+        bucket["weight_pct"] += to_float(row.get("weight_pct"), 0) or 0
+    return [
+        {
+            "sector": sector,
+            "weight_pct": round(values["weight_pct"], 2),
+            "market_value": round(values["market_value"], 2) if values["market_value"] else None,
+        }
+        for sector, values in sorted(grouped.items(), key=lambda item: item[1]["market_value"] or item[1]["weight_pct"], reverse=True)
+    ]
+
+
+def pending_small_cap_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    strategy = data.get("strategy") if isinstance(data.get("strategy"), dict) else {}
+    strategy_name = str(strategy.get("name") or "涨停基因小市值轮动")
+    return {
+        **payload,
+        "data": {
+            "strategy": {
+                **strategy,
+                "id": str(strategy.get("id") or "small-cap-momentum"),
+                "name": strategy_name,
+                "status": "pending",
+                "decision_title": "等待聚宽小市值策略上报",
+                "decision_detail": "当前文件不是聚宽真实 webhook 快照，已隐藏本地种子信号，避免把样例股票当成实盘输出。",
+                "decision_tone": "warning",
+            },
+            "summary": {
+                "signal_count": 0,
+                "buy_count": 0,
+                "hold_count": 0,
+                "exposure_pct": 0,
+                "day_pnl_pct": None,
+                "floating_pnl_pct": None,
+                "turnover_pct": None,
+            },
+            "signals": [],
+            "holdings": [],
+            "themes": [],
+            "risk": {
+                "liquidity_pass_pct": None,
+                "concentration_pct": 0,
+                "stop_watch_count": 0,
+                "volatility_score": None,
+            },
+            "events": [
+                {
+                    "time": now_hk().strftime("%H:%M"),
+                    "label": "等待上报",
+                    "detail": f"已忽略本地种子文件 {meta.get('storage_path') or 'small-cap.json'} 中的样例信号。",
+                    "status": "pending",
+                }
+            ],
+            "logs": [],
+            "source": "joinquant-pending",
+            "ignored_seed_signal_count": len(data.get("signals") if isinstance(data.get("signals"), list) else []),
+            "ignored_seed_holding_count": len(data.get("holdings") if isinstance(data.get("holdings"), list) else []),
+        },
+    }
+
+
+def text_has_sell_signal(value: Any) -> bool:
+    text = str(value or "")
+    lowered = text.lower()
+    return any(keyword in text or keyword in lowered for keyword in SELL_LOG_KEYWORDS)
+
+
+def extract_cn_symbols_from_text(value: Any) -> list[str]:
+    symbols: list[str] = []
+    for match in CN_SYMBOL_PATTERN.findall(str(value or "")):
+        symbol = portfolio_symbol_key(match)
+        if symbol and symbol not in symbols:
+            symbols.append(symbol)
+    return symbols
+
+
+def strategy_sell_alert_from_signal(row: dict[str, Any]) -> dict[str, Any] | None:
+    if row.get("action") not in SELL_SIGNAL_ACTIONS:
+        return None
+    return {
+        "strategy_id": row.get("strategy_id"),
+        "strategy_name": row.get("strategy_name"),
+        "strategy_page": row.get("strategy_page"),
+        "source": "signal",
+        "scope": "symbol",
+        "symbol": row.get("symbol"),
+        "name": row.get("name"),
+        "action": row.get("action"),
+        "action_label": row.get("action_label") or "卖出/风控",
+        "reason": row.get("reason") or row.get("action_label") or "策略输出卖出信号",
+        "time": row.get("updated_at") or row.get("trade_date") or "",
+        "trade_date": row.get("trade_date") or "",
+        "run_id": row.get("run_id") or "",
+        "level": "warning" if row.get("action") in {"reduce", "trim"} else "error",
+    }
+
+
+def strategy_sell_alerts_from_logs(
+    payload: dict[str, Any],
+    context: dict[str, str],
+    signal_names: dict[str, str],
+) -> list[dict[str, Any]]:
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    logs = data.get("logs") if isinstance(data.get("logs"), list) else []
+    archive_logs = get_recent_strategy_logs(200, strategy_id=context["strategy_id"])
+    rows = [row for row in [*logs, *archive_logs] if isinstance(row, dict)]
+    alerts: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in rows:
+        message = str(row.get("message") or row.get("detail") or row.get("label") or "")
+        if not text_has_sell_signal(message):
+            continue
+        symbols = extract_cn_symbols_from_text(message)
+        scope = "symbol" if symbols else "strategy"
+        if not symbols:
+            symbols = [""]
+        for symbol in symbols:
+            alert_key = f"{context['strategy_id']}|{row.get('time')}|{symbol}|{message}"
+            if alert_key in seen:
+                continue
+            seen.add(alert_key)
+            alerts.append(
+                {
+                    "strategy_id": context["strategy_id"],
+                    "strategy_name": context["strategy_name"],
+                    "strategy_page": context["strategy_page"],
+                    "source": "log",
+                    "scope": scope,
+                    "symbol": symbol,
+                    "name": signal_names.get(symbol, symbol or "策略级风控"),
+                    "action": "sell",
+                    "action_label": "卖出/风控",
+                    "reason": message,
+                    "time": str(row.get("time") or row.get("received_at") or meta.get("as_of") or ""),
+                    "trade_date": str(row.get("trade_date") or meta.get("trade_date") or ""),
+                    "run_id": str(row.get("run_id") or meta.get("run_id") or ""),
+                    "level": str(row.get("level") or "warning"),
+                }
+            )
+    return alerts[-40:]
+
+
+def collect_strategy_outputs_for_holdings() -> dict[str, Any]:
+    signal_rows: list[dict[str, Any]] = []
+    position_rows: list[dict[str, Any]] = []
+    portfolio_rows: list[dict[str, Any]] = []
+    sell_alerts: list[dict[str, Any]] = []
+    strategies: list[dict[str, Any]] = []
+    by_symbol: dict[str, list[dict[str, Any]]] = {}
+    alerts_by_symbol: dict[str, list[dict[str, Any]]] = {}
+    strategy_level_alerts: list[dict[str, Any]] = []
+
+    for definition in STRATEGY_DEFINITIONS:
+        payload = load_strategy_payload_for_holdings(definition)
+        if not payload:
+            continue
+        if not is_real_joinquant_snapshot(payload):
+            continue
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+        context = strategy_context_from_payload(definition, payload)
+        strategies.append(
+            {
+                **context,
+                "updated_at": str(meta.get("as_of") or ""),
+                "trade_date": str(meta.get("trade_date") or ""),
+                "run_id": str(meta.get("run_id") or ""),
+            }
+        )
+
+        raw_signals = data.get(str(definition["signal_key"])) if isinstance(data.get(str(definition["signal_key"])), list) else []
+        for index, item in enumerate(raw_signals):
+            if not isinstance(item, dict):
+                continue
+            row = strategy_output_row(item, definition, payload, context, index, "signal")
+            if row:
+                signal_rows.append(row)
+                by_symbol.setdefault(str(row["symbol"]), []).append(row)
+                alert = strategy_sell_alert_from_signal(row)
+                if alert:
+                    sell_alerts.append(alert)
+
+        raw_positions = data.get("holdings") if isinstance(data.get("holdings"), list) else []
+        for index, item in enumerate(raw_positions):
+            if not isinstance(item, dict):
+                continue
+            row = strategy_output_row(item, definition, payload, context, index, "holding")
+            if row:
+                position_rows.append(row)
+                by_symbol.setdefault(str(row["symbol"]), []).append(row)
+                portfolio_rows.append(strategy_portfolio_holding_row(item, payload, context, index))
+
+        signal_names = {str(row["symbol"]): str(row["name"]) for row in [*signal_rows, *position_rows] if row.get("symbol")}
+        sell_alerts.extend(strategy_sell_alerts_from_logs(payload, context, signal_names))
+
+    def sort_key(row: dict[str, Any]) -> str:
+        return str(row.get("time") or row.get("updated_at") or row.get("trade_date") or "")
+
+    for alert in sell_alerts:
+        symbol = str(alert.get("symbol") or "")
+        if symbol:
+            alerts_by_symbol.setdefault(symbol, []).append(alert)
+        elif alert.get("scope") == "strategy":
+            strategy_level_alerts.append(alert)
+
+    for rows in by_symbol.values():
+        rows.sort(key=lambda row: (row.get("source") != "signal", str(row.get("updated_at") or "")))
+    for rows in alerts_by_symbol.values():
+        rows.sort(key=sort_key, reverse=True)
+    strategy_level_alerts.sort(key=sort_key, reverse=True)
+
+    return {
+        "strategies": strategies,
+        "signals": sorted(signal_rows, key=lambda row: str(row.get("updated_at") or row.get("trade_date") or ""), reverse=True),
+        "positions": position_rows,
+        "portfolio_rows": portfolio_rows,
+        "sell_alerts": sorted(sell_alerts, key=sort_key, reverse=True)[:40],
+        "by_symbol": by_symbol,
+        "alerts_by_symbol": alerts_by_symbol,
+        "strategy_level_alerts": strategy_level_alerts,
+    }
+
+
+def enrich_portfolio_holdings_with_strategy_outputs(payload: dict[str, Any]) -> dict[str, Any]:
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    outputs = collect_strategy_outputs_for_holdings()
+    source_holdings = outputs["portfolio_rows"]
+    static_holdings = data.get("holdings") if isinstance(data.get("holdings"), list) else []
+    data["source"] = "joinquant" if outputs["strategies"] else "joinquant-pending"
+    data["static_holdings_ignored_count"] = len(static_holdings)
+    enriched_holdings: list[dict[str, Any]] = []
+
+    for item in source_holdings:
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        symbol = portfolio_symbol_key(row.get("symbol"))
+        row_strategy_id = str(row.get("strategy_id") or "")
+        strategy_signals = list(outputs["by_symbol"].get(symbol, []))
+        direct_alerts = list(outputs["alerts_by_symbol"].get(symbol, []))
+        strategy_alerts = [
+            alert
+            for alert in outputs["strategy_level_alerts"]
+            if not row_strategy_id or str(alert.get("strategy_id") or "") == row_strategy_id
+        ]
+        exit_alerts = [*direct_alerts, *strategy_alerts][:4]
+        row["strategy_signals"] = strategy_signals[:5]
+        row["strategy_signal"] = " / ".join(
+            f"{signal.get('strategy_name')}:{signal.get('action_label')}"
+            for signal in strategy_signals[:3]
+        )
+        row["strategy_updated_at"] = next((signal.get("updated_at") for signal in strategy_signals if signal.get("updated_at")), "")
+        row["exit_alerts"] = exit_alerts
+        row["exit_signal"] = " / ".join(
+            f"{alert.get('strategy_name')}:{alert.get('action_label')}"
+            for alert in exit_alerts[:2]
+        )
+        enriched_holdings.append(row)
+
+    data["holdings"] = enriched_holdings
+    data["summary"] = strategy_portfolio_summary(enriched_holdings, outputs["strategies"])
+    data["allocation"] = strategy_portfolio_allocation(enriched_holdings)
+    data["strategy_outputs"] = {
+        "updated_at": now_hk().isoformat(),
+        "strategies": outputs["strategies"],
+        "signals": outputs["signals"][:30],
+        "positions": outputs["positions"][:30],
+        "sell_alerts": outputs["sell_alerts"][:30],
+        "holdings_source": data["source"],
+    }
+    return payload
 
 
 def infer_market_region(symbol: str) -> str:
@@ -1335,7 +2132,8 @@ def export_strategy_picks(
 
 @app.get("/api/v1/portfolio/holdings")
 def portfolio_holdings() -> dict[str, Any]:
-    return get_payload("/api/v1/portfolio/holdings")
+    payload = get_payload("/api/v1/portfolio/holdings")
+    return enrich_portfolio_holdings_with_strategy_outputs(payload)
 
 
 def parse_query_date(value: str | None, field_name: str) -> date | None:
@@ -1537,49 +2335,523 @@ def calculate_metrics(curve: list[dict[str, Any]], benchmark_curve: list[dict[st
     }
 
 
+def strategy_label_from_payload(strategy_id: str, payload: dict[str, Any] | None = None) -> str:
+    data = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else {}
+    strategy = data.get("strategy") if isinstance(data.get("strategy"), dict) else {}
+    label = str(strategy.get("name") or data.get("strategy_name") or "").strip()
+    if label:
+        return label
+    known = {
+        "joinquant-wufu-etf-v43": "五福 ETF 轮动",
+        "small-cap-momentum": "涨停基因小市值",
+    }
+    return known.get(strategy_id, strategy_id)
+
+
+def extract_raw_data(payload: dict[str, Any]) -> dict[str, Any]:
+    return payload.get("data") if isinstance(payload.get("data"), dict) else payload
+
+
+def payload_positions(data: dict[str, Any], normalized_payload: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    raw = data.get("holdings") or data.get("positions") or []
+    if not isinstance(raw, list) and normalized_payload:
+        normalized_data = normalized_payload.get("data") if isinstance(normalized_payload.get("data"), dict) else {}
+        raw = normalized_data.get("holdings") or normalized_data.get("positions") or normalized_data.get("recommendations") or []
+    return [row for row in raw if isinstance(row, dict)] if isinstance(raw, list) else []
+
+
+def position_market_value(row: dict[str, Any]) -> float | None:
+    value = to_float(row.get("market_value") or row.get("value"))
+    if value is not None:
+        return value
+    price = to_float(row.get("last_price") or row.get("price"))
+    quantity = to_float(row.get("quantity") or row.get("amount") or row.get("total_amount") or row.get("shares"))
+    if price is None or quantity is None:
+        return None
+    return price * quantity
+
+
+def normalize_joinquant_trade(item: dict[str, Any]) -> dict[str, Any]:
+    security = item.get("symbol") or item.get("security") or item.get("code") or item.get("stock")
+    symbol, market = cn_code_parts(security)
+    action, action_label = normalize_action(item.get("action") or item.get("side") or item.get("type"))
+    return {
+        "trade_id": str(item.get("trade_id") or item.get("id") or item.get("order_id") or ""),
+        "time": str(item.get("time") or item.get("timestamp") or item.get("datetime") or ""),
+        "symbol": symbol,
+        "raw_symbol": str(security or ""),
+        "market": market,
+        "name": str(item.get("name") or symbol or ""),
+        "action": action,
+        "action_label": action_label,
+        "price": to_float(item.get("price") or item.get("filled_price")),
+        "quantity": to_float(item.get("quantity") or item.get("amount") or item.get("filled") or item.get("shares")),
+        "value": to_float(item.get("value") or item.get("filled_value") or item.get("turnover")),
+    }
+
+
+def normalize_joinquant_account_snapshot(
+    payload: dict[str, Any],
+    normalized_payload: dict[str, Any],
+    strategy_id: str,
+    endpoint: str,
+    storage_path: Path,
+    received_at: str,
+) -> dict[str, Any] | None:
+    data = extract_raw_data(payload)
+    portfolio = data.get("portfolio") if isinstance(data.get("portfolio"), dict) else {}
+    normalized_meta = normalized_payload.get("meta") if isinstance(normalized_payload.get("meta"), dict) else {}
+    total_value = to_float(
+        portfolio.get("total_value")
+        or portfolio.get("portfolio_value")
+        or data.get("total_value")
+        or data.get("portfolio_value")
+        or data.get("account_value")
+    )
+    if total_value is None:
+        return None
+    cash = to_float(
+        portfolio.get("cash")
+        or portfolio.get("available_cash")
+        or portfolio.get("available")
+        or data.get("cash")
+        or data.get("available_cash"),
+        0,
+    )
+    positions = payload_positions(data, normalized_payload)
+    positions_market_value = sum(value for value in (position_market_value(row) for row in positions) if value is not None)
+    trade_rows = data.get("trades") or data.get("orders") or data.get("transactions") or []
+    trades = [normalize_joinquant_trade(row) for row in trade_rows if isinstance(row, dict)] if isinstance(trade_rows, list) else []
+    as_of = iso_hk(data.get("as_of") or normalized_meta.get("as_of") or received_at)
+    run_id = str(data.get("run_id") or normalized_meta.get("run_id") or f"joinquant-{parse_hk_datetime(as_of).strftime('%Y%m%d-%H%M%S')}")
+    trade_date = str(data.get("trade_date") or normalized_meta.get("trade_date") or as_of[:10])
+    snapshot_id = f"{strategy_id}|{run_id}|{as_of}"
+    snapshot_hash = stable_json_hash(redact_secret_fields(payload))
+    return {
+        "snapshot_id": snapshot_id,
+        "snapshot_hash": snapshot_hash,
+        "received_at": received_at,
+        "strategy_id": strategy_id,
+        "strategy_label": strategy_label_from_payload(strategy_id, normalized_payload),
+        "endpoint": endpoint,
+        "storage_path": str(storage_path.relative_to(ROOT)),
+        "run_id": run_id,
+        "as_of": as_of,
+        "trade_date": trade_date,
+        "total_value": round(total_value, 4),
+        "cash": round(cash or 0, 4),
+        "positions_market_value": round(positions_market_value, 4),
+        "position_count": len(positions),
+        "trade_count": len(trades),
+        "trades": trades,
+        "reconciliation": {
+            "cash_plus_positions": round((cash or 0) + positions_market_value, 4),
+            "diff": round(total_value - ((cash or 0) + positions_market_value), 4),
+        },
+        "trace": {
+            "raw_webhook_hash": snapshot_hash,
+            "raw_webhook_log": str(JOINQUANT_SIGNAL_LOG_PATH.relative_to(ROOT)),
+            "normalized_snapshot_path": str(PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH.relative_to(ROOT)),
+            "nav_ledger_path": str(PERFORMANCE_JOINQUANT_NAV_PATH.relative_to(ROOT)),
+        },
+        "raw_webhook": redact_secret_fields(payload),
+    }
+
+
+def upsert_jsonl_rows(path: Path, rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {
+        str(row.get(key)): row
+        for row in load_jsonl(path)
+        if row.get(key)
+    }
+    for row in rows:
+        row_key = str(row.get(key) or "")
+        if row_key:
+            merged[row_key] = row
+    result = list(merged.values())
+    result.sort(key=lambda row: (str(row.get("strategy_id") or ""), str(row.get("as_of") or row.get("date") or ""), str(row.get(key) or "")))
+    write_jsonl_atomic(path, result)
+    return result
+
+
+def persist_joinquant_performance_snapshot(
+    payload: dict[str, Any],
+    normalized_payload: dict[str, Any],
+    strategy_id: str,
+    endpoint: str,
+    storage_path: Path,
+    received_at: str,
+) -> dict[str, Any] | None:
+    snapshot = normalize_joinquant_account_snapshot(payload, normalized_payload, strategy_id, endpoint, storage_path, received_at)
+    if snapshot is None:
+        return None
+    upsert_jsonl_rows(PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH, [snapshot], "snapshot_id")
+    rebuild_joinquant_nav_ledger()
+    return snapshot
+
+
+def rebuild_joinquant_nav_ledger() -> list[dict[str, Any]]:
+    snapshots = [
+        row
+        for row in load_jsonl(PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH)
+        if row.get("strategy_id") and to_float(row.get("total_value")) is not None and row.get("as_of")
+    ]
+    snapshots.sort(key=lambda row: (str(row.get("strategy_id")), str(row.get("as_of"))))
+    base_by_strategy: dict[str, float] = {}
+    ledger: list[dict[str, Any]] = []
+    for row in snapshots:
+        strategy_id = str(row["strategy_id"])
+        total_value = to_float(row.get("total_value"), 0) or 0
+        base = base_by_strategy.setdefault(strategy_id, total_value or 1)
+        net_value = total_value / (base or 1)
+        cash = to_float(row.get("cash"), 0) or 0
+        positions_value = to_float(row.get("positions_market_value"), 0) or 0
+        ledger.append(
+            {
+                "snapshot_id": row["snapshot_id"],
+                "snapshot_hash": row.get("snapshot_hash"),
+                "strategy_id": strategy_id,
+                "strategy_label": row.get("strategy_label") or strategy_id,
+                "run_id": row.get("run_id"),
+                "as_of": row.get("as_of"),
+                "date": str(row.get("trade_date") or row.get("as_of"))[:10],
+                "trade_date": row.get("trade_date") or str(row.get("as_of"))[:10],
+                "net_value": round(net_value, 6),
+                "total_value": round(total_value, 4),
+                "cash": round(cash, 4),
+                "positions_market_value": round(positions_value, 4),
+                "cash_plus_positions": round(cash + positions_value, 4),
+                "reconciliation_diff": round(total_value - cash - positions_value, 4),
+                "position_count": to_int(row.get("position_count"), 0),
+                "trade_count": to_int(row.get("trade_count"), 0),
+                "source": "joinquant",
+                "trace": {
+                    **(row.get("trace") if isinstance(row.get("trace"), dict) else {}),
+                    "snapshot_id": row["snapshot_id"],
+                    "strategy_id": strategy_id,
+                    "run_id": row.get("run_id"),
+                    "as_of": row.get("as_of"),
+                    "calculation": "net_value=total_value/first_total_value",
+                },
+            }
+        )
+    write_jsonl_atomic(PERFORMANCE_JOINQUANT_NAV_PATH, ledger)
+    return ledger
+
+
+def load_joinquant_nav_ledger() -> list[dict[str, Any]]:
+    rows = load_jsonl(PERFORMANCE_JOINQUANT_NAV_PATH)
+    if rows:
+        return rows
+    if PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH.exists():
+        return rebuild_joinquant_nav_ledger()
+    return []
+
+
+def strategy_rows_from_ledger(ledger: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    latest_by_strategy: dict[str, dict[str, Any]] = {}
+    for row in ledger:
+        strategy_id = str(row.get("strategy_id") or "")
+        if not strategy_id:
+            continue
+        if strategy_id not in latest_by_strategy or str(row.get("as_of") or "") > str(latest_by_strategy[strategy_id].get("as_of") or ""):
+            latest_by_strategy[strategy_id] = row
+    return [
+        {
+            "id": strategy_id,
+            "label": row.get("strategy_label") or strategy_id,
+            "last_seen": row.get("as_of"),
+            "stale_seconds": seconds_since(row.get("as_of")),
+            "source": "joinquant",
+        }
+        for strategy_id, row in sorted(latest_by_strategy.items())
+    ]
+
+
+def fetch_eastmoney_benchmark_nav(benchmark_id: str, days: int = 260) -> dict[str, Any]:
+    config = REAL_BENCHMARKS[benchmark_id]
+    params = {
+        "secid": config["secid"],
+        "fields1": "f1,f2,f3,f4,f5",
+        "fields2": "f51,f52,f53,f54,f55",
+        "klt": "101",
+        "fqt": "1",
+        "end": "20500101",
+        "lmt": str(days),
+    }
+    url = f"https://push2his.eastmoney.com/api/qt/stock/kline/get?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://quote.eastmoney.com/"})
+    with urllib.request.urlopen(req, timeout=8) as response:
+        data = json.loads(response.read().decode("utf-8", "ignore"))
+    klines = data.get("data", {}).get("klines", []) if isinstance(data, dict) else []
+    rows = []
+    for line in klines:
+        parts = str(line).split(",")
+        if len(parts) < 3:
+            continue
+        close = to_float(parts[2])
+        if close is None:
+            continue
+        rows.append({"date": parts[0], "value": close, "close": close})
+    if not rows:
+        raise RuntimeError(f"{benchmark_id} 基准行情为空")
+    now = now_hk()
+    return {
+        "id": benchmark_id,
+        "label": config["label"],
+        "source": "eastmoney",
+        "source_name": "东方财富行情中心",
+        "as_of": now.isoformat(),
+        "trade_date": rows[-1]["date"],
+        "stale_seconds": 0,
+        "nav": rows,
+    }
+
+
+def fetch_sina_benchmark_nav(benchmark_id: str, days: int = 260) -> dict[str, Any]:
+    config = REAL_BENCHMARKS[benchmark_id]
+    params = {
+        "symbol": config["sina_symbol"],
+        "scale": "240",
+        "ma": "no",
+        "datalen": str(days),
+    }
+    url = f"https://quotes.sina.cn/cn/api/openapi.php/CN_MarketDataService.getKLineData?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.sina.com.cn/"})
+    with urllib.request.urlopen(req, timeout=8) as response:
+        data = json.loads(response.read().decode("utf-8", "ignore"))
+    raw_rows = data.get("result", {}).get("data", []) if isinstance(data, dict) else []
+    rows = []
+    for item in raw_rows:
+        if not isinstance(item, dict):
+            continue
+        close = to_float(item.get("close"))
+        day = str(item.get("day") or "").strip()
+        if close is None or not day:
+            continue
+        rows.append({"date": day, "value": close, "close": close})
+    if not rows:
+        raise RuntimeError(f"{benchmark_id} 新浪基准行情为空")
+    now = now_hk()
+    return {
+        "id": benchmark_id,
+        "label": config["label"],
+        "source": "sina",
+        "source_name": "新浪财经",
+        "as_of": now.isoformat(),
+        "trade_date": rows[-1]["date"],
+        "stale_seconds": 0,
+        "nav": rows,
+    }
+
+
+def fetch_real_benchmark_nav(benchmark_id: str, days: int = 260) -> dict[str, Any]:
+    errors = []
+    for fetcher in (fetch_eastmoney_benchmark_nav, fetch_sina_benchmark_nav):
+        try:
+            return fetcher(benchmark_id, days)
+        except Exception as exc:
+            errors.append(f"{fetcher.__name__}: {exc}")
+    raise RuntimeError("; ".join(errors))
+
+
+def load_benchmark_cache() -> dict[str, Any]:
+    try:
+        return load_json(PERFORMANCE_BENCHMARK_NAV_PATH)
+    except HTTPException:
+        return {"meta": {}, "data": {"benchmarks": {}}}
+
+
+def save_benchmark_cache(cache: dict[str, Any]) -> None:
+    write_json_atomic(PERFORMANCE_BENCHMARK_NAV_PATH, cache)
+
+
+def load_or_refresh_benchmarks() -> dict[str, dict[str, Any]]:
+    cache = load_benchmark_cache()
+    data = cache.setdefault("data", {})
+    benchmarks = data.setdefault("benchmarks", {})
+    now = now_hk()
+    changed = False
+    for benchmark_id in REAL_BENCHMARKS:
+        current = benchmarks.get(benchmark_id) if isinstance(benchmarks.get(benchmark_id), dict) else {}
+        age = seconds_since(current.get("as_of"), now)
+        if current.get("nav") and age is not None and age <= BENCHMARK_CACHE_SECONDS:
+            current["stale_seconds"] = age
+            current["status"] = "live" if age <= BENCHMARK_CACHE_SECONDS else "stale"
+            benchmarks[benchmark_id] = current
+            continue
+        try:
+            benchmarks[benchmark_id] = fetch_real_benchmark_nav(benchmark_id)
+            benchmarks[benchmark_id]["status"] = "live"
+            changed = True
+        except Exception as exc:
+            if current:
+                current["stale_seconds"] = age
+                current["status"] = "stale" if current.get("nav") else "unavailable"
+                current["error"] = str(exc)
+                benchmarks[benchmark_id] = current
+            else:
+                benchmarks[benchmark_id] = {
+                    "id": benchmark_id,
+                    "label": REAL_BENCHMARKS[benchmark_id]["label"],
+                    "source": "eastmoney+sina",
+                    "source_name": REAL_BENCHMARKS[benchmark_id]["source_name"],
+                    "as_of": None,
+                    "trade_date": None,
+                    "stale_seconds": None,
+                    "status": "unavailable",
+                    "error": str(exc),
+                    "nav": [],
+                }
+            changed = True
+    if changed:
+        cache["meta"] = {
+            "version": "1.0",
+            "source": "eastmoney",
+            "as_of": now.isoformat(),
+            "trade_date": now.strftime("%Y-%m-%d"),
+            "timezone": "Asia/Hong_Kong",
+            "market_session": market_session(now),
+            "run_id": f"benchmark-live-{now.strftime('%Y%m%d-%H%M%S')}",
+        }
+        save_benchmark_cache(cache)
+    return {key: value for key, value in benchmarks.items() if isinstance(value, dict)}
+
+
+def crop_nav_ledger(rows: list[dict[str, Any]], start_date: date | None, end_date: date) -> list[dict[str, Any]]:
+    cropped = []
+    for row in rows:
+        row_date = parse_row_date(row)
+        if row_date is None or row_date > end_date:
+            continue
+        if start_date and row_date < start_date:
+            continue
+        cropped.append(row)
+    return cropped
+
+
 def build_performance_payload(strategy: str | None, benchmark: str | None, start: str | None, to: str | None) -> dict[str, Any]:
-    source = load_json(PERFORMANCE_NAV_PATH)
-    meta = source.get("meta") if isinstance(source.get("meta"), dict) else {}
-    data = source.get("data") if isinstance(source.get("data"), dict) else {}
-    strategies = data.get("strategies") if isinstance(data.get("strategies"), dict) else {}
-    benchmarks = data.get("benchmarks") if isinstance(data.get("benchmarks"), dict) else {}
-    if not strategies:
-        raise HTTPException(status_code=503, detail="暂无策略净值数据")
-    strategy_id = strategy if strategy in strategies else str(data.get("default_strategy") or next(iter(strategies)))
-    strategy_data = strategies[strategy_id] if isinstance(strategies[strategy_id], dict) else {}
+    ledger = load_joinquant_nav_ledger()
+    strategies = strategy_rows_from_ledger(ledger)
     benchmark_disabled = benchmark is not None and benchmark.lower() in {"", "none", "off", "false"}
-    benchmark_id = "" if benchmark_disabled else benchmark if benchmark in benchmarks else str(data.get("default_benchmark") or next(iter(benchmarks), ""))
-    benchmark_data = benchmarks.get(benchmark_id, {}) if benchmark_id else {}
+    benchmarks = load_or_refresh_benchmarks()
+    benchmark_id = "" if benchmark_disabled else (benchmark if benchmark in benchmarks else "CSI300")
     query_start = parse_query_date(start, "from")
     query_to = parse_query_date(to, "to")
-    today = now_hk().date()
-    source_trade_date = parse_query_date(str(meta.get("trade_date") or "") or None, "trade_date") or today
-    end_date = min(query_to or source_trade_date, source_trade_date, today)
+    now = now_hk()
+    today = now.date()
+    selected_strategy = strategy or (strategies[0]["id"] if strategies else "")
+    if strategy and strategy not in {item["id"] for item in strategies}:
+        raise HTTPException(status_code=404, detail=f"策略净值不存在：{strategy}")
+    strategy_ledger = [row for row in ledger if row.get("strategy_id") == selected_strategy] if selected_strategy else []
+    latest = max(strategy_ledger, key=lambda row: str(row.get("as_of") or ""), default={})
+    latest_trade_date = parse_query_date(str(latest.get("trade_date") or "") or None, "trade_date") if latest else None
+    end_date = min(query_to or latest_trade_date or today, latest_trade_date or today, today)
     if query_start and query_start > end_date:
         raise HTTPException(status_code=422, detail="from 不能晚于 to 或数据日期")
-    raw_equity = strategy_data.get("nav") if isinstance(strategy_data.get("nav"), list) else []
-    raw_benchmark = benchmark_data.get("nav") if isinstance(benchmark_data.get("nav"), list) else []
-    equity_curve = normalize_nav_curve(raw_equity, query_start, end_date)
-    benchmark_curve = normalize_nav_curve(raw_benchmark, query_start, end_date) if benchmark_id else []
-    monthly_source = strategy_data.get("monthly_returns") if isinstance(strategy_data.get("monthly_returns"), list) else None
-    monthly_returns = crop_monthly_returns(monthly_source, query_start, end_date) if monthly_source is not None else monthly_returns_from_curve(equity_curve, query_start, end_date)
-    payload = normalize_payload(source, ENDPOINTS["/api/v1/performance"], "net_values", PERFORMANCE_NAV_PATH)
-    payload["meta"]["query"] = {"strategy": strategy_id, "benchmark": benchmark_id or None, "from": start, "to": to, "effective_to": end_date.isoformat()}
-    payload["data"] = {
-        "strategy": strategy_id,
-        "strategy_label": strategy_data.get("label") or strategy_id,
-        "benchmark": benchmark_data.get("label") or benchmark_id,
-        "benchmark_id": benchmark_id,
-        "strategies": [{"id": key, "label": value.get("label") or key} for key, value in strategies.items() if isinstance(value, dict)],
-        "benchmarks": [{"id": key, "label": value.get("label") or key} for key, value in benchmarks.items() if isinstance(value, dict)],
-        "equity_curve": equity_curve,
-        "benchmark_curve": benchmark_curve,
-        "drawdowns": build_drawdowns(equity_curve),
-        "metrics": calculate_metrics(equity_curve, benchmark_curve),
-        "monthly_returns": monthly_returns,
-        "annotations": strategy_data.get("annotations") if isinstance(strategy_data.get("annotations"), list) else [],
+    strategy_ledger = crop_nav_ledger(strategy_ledger, query_start, end_date)
+    equity_curve = [
+        {
+            "date": row["date"],
+            "value": row["net_value"],
+            "return_pct": round((to_float(row.get("net_value"), 1) - 1) * 100, 4),
+            "source": "joinquant",
+            "snapshot_id": row.get("snapshot_id"),
+            "snapshot_hash": row.get("snapshot_hash"),
+            "strategy_id": row.get("strategy_id"),
+            "run_id": row.get("run_id"),
+            "as_of": row.get("as_of"),
+            "trade_date": row.get("trade_date"),
+            "total_value": row.get("total_value"),
+            "cash": row.get("cash"),
+            "positions_market_value": row.get("positions_market_value"),
+            "cash_plus_positions": row.get("cash_plus_positions"),
+            "reconciliation_diff": row.get("reconciliation_diff"),
+            "trace": row.get("trace") if isinstance(row.get("trace"), dict) else {},
+        }
+        for row in strategy_ledger
+    ]
+    benchmark_data = benchmarks.get(benchmark_id, {}) if benchmark_id else {}
+    benchmark_curve = normalize_nav_curve(
+        benchmark_data.get("nav") if isinstance(benchmark_data.get("nav"), list) else [],
+        query_start,
+        end_date,
+    ) if benchmark_id else []
+    monthly_returns = monthly_returns_from_curve(equity_curve, query_start, end_date)
+    last_seen = latest.get("as_of") if latest else None
+    stale = seconds_since(last_seen, now)
+    is_stale = stale is None or stale > PERFORMANCE_STALE_SECONDS
+    source_state = "joinquant-pending" if not latest else "joinquant-stale" if is_stale else "joinquant"
+    payload = {
+        "meta": {
+            "version": "1.0",
+            "source": source_state,
+            "as_of": now.isoformat(),
+            "trade_date": (latest.get("trade_date") if latest else today.isoformat()),
+            "timezone": "Asia/Hong_Kong",
+            "market_session": market_session(now),
+            "run_id": f"performance-joinquant-{now.strftime('%Y%m%d-%H%M%S')}",
+            "refresh_policy": "performance",
+            "refresh_seconds": 30,
+            "storage_path": str(PERFORMANCE_JOINQUANT_NAV_PATH.relative_to(ROOT)),
+            "query": {"strategy": selected_strategy or None, "benchmark": benchmark_id or None, "from": start, "to": to, "effective_to": end_date.isoformat()},
+            "last_seen": last_seen,
+            "stale_seconds": stale,
+            "source_quality": "real" if latest else "pending",
+        },
+        "data": {
+            "strategy": selected_strategy,
+            "strategy_label": latest.get("strategy_label") or strategy_label_from_payload(selected_strategy) if selected_strategy else "等待聚宽上报",
+            "benchmark": benchmark_data.get("label") or (REAL_BENCHMARKS.get(benchmark_id, {}).get("label") if benchmark_id else None),
+            "benchmark_id": benchmark_id or None,
+            "strategies": strategies,
+            "benchmarks": [
+                {
+                    "id": key,
+                    "label": value.get("label") or key,
+                    "source": value.get("source") or "eastmoney",
+                    "as_of": value.get("as_of"),
+                    "trade_date": value.get("trade_date"),
+                    "stale_seconds": value.get("stale_seconds"),
+                    "status": value.get("status") or "unknown",
+                }
+                for key, value in benchmarks.items()
+            ],
+            "equity_curve": equity_curve,
+            "benchmark_curve": benchmark_curve,
+            "drawdowns": build_drawdowns(equity_curve),
+            "metrics": calculate_metrics(equity_curve, benchmark_curve),
+            "monthly_returns": monthly_returns,
+            "annotations": [],
+            "nav_source": {
+                "source": source_state,
+                "storage_path": str(PERFORMANCE_JOINQUANT_NAV_PATH.relative_to(ROOT)),
+                "snapshot_path": str(PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH.relative_to(ROOT)),
+                "last_seen": last_seen,
+                "stale_seconds": stale,
+                "stale_after_seconds": PERFORMANCE_STALE_SECONDS,
+                "point_count": len(equity_curve),
+            },
+            "benchmark_status": {
+                "id": benchmark_id or None,
+                "source": benchmark_data.get("source") if benchmark_data else None,
+                "source_name": benchmark_data.get("source_name") if benchmark_data else None,
+                "as_of": benchmark_data.get("as_of") if benchmark_data else None,
+                "trade_date": benchmark_data.get("trade_date") if benchmark_data else None,
+                "stale_seconds": benchmark_data.get("stale_seconds") if benchmark_data else None,
+                "status": benchmark_data.get("status") if benchmark_data else None,
+            },
+            "reconciliation": {
+                "total_value": latest.get("total_value"),
+                "cash": latest.get("cash"),
+                "positions_market_value": latest.get("positions_market_value"),
+                "cash_plus_positions": latest.get("cash_plus_positions"),
+                "diff": latest.get("reconciliation_diff"),
+                "formula": "net_value=total_value/first_total_value",
+            },
+        },
     }
-    return validate_response_payload("/api/v1/performance", payload, str(PERFORMANCE_NAV_PATH.relative_to(ROOT)))
+    return validate_response_payload("/api/v1/performance", payload, str(PERFORMANCE_JOINQUANT_NAV_PATH.relative_to(ROOT)))
 
 
 @app.get("/api/v1/performance")
@@ -1729,46 +3001,73 @@ def strategy_etf() -> dict[str, Any]:
 def receive_joinquant_signals(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     verify_action_permission(request)
     verify_joinquant_token(request, payload)
-    next_payload = build_etf_strategy_payload_from_joinquant(payload)
+    target_path, strategy_id, storage_path, strategy_kind = joinquant_strategy_target(payload)
+    if strategy_kind == "small_cap":
+        next_payload = build_small_cap_strategy_payload_from_joinquant(payload)
+    else:
+        next_payload = build_etf_strategy_payload_from_joinquant(payload)
     received_at = now_hk().isoformat()
     stored_logs = append_strategy_logs(
         payload,
         received_at,
         next_payload["meta"]["run_id"],
         next_payload["meta"]["trade_date"],
+        strategy_id,
     )
     if stored_logs:
         next_payload["data"]["logs"] = stored_logs[-ETF_INLINE_LOG_LINES:]
     normalized_next_payload = normalize_payload(
         next_payload,
-        ENDPOINTS["/api/v1/strategies/etf"],
+        ENDPOINTS[target_path],
         "joinquant",
-        ETF_STRATEGY_PATH,
+        storage_path,
     )
-    try:
-        validate_payload(
-            PAYLOAD_SCHEMAS["/api/v1/strategies/etf"],
-            normalized_next_payload,
-            str(ETF_STRATEGY_PATH.relative_to(ROOT)),
-        )
-    except SchemaValidationError as exc:
-        raise HTTPException(status_code=500, detail=schema_error_detail(exc)) from exc
-    write_json_atomic(ETF_STRATEGY_PATH, next_payload)
+    performance_snapshot = persist_joinquant_performance_snapshot(
+        payload,
+        normalized_next_payload,
+        strategy_id,
+        target_path,
+        storage_path,
+        received_at,
+    )
+    if performance_snapshot:
+        next_payload.setdefault("data", {})["performance_snapshot"] = {
+            "snapshot_id": performance_snapshot["snapshot_id"],
+            "total_value": performance_snapshot["total_value"],
+            "cash": performance_snapshot["cash"],
+            "positions_market_value": performance_snapshot["positions_market_value"],
+            "reconciliation_diff": performance_snapshot["reconciliation"]["diff"],
+            "nav_ledger_path": performance_snapshot["trace"]["nav_ledger_path"],
+        }
+        normalized_next_payload.setdefault("data", {})["performance_snapshot"] = next_payload["data"]["performance_snapshot"]
+    schema = PAYLOAD_SCHEMAS.get(target_path)
+    if schema:
+        try:
+            validate_payload(
+                schema,
+                normalized_next_payload,
+                str(storage_path.relative_to(ROOT)),
+            )
+        except SchemaValidationError as exc:
+            raise HTTPException(status_code=500, detail=schema_error_detail(exc)) from exc
+    write_json_atomic(storage_path, next_payload)
     append_jsonl(
         JOINQUANT_SIGNAL_LOG_PATH,
         {
             "received_at": received_at,
             "run_id": next_payload["meta"]["run_id"],
             "trade_date": next_payload["meta"]["trade_date"],
+            "strategy_id": strategy_id,
+            "endpoint": target_path,
             "source_ip": request.client.host if request.client else None,
             "log_count": len(stored_logs),
             "payload": redact_secret_fields(payload),
         },
     )
     return validate_response_payload(
-        "/api/v1/strategies/etf",
+        target_path,
         normalized_next_payload,
-        str(ETF_STRATEGY_PATH.relative_to(ROOT)),
+        str(storage_path.relative_to(ROOT)),
     )
 
 
@@ -1799,7 +3098,23 @@ def strategy_etf_logs(
 
 @app.get("/api/v1/strategies/small-cap")
 def strategy_small_cap() -> dict[str, Any]:
-    return get_payload("/api/v1/strategies/small-cap")
+    payload = get_payload("/api/v1/strategies/small-cap")
+    if not is_real_joinquant_snapshot(payload):
+        return pending_small_cap_payload(payload)
+    data = payload.get("data", {})
+    logs = data.get("logs") if isinstance(data.get("logs"), list) else []
+    if len(logs) < ETF_INLINE_LOG_LINES:
+        archive_logs = get_recent_strategy_logs(
+            ETF_INLINE_LOG_LINES,
+            trade_date=payload.get("meta", {}).get("trade_date"),
+            strategy_id="small-cap-momentum",
+        )
+        if not archive_logs:
+            archive_logs = get_recent_strategy_logs(ETF_INLINE_LOG_LINES, strategy_id="small-cap-momentum")
+        if archive_logs:
+            logs = archive_logs
+    data["logs"] = logs[-ETF_INLINE_LOG_LINES:]
+    return payload
 
 
 @app.get("/api/v1/market/breadth")
@@ -1818,6 +3133,7 @@ def macro() -> dict[str, Any]:
 
 
 app.mount("/data", StaticFiles(directory=DATA_DIR), name="data")
+app.mount("/src", StaticFiles(directory=ROOT / "src"), name="src")
 if (ROOT / "assets").exists():
     app.mount("/assets", StaticFiles(directory=ROOT / "assets"), name="assets")
 

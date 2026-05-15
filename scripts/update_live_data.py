@@ -17,6 +17,7 @@ import sys
 import tempfile
 import urllib.parse
 import urllib.request
+import zipfile
 from html import unescape
 from copy import deepcopy
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ HK_TZ = ZoneInfo("Asia/Hong_Kong")
 BACKEND_DIR = ROOT / "data" / "backend"
 LIVE_DIR = ROOT / "data" / "live"
 CONFIG_DIR = ROOT / "data" / "config"
+MARKET_WIDTH_ZIP_PATH = ROOT.parent / "market_width.zip"
 
 EASTMONEY_BOARD_URL = "https://push2.eastmoney.com/api/qt/clist/get"
 EASTMONEY_QUOTE_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get"
@@ -156,6 +158,13 @@ class BreadthSource:
     universe: str
     industry_standard: str
     notes: list[str]
+    source_file: str = "scripts/update_live_data.py"
+    formula: str = "行业上涨家数 / (上涨家数 + 下跌家数 + 平盘家数) * 100"
+    ma_window_days: int | None = None
+    price_field: str = "realtime_advancers"
+    output_table: str = "data/live/breadth.json"
+    heatmap_columns: list[str] | None = None
+    heatmap_rows: list[dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True)
@@ -673,6 +682,139 @@ def fetch_industry_boards() -> list[BoardRecord]:
     return records
 
 
+def tushare_token() -> str:
+    return (os.getenv("TUSHARE_TOKEN") or os.getenv("TUSHARE_PRO_TOKEN") or os.getenv("TS_TOKEN") or "").strip()
+
+
+def load_market_width_industry_df() -> Any:
+    import pandas as pd
+
+    csv_path = CONFIG_DIR / "industry_df.csv"
+    if csv_path.exists():
+        return pd.read_csv(csv_path)
+    if not MARKET_WIDTH_ZIP_PATH.exists():
+        raise RuntimeError(f"market_width.zip 不存在: {MARKET_WIDTH_ZIP_PATH}")
+    with zipfile.ZipFile(MARKET_WIDTH_ZIP_PATH) as archive:
+        with archive.open("industry_df.csv") as file:
+            return pd.read_csv(file)
+
+
+def tushare_trade_days(pro: Any, end_date: str, need_count: int) -> list[str]:
+    start = (datetime.strptime(end_date, "%Y%m%d") - timedelta(days=max(need_count * 3, need_count + 30))).strftime("%Y%m%d")
+    calendar = pro.query("trade_cal", exchange="SSE", start_date=start, end_date=end_date)
+    if calendar is None or calendar.empty:
+        raise RuntimeError("Tushare trade_cal 无返回")
+    days = calendar[(calendar["is_open"] == 1)]["cal_date"].astype(str).tolist()
+    return days[-need_count:]
+
+
+def fetch_tushare_daily_close(trade_days: list[str]) -> Any:
+    import pandas as pd
+    import tushare as ts
+
+    token = tushare_token()
+    if not token:
+        raise RuntimeError("未配置 TUSHARE_TOKEN，无法按 market_width.zip 拉取全市场日线")
+    pro = ts.pro_api(token)
+    frames = []
+    for day in trade_days:
+        frame = pro.daily(trade_date=day)
+        if frame is None or frame.empty:
+            continue
+        frame = frame[["ts_code", "trade_date", "close"]].copy()
+        frame = frame[frame["ts_code"].astype(str).str.endswith((".SZ", ".SH"), na=False)]
+        frame["trade_date"] = pd.to_datetime(frame["trade_date"], format="%Y%m%d").dt.strftime("%Y-%m-%d")
+        frame["stock_code"] = frame["ts_code"].astype(str).str.split(".").str[0]
+        frames.append(frame)
+    if not frames:
+        raise RuntimeError("Tushare daily 无有效日线数据")
+    return pd.concat(frames, ignore_index=True)
+
+
+def fetch_market_width_source_from_zip(end_date: str | None = None, count: int = 10, ma_window: int = 20) -> BreadthSource:
+    import pandas as pd
+    import tushare as ts
+
+    token = tushare_token()
+    if not token:
+        raise RuntimeError("未配置 TUSHARE_TOKEN")
+    pro = ts.pro_api(token)
+    end_day = (end_date or now_hk().strftime("%Y%m%d")).replace("-", "")
+    trade_days = tushare_trade_days(pro, end_day, count + ma_window)
+    if len(trade_days) < count + ma_window:
+        raise RuntimeError(f"交易日不足，期望 {count + ma_window}，实际 {len(trade_days)}")
+    industry_df = load_market_width_industry_df()
+    industry_df = industry_df[["code", "ind_code", "ind_name"]].dropna(subset=["code", "ind_name"]).copy()
+    industry_df["stock_code"] = industry_df["code"].astype(str).str.split(".").str[0]
+    industry_map = industry_df.drop_duplicates("stock_code").set_index("stock_code")["ind_name"].to_dict()
+    industry_code_map = industry_df.drop_duplicates("ind_name").set_index("ind_name")["ind_code"].astype(str).to_dict()
+    prices = fetch_tushare_daily_close(trade_days)
+    close = prices.pivot(index="stock_code", columns="trade_date", values="close").sort_index(axis=1)
+    close = close.dropna(axis=0, thresh=ma_window + count)
+    ma = close.T.rolling(window=ma_window).mean().T.iloc[:, -count:]
+    latest_close = close.iloc[:, -count:]
+    bias = latest_close > ma
+    bias = bias.dropna(axis=0, how="all")
+    if bias.empty:
+        raise RuntimeError("market_width.zip 口径计算结果为空")
+    dates = [str(value) for value in bias.columns]
+    industry_names = bias.index.map(industry_map)
+    bias["industry_name"] = industry_names
+    bias = bias.dropna(subset=["industry_name"])
+    numeric = bias.drop(columns=["industry_name"])
+    market_ratio = ((100.0 * numeric.sum()) / numeric.count()).round().astype(int)
+    ratio = ((bias.groupby("industry_name").sum(numeric_only=True) * 100.0) / bias.groupby("industry_name").count()).round().astype(int)
+    industry_sum = (ratio.sum(axis=0) * 100.0 / 3100).round().astype(int)
+    ratio.loc["全市场"] = market_ratio
+    ratio.loc["合计"] = industry_sum
+    result = ratio.T
+    result.sort_index(ascending=False, inplace=True)
+    columns = ["全市场", *[col for col in result.columns if col not in {"全市场", "合计"}], "合计"]
+    result = result[[col for col in columns if col in result.columns]]
+    rows = [
+        {"date": pd.to_datetime(index).strftime("%m-%d"), "values": [normalize_int(value) for value in row.tolist()]}
+        for index, row in result.iterrows()
+    ][:count]
+    current = result.iloc[0]
+    previous = result.iloc[1] if len(result) > 1 else current
+    records = []
+    for name in result.columns:
+        if name in {"全市场", "合计"}:
+            continue
+        total_count = int(bias[bias["industry_name"] == name].drop(columns=["industry_name"]).iloc[:, 0].count())
+        width = normalize_int(current.get(name))
+        up_count = round(total_count * width / 100)
+        records.append(
+            BoardRecord(
+                code=str(industry_code_map.get(name) or name),
+                name=str(name),
+                change_pct=width - normalize_number(previous.get(name), width),
+                up_count=up_count,
+                down_count=max(0, total_count - up_count),
+                flat_count=0,
+            )
+        )
+    records.sort(key=lambda record: record.width_pct, reverse=True)
+    return BreadthSource(
+        records=records,
+        name="market_width.zip MA20 行业市场宽度",
+        quality="real",
+        universe=f"industry_df.csv 股票池 {len(industry_map)} 只",
+        industry_standard="申万一级行业",
+        notes=[
+            "优先按 /home/yt/quant/market_width.zip 的 close > MA20 逻辑计算。",
+            "全市场列为全部有效股票在 MA20 上方的比例；合计列沿用原脚本 df_ratio.sum()*100/3100 口径。",
+        ],
+        source_file="/home/yt/quant/market_width.zip:market_width.py",
+        formula="行业内 close > MA20 的股票数 / 行业内有效股票数 * 100",
+        ma_window_days=ma_window,
+        price_field="close",
+        output_table="tb_market_width(trade_date, category, scores)",
+        heatmap_columns=list(result.columns),
+        heatmap_rows=rows,
+    )
+
+
 def build_watchlist_payload(quotes: dict[str, QuoteRecord], watchlist_config: list[dict[str, Any]]) -> dict[str, Any]:
     payload = load_json(BACKEND_DIR / "watchlist/list.json")
     grouped: dict[str, list[dict[str, Any]]] = {}
@@ -961,6 +1103,11 @@ def fetch_eastmoney_all_a_breadth() -> list[BoardRecord]:
 
 def get_breadth_source(quotes: dict[str, QuoteRecord] | None = None) -> BreadthSource:
     try:
+        return fetch_market_width_source_from_zip(count=10, ma_window=20)
+    except Exception as exc:
+        print(f"warning: market_width.zip breadth fetch failed: {exc}")
+
+    try:
         industry_records = fetch_industry_boards()
         if industry_records:
             return BreadthSource(
@@ -1047,17 +1194,25 @@ def build_breadth_payload(source: BreadthSource | list[BoardRecord] | None = Non
     if not records:
         raise RuntimeError("No breadth records returned")
 
-    # Keep a stable, readable industry order by current board list order.
+    # Keep a stable, readable industry order by the source algorithm output.
     industry_names = [record.name for record in records]
-    columns = ["总体", *industry_names]
+    columns = breadth_source.heatmap_columns or ["总体", *industry_names]
     widths = [record.width_pct for record in records]
     overall = round(sum(widths) / max(1, len(widths)))
+    industry_sum_score = overall
     today_row = {"date": mmdd(), "values": [overall, *widths]}
-
-    history = payload.get("data", {}).get("heatmap_history", {})
-    old_columns = history.get("columns") or columns
-    old_rows = align_heatmap_rows(history.get("rows") or [], old_columns, columns)
-    rows = [today_row, *[row for row in old_rows if row.get("date") != today_row["date"]]][:10]
+    if breadth_source.heatmap_rows:
+        rows = breadth_source.heatmap_rows[:10]
+        if rows and len(rows[0].get("values") or []) == len(columns):
+            first_values = rows[0]["values"]
+            value_by_column = dict(zip(columns, first_values))
+            overall = normalize_int(value_by_column.get("全市场", value_by_column.get("总体", overall)))
+            industry_sum_score = normalize_int(value_by_column.get("合计", industry_sum_score))
+    else:
+        history = payload.get("data", {}).get("heatmap_history", {})
+        old_columns = history.get("columns") or columns
+        old_rows = align_heatmap_rows(history.get("rows") or [], old_columns, columns)
+        rows = [today_row, *[row for row in old_rows if row.get("date") != today_row["date"]]][:10]
 
     previous_by_name: dict[str, int] = {}
     if len(rows) > 1:
@@ -1088,14 +1243,14 @@ def build_breadth_payload(source: BreadthSource | list[BoardRecord] | None = Non
     data = payload.setdefault("data", {})
     data["source_algorithm"] = {
         "name": breadth_source.name,
-        "source_file": "scripts/update_live_data.py",
+        "source_file": breadth_source.source_file,
         "universe": breadth_source.universe,
         "industry_standard": breadth_source.industry_standard,
         "lookback_days": 10,
-        "ma_window_days": None,
-        "price_field": "realtime_advancers",
-        "formula": "行业上涨家数 / (上涨家数 + 下跌家数 + 平盘家数) * 100",
-        "output_table": "data/live/breadth.json",
+        "ma_window_days": breadth_source.ma_window_days,
+        "price_field": breadth_source.price_field,
+        "formula": breadth_source.formula,
+        "output_table": breadth_source.output_table,
         "source_quality": breadth_source.quality,
         "notes": breadth_source.notes,
     }
@@ -1104,7 +1259,7 @@ def build_breadth_payload(source: BreadthSource | list[BoardRecord] | None = Non
         "score": overall,
         "label": "偏强" if overall >= 60 else "中性" if overall >= 45 else "偏弱",
         "market_width_pct": overall,
-        "industry_sum_score": overall,
+        "industry_sum_score": industry_sum_score,
         "industry_count": len(records),
         "up_ratio_pct": up_ratio,
         "above_ma20_pct": overall,

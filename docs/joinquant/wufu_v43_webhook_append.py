@@ -5,8 +5,8 @@
 # 3. 模拟运行时，这段补丁会自动包装关键函数并把信号推送到网站后端。
 #
 # 当前正式公网地址：
-# - 后端接收入口: https://quantlife.site/api/v1/joinquant/signals
-# - 网站策略页面: https://quantlife.site/etf.html
+# - 后端接收入口: https://quant.quantlife.site/api/v1/joinquant/signals
+# - 网站策略页面: https://quant.quantlife.site/etf.html
 
 import json
 import time
@@ -22,8 +22,8 @@ except Exception:
     urllib_request = None
 
 
-WEBHOOK_URL = "https://quantlife.site/api/v1/joinquant/signals"
-WEBHOOK_TOKEN = "6139de478f78edb474c56f19ec715e35eefb88dd289af28038e2ccb21b260b95"
+WEBHOOK_URL = "https://quant.quantlife.site/api/v1/joinquant/signals"
+WEBHOOK_TOKEN = "replace-with-your-joinquant-webhook-token"
 WEBHOOK_TIMEOUT = 5
 WEBHOOK_MIN_INTERVAL_SECONDS = 8
 WEBHOOK_MAX_LOG_LINES = 1000
@@ -105,15 +105,60 @@ def _webhook_position_payload(context):
                 "symbol": security,
                 "name": get_security_name(security),
                 "market": market,
+                "quantity": amount,
                 "weight_pct": market_value / total_value * 100 if total_value else 0,
                 "avg_cost": avg_cost,
                 "last_price": price,
                 "market_value": market_value,
+                "pnl_amount": (price - avg_cost) * amount if avg_cost and price else 0,
                 "pnl_pct": (price / avg_cost - 1) * 100 if avg_cost else 0,
             })
     except Exception as e:
         _webhook_log_warning("【Webhook】持仓序列化失败：%s" % e)
     return rows
+
+
+def _webhook_portfolio_payload(context, holdings=None):
+    holdings = holdings if holdings is not None else _webhook_position_payload(context)
+    total_value = _webhook_safe_float(getattr(context.portfolio, "total_value", 0), 0)
+    cash = _webhook_safe_float(getattr(context.portfolio, "cash", 0), 0)
+    available_cash = _webhook_safe_float(getattr(context.portfolio, "available_cash", cash), cash)
+    positions_market_value = sum(_webhook_safe_float(row.get("market_value"), 0) for row in holdings)
+    return {
+        "total_value": total_value,
+        "cash": cash,
+        "available_cash": available_cash,
+        "positions_market_value": positions_market_value,
+        "cash_plus_positions": cash + positions_market_value,
+        "position_count": len(holdings),
+        "current_exposure_pct": positions_market_value / total_value * 100 if total_value else 0,
+    }
+
+
+def _webhook_trade_payload():
+    rows = []
+    try:
+        trades = get_trades()
+        if hasattr(trades, "items"):
+            iterable = trades.items()
+        else:
+            iterable = enumerate(trades or [])
+        for trade_id, trade in iterable:
+            security = getattr(trade, "security", None) or getattr(trade, "order_book_id", None) or getattr(trade, "symbol", None)
+            amount = _webhook_safe_float(getattr(trade, "amount", 0), 0)
+            price = _webhook_safe_float(getattr(trade, "price", 0), 0)
+            rows.append({
+                "trade_id": str(trade_id),
+                "time": str(getattr(trade, "time", "") or getattr(trade, "datetime", "") or _webhook_now_text()),
+                "symbol": security,
+                "action": "buy" if amount > 0 else "sell" if amount < 0 else "",
+                "quantity": abs(amount),
+                "price": price,
+                "value": abs(amount) * price,
+            })
+    except Exception:
+        pass
+    return rows[-100:]
 
 
 def _webhook_recommendation_payload(context):
@@ -286,6 +331,8 @@ def _webhook_strategy_payload(context, stage, detail):
     risk_state = str(getattr(g, "risk_state", "正常期"))
     current_filter = str(getattr(g, "current_filter", "正常期"))
     target_count = len(getattr(g, "target_etfs_list", []) or [])
+    holdings = _webhook_position_payload(context)
+    portfolio = _webhook_portfolio_payload(context, holdings)
     return {
         "strategy_name": "五福闹新春 v4.3",
         "strategy_id": "joinquant-wufu-etf-v43",
@@ -307,9 +354,11 @@ def _webhook_strategy_payload(context, stage, detail):
             "decision_tone": "warning" if "震荡" in (risk_state + current_filter) else "blue",
         },
         "summary": _webhook_summary_payload(context),
+        "portfolio": portfolio,
         "regime": _webhook_regime_payload(),
         "recommendations": _webhook_recommendation_payload(context),
-        "holdings": _webhook_position_payload(context),
+        "holdings": holdings,
+        "trades": _webhook_trade_payload(),
         "events": [{
             "time": now.strftime("%H:%M"),
             "label": stage,
