@@ -55,6 +55,9 @@ REAL_BENCHMARKS = {
     "CSI1000": {"label": "中证1000", "secid": "1.000852", "sina_symbol": "sh000852", "source_name": "东方财富行情中心/新浪财经"},
     "CHINEXT": {"label": "创业板指", "secid": "0.399006", "sina_symbol": "sz399006", "source_name": "东方财富行情中心/新浪财经"},
 }
+MANUAL_PORTFOLIO_STRATEGY_ID = "personal-portfolio"
+MANUAL_PORTFOLIO_STRATEGY_LABEL = "个人持仓"
+TARGET_POSITION_ACTIONS = {"buy", "add", "hold"}
 STATIC_PAGES = {
     "/": "index.html",
     "/index.html": "index.html",
@@ -1457,6 +1460,50 @@ def strategy_portfolio_holding_row(
     }
 
 
+def strategy_portfolio_target_row(
+    signal: dict[str, Any],
+    context: dict[str, str],
+    index: int,
+) -> dict[str, Any] | None:
+    action = str(signal.get("action") or "").strip().lower()
+    if action not in TARGET_POSITION_ACTIONS:
+        return None
+    symbol = portfolio_symbol_key(signal.get("symbol"))
+    if not symbol:
+        return None
+    suggested_weight = to_float(signal.get("suggested_weight_pct") or signal.get("target_weight_pct") or signal.get("weight_pct"), 0) or 0
+    last_price = to_float(signal.get("last_price") or signal.get("price"))
+    return {
+        "symbol": symbol,
+        "raw_symbol": str(signal.get("symbol") or symbol),
+        "name": str(signal.get("name") or symbol),
+        "strategy_id": context["strategy_id"],
+        "strategy_name": context["strategy_name"],
+        "strategy_page": context["strategy_page"],
+        "source": "joinquant",
+        "portfolio_state": "target",
+        "position_status": "target",
+        "sector": str(signal.get("theme") or signal.get("sector") or ("ETF" if context["strategy_id"] == "joinquant-wufu-etf-v43" else "--")),
+        "avg_cost": None,
+        "cost": None,
+        "last_price": last_price,
+        "quantity": None,
+        "market_value": None,
+        "pnl_amount": None,
+        "pnl_pct": None,
+        "weight_pct": suggested_weight,
+        "target_weight_pct": suggested_weight,
+        "day_change_pct": to_float(signal.get("change_pct") or signal.get("day_change_pct"), 0),
+        "holding_days": None,
+        "entry_date": "",
+        "notes": str(signal.get("reason") or "策略已给出目标仓位，等待成交持仓回报。"),
+        "rank": to_int(signal.get("rank"), index + 1),
+        "strategy_updated_at": str(signal.get("updated_at") or ""),
+        "trade_date": str(signal.get("trade_date") or ""),
+        "run_id": str(signal.get("run_id") or ""),
+    }
+
+
 def filter_holdings_payload(payload: dict[str, Any], portfolio_type: str | None = None, strategy_id: str | None = None) -> dict[str, Any]:
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     rows = data.get("holdings") if isinstance(data.get("holdings"), list) else []
@@ -1470,8 +1517,11 @@ def filter_holdings_payload(payload: dict[str, Any], portfolio_type: str | None 
             if row.get("strategy_id") and safe_strategy_id(row.get("strategy_id")) == target_strategy
         ]
     next_payload = {**payload, "data": {**data}}
+    summary_strategies = []
+    if target_type == "quant":
+        summary_strategies = data.get("strategy_outputs", {}).get("strategies", []) if isinstance(data.get("strategy_outputs"), dict) else []
     next_payload["data"]["holdings"] = rows
-    next_payload["data"]["summary"] = strategy_portfolio_summary(rows, data.get("strategy_outputs", {}).get("strategies", []) if isinstance(data.get("strategy_outputs"), dict) else [])
+    next_payload["data"]["summary"] = strategy_portfolio_summary(rows, summary_strategies)
     next_payload["data"]["allocation"] = strategy_portfolio_allocation(rows)
     next_payload["meta"] = {
         **(payload.get("meta") if isinstance(payload.get("meta"), dict) else {}),
@@ -1485,13 +1535,16 @@ def strategy_portfolio_summary(rows: list[dict[str, Any]], strategies: list[dict
     pnl_amounts = [value for value in (to_float(row.get("pnl_amount")) for row in rows) if value is not None]
     total_market_value = sum(market_values) if market_values else None
     day_changes = [to_float(row.get("day_change_pct"), 0) or 0 for row in rows]
+    actual_rows = [row for row in rows if str(row.get("portfolio_state") or "actual") != "target"]
+    target_rows = [row for row in rows if str(row.get("portfolio_state") or "") == "target"]
     total_return_pct = None
     if total_market_value:
         total_return_pct = sum((to_float(row.get("pnl_pct"), 0) or 0) * (to_float(row.get("market_value"), 0) or 0) for row in rows) / total_market_value
     elif rows:
         total_return_pct = sum(to_float(row.get("pnl_pct"), 0) or 0 for row in rows) / len(rows)
-    weights = [to_float(row.get("weight_pct"), 0) or 0 for row in rows]
+    weights = [to_float(row.get("weight_pct"), 0) or 0 for row in actual_rows]
     exposure_pct = sum(weights) if len(strategies) <= 1 else None
+    source = "joinquant" if strategies else "manual" if rows else "manual"
     return {
         "total_market_value": round(total_market_value, 2) if total_market_value is not None else None,
         "day_pnl_amount": None,
@@ -1499,8 +1552,10 @@ def strategy_portfolio_summary(rows: list[dict[str, Any]], strategies: list[dict
         "total_return_pct": round(total_return_pct, 2) if total_return_pct is not None else None,
         "exposure_pct": round(exposure_pct, 2) if exposure_pct is not None else None,
         "position_count": len(rows),
+        "actual_position_count": len(actual_rows),
+        "target_position_count": len(target_rows),
         "sector_diversity": len({str(row.get("sector") or "--") for row in rows}),
-        "source": "joinquant",
+        "source": source,
         "strategy_count": len(strategies),
     }
 
@@ -1520,6 +1575,209 @@ def strategy_portfolio_allocation(rows: list[dict[str, Any]]) -> list[dict[str, 
         }
         for sector, values in sorted(grouped.items(), key=lambda item: item[1]["market_value"] or item[1]["weight_pct"], reverse=True)
     ]
+
+
+def normalize_personal_holding(item: dict[str, Any], total_value: float | None = None) -> dict[str, Any] | None:
+    symbol = portfolio_symbol_key(item.get("symbol") or item.get("code") or item.get("stock") or item.get("etf"))
+    if not symbol:
+        return None
+    avg_cost = to_float(item.get("avg_cost") or item.get("cost"))
+    last_price = to_float(item.get("last_price") or item.get("price"))
+    quantity = to_float(item.get("quantity") or item.get("amount") or item.get("total_amount") or item.get("shares"))
+    market_value = to_float(item.get("market_value") or item.get("value") or item.get("manual_amount") or item.get("amount_value"))
+    if market_value is None and quantity is not None and last_price is not None:
+        market_value = quantity * last_price
+    pnl_amount = to_float(item.get("pnl_amount") or item.get("profit_loss"))
+    if pnl_amount is None and avg_cost is not None and last_price is not None and quantity is not None:
+        pnl_amount = (last_price - avg_cost) * quantity
+    pnl_pct = to_float(item.get("pnl_pct"))
+    if pnl_pct is None and avg_cost and last_price is not None:
+        pnl_pct = (last_price / avg_cost - 1) * 100
+    weight_pct = to_float(item.get("weight_pct"))
+    if weight_pct is None and market_value is not None and total_value:
+        weight_pct = market_value / total_value * 100
+    return {
+        "symbol": symbol,
+        "raw_symbol": str(item.get("symbol") or item.get("code") or item.get("stock") or item.get("etf") or symbol),
+        "name": str(item.get("name") or symbol),
+        "sector": str(item.get("sector") or item.get("theme") or item.get("industry") or "个人持仓"),
+        "avg_cost": avg_cost,
+        "cost": avg_cost,
+        "last_price": last_price,
+        "quantity": quantity,
+        "market_value": market_value,
+        "pnl_amount": pnl_amount,
+        "pnl_pct": pnl_pct,
+        "weight_pct": weight_pct or 0,
+        "day_change_pct": to_float(item.get("day_change_pct") or item.get("change_pct"), 0),
+        "holding_days": to_int(item.get("holding_days"), 0) if item.get("holding_days") is not None else None,
+        "entry_date": str(item.get("entry_date") or ""),
+        "notes": str(item.get("notes") or ""),
+        "portfolio_type": "personal",
+        "portfolio_state": "actual",
+        "source": str(item.get("source") or "manual"),
+        "market_region": str(item.get("market_region") or infer_market_region(symbol)),
+        "market": str(item.get("market") or infer_cn_market(symbol) if symbol.isdigit() else item.get("market") or ""),
+    }
+
+
+def load_portfolio_holdings_payload() -> dict[str, Any]:
+    path = ENDPOINTS["/api/v1/portfolio/holdings"].backend_path
+    try:
+        payload = load_json(path)
+    except HTTPException:
+        now = now_hk()
+        payload = {
+            "meta": {
+                "version": "1.0",
+                "source": "manual",
+                "as_of": now.isoformat(),
+                "trade_date": now.strftime("%Y-%m-%d"),
+                "timezone": "Asia/Hong_Kong",
+                "market_session": market_session(now),
+                "run_id": f"manual-holdings-{now.strftime('%Y%m%d-%H%M%S')}",
+            },
+            "data": {"summary": {}, "holdings": [], "allocation": []},
+        }
+    payload.setdefault("data", {}).setdefault("holdings", [])
+    payload["data"].setdefault("summary", {})
+    payload["data"].setdefault("allocation", [])
+    return payload
+
+
+def save_portfolio_holdings_payload(payload: dict[str, Any]) -> None:
+    now = now_hk()
+    data = payload.setdefault("data", {})
+    static_rows = data.get("holdings") if isinstance(data.get("holdings"), list) else []
+    personal_rows = [
+        row
+        for row in (normalize_personal_holding(item) for item in static_rows if isinstance(item, dict))
+        if row
+    ]
+    data["holdings"] = personal_rows
+    data["summary"] = strategy_portfolio_summary(personal_rows, [])
+    data["allocation"] = strategy_portfolio_allocation(personal_rows)
+    payload["meta"] = {
+        **(payload.get("meta") if isinstance(payload.get("meta"), dict) else {}),
+        "version": "1.0",
+        "source": "manual",
+        "as_of": now.isoformat(),
+        "trade_date": now.strftime("%Y-%m-%d"),
+        "timezone": "Asia/Hong_Kong",
+        "market_session": market_session(now),
+        "run_id": f"manual-holdings-{now.strftime('%Y%m%d-%H%M%S')}",
+    }
+    write_json_atomic(ENDPOINTS["/api/v1/portfolio/holdings"].backend_path, payload)
+
+
+def upsert_personal_holding(item: dict[str, Any]) -> dict[str, Any]:
+    payload = load_portfolio_holdings_payload()
+    data = payload.setdefault("data", {})
+    existing = data.get("holdings") if isinstance(data.get("holdings"), list) else []
+    incoming = normalize_personal_holding({**item, "portfolio_type": "personal"})
+    if not incoming:
+        raise HTTPException(status_code=422, detail="缺少有效持仓代码")
+    key = (incoming["market_region"], incoming["symbol"])
+    kept: list[dict[str, Any]] = []
+    for row in existing:
+        if not isinstance(row, dict):
+            continue
+        normalized = normalize_personal_holding(row)
+        if not normalized:
+            continue
+        if (normalized.get("market_region"), normalized.get("symbol")) != key:
+            kept.append(normalized)
+    kept.append(incoming)
+    data["holdings"] = kept
+    save_portfolio_holdings_payload(payload)
+    return incoming
+
+
+def watchlist_item_to_personal_holding(item: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    manual_amount = to_float(payload.get("personal_amount") or payload.get("market_value") or payload.get("amount"))
+    quantity = to_float(payload.get("quantity") or payload.get("shares"))
+    avg_cost = to_float(payload.get("avg_cost") or payload.get("cost"))
+    last_price = to_float(payload.get("last_price") or payload.get("price"))
+    if last_price is None and quantity and manual_amount:
+        last_price = manual_amount / quantity
+    if quantity is None and last_price and manual_amount:
+        quantity = manual_amount / last_price
+    return {
+        **item,
+        "portfolio_type": "personal",
+        "source": "manual",
+        "market_value": manual_amount,
+        "quantity": quantity,
+        "avg_cost": avg_cost,
+        "last_price": last_price,
+        "notes": str(payload.get("notes") or "从自选股标记为真实持仓"),
+    }
+
+
+def build_personal_performance_ledger() -> list[dict[str, Any]]:
+    payload = load_portfolio_holdings_payload()
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    rows = data.get("holdings") if isinstance(data.get("holdings"), list) else []
+    now = now_hk()
+    current_total = 0.0
+    cost_basis_total = 0.0
+    position_count = 0
+    entry_dates: list[date] = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        row = normalize_personal_holding(item)
+        if not row:
+            continue
+        value = to_float(row.get("market_value"))
+        pnl_amount = to_float(row.get("pnl_amount"), 0) or 0
+        if value is None:
+            continue
+        current_total += value
+        cost_basis_total += value - pnl_amount
+        position_count += 1
+        entry_text = str(row.get("entry_date") or "").strip()[:10]
+        try:
+            if entry_text:
+                entry_dates.append(date.fromisoformat(entry_text))
+        except ValueError:
+            pass
+    if current_total <= 0 or position_count <= 0:
+        return []
+    cost_basis_total = cost_basis_total or current_total or 1
+    start_date = min(entry_dates) if entry_dates else now.date()
+    try:
+        today = date.fromisoformat(str(meta.get("trade_date") or meta.get("as_of") or "")[:10])
+    except ValueError:
+        today = now.date()
+
+    def ledger_row(day: date, total_value: float, net_value: float, label: str) -> dict[str, Any]:
+        day_text = day.isoformat()
+        return {
+            "snapshot_id": f"{MANUAL_PORTFOLIO_STRATEGY_ID}|{day_text}|{label}",
+            "strategy_id": MANUAL_PORTFOLIO_STRATEGY_ID,
+            "strategy_label": MANUAL_PORTFOLIO_STRATEGY_LABEL,
+            "run_id": f"manual-portfolio-{day_text}-{label}",
+            "as_of": f"{day_text}T15:00:00+08:00",
+            "date": day_text,
+            "trade_date": day_text,
+            "net_value": round(net_value, 6),
+            "total_value": round(total_value, 4),
+            "cash": None,
+            "positions_market_value": round(total_value, 4),
+            "cash_plus_positions": round(total_value, 4),
+            "reconciliation_diff": None,
+            "position_count": position_count,
+            "trade_count": 0,
+            "source": "manual",
+            "trace": {"calculation": "manual current market value / manual cost basis"},
+        }
+
+    result = [ledger_row(start_date, cost_basis_total, 1.0, "cost-basis")]
+    if today != start_date:
+        result.append(ledger_row(today, current_total, current_total / cost_basis_total, "current"))
+    return result
 
 
 def pending_small_cap_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1674,6 +1932,8 @@ def collect_strategy_outputs_for_holdings() -> dict[str, Any]:
         data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
         meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
         context = strategy_context_from_payload(definition, payload)
+        context_signals: list[dict[str, Any]] = []
+        context_holding_symbols: set[str] = set()
         strategies.append(
             {
                 **context,
@@ -1689,6 +1949,7 @@ def collect_strategy_outputs_for_holdings() -> dict[str, Any]:
                 continue
             row = strategy_output_row(item, definition, payload, context, index, "signal")
             if row:
+                context_signals.append(row)
                 signal_rows.append(row)
                 by_symbol.setdefault(str(row["symbol"]), []).append(row)
                 alert = strategy_sell_alert_from_signal(row)
@@ -1703,7 +1964,16 @@ def collect_strategy_outputs_for_holdings() -> dict[str, Any]:
             if row:
                 position_rows.append(row)
                 by_symbol.setdefault(str(row["symbol"]), []).append(row)
-                portfolio_rows.append(strategy_portfolio_holding_row(item, payload, context, index))
+                portfolio_row = strategy_portfolio_holding_row(item, payload, context, index)
+                context_holding_symbols.add(str(portfolio_row.get("symbol") or ""))
+                portfolio_rows.append(portfolio_row)
+
+        for index, signal in enumerate(context_signals):
+            if str(signal.get("symbol") or "") in context_holding_symbols:
+                continue
+            target_row = strategy_portfolio_target_row(signal, context, index)
+            if target_row:
+                portfolio_rows.append(target_row)
 
         signal_names = {str(row["symbol"]): str(row["name"]) for row in [*signal_rows, *position_rows] if row.get("symbol")}
         sell_alerts.extend(strategy_sell_alerts_from_logs(payload, context, signal_names))
@@ -1742,13 +2012,9 @@ def enrich_portfolio_holdings_with_strategy_outputs(payload: dict[str, Any]) -> 
     source_holdings = outputs["portfolio_rows"]
     static_holdings = data.get("holdings") if isinstance(data.get("holdings"), list) else []
     personal_holdings = [
-        {
-            **item,
-            "portfolio_type": str(item.get("portfolio_type") or "personal"),
-            "source": str(item.get("source") or "manual"),
-        }
-        for item in static_holdings
-        if isinstance(item, dict) and str(item.get("portfolio_type") or "personal") == "personal"
+        row
+        for row in (normalize_personal_holding(item) for item in static_holdings if isinstance(item, dict) and str(item.get("portfolio_type") or "personal") == "personal")
+        if row
     ]
     data["source"] = "joinquant" if outputs["strategies"] else "joinquant-pending"
     data["static_holdings_ignored_count"] = len(static_holdings)
@@ -1780,6 +2046,7 @@ def enrich_portfolio_holdings_with_strategy_outputs(payload: dict[str, Any]) -> 
             for alert in exit_alerts[:2]
         )
         row["portfolio_type"] = "quant"
+        row["portfolio_state"] = row.get("portfolio_state") or "actual"
         enriched_holdings.append(row)
 
     all_holdings = [*enriched_holdings, *personal_holdings]
@@ -1873,7 +2140,14 @@ def load_watchlist_config() -> dict[str, Any]:
 
 
 def save_watchlist_items(items: list[dict[str, Any]]) -> None:
-    write_json_atomic(WATCHLIST_CONFIG_PATH, {"items": items})
+    existing: dict[str, Any] = {}
+    if WATCHLIST_CONFIG_PATH.exists():
+        try:
+            existing = load_json(WATCHLIST_CONFIG_PATH)
+        except HTTPException:
+            existing = {}
+    existing["items"] = items
+    write_json_atomic(WATCHLIST_CONFIG_PATH, existing)
 
 
 def invalidate_watchlist_live_data() -> None:
@@ -2086,6 +2360,10 @@ def verify_action_permission(request: Request) -> None:
 
 
 def action_response(action_type: str, detail: dict[str, Any]) -> dict[str, Any]:
+    return standard_action_payload(action_type, detail, persist=True)
+
+
+def standard_action_payload(action_type: str, detail: dict[str, Any], persist: bool = True) -> dict[str, Any]:
     now = now_hk()
     action_stamp = datetime.now(HK_TZ).strftime("%Y%m%d-%H%M%S-%f")
     record = {
@@ -2096,7 +2374,8 @@ def action_response(action_type: str, detail: dict[str, Any]) -> dict[str, Any]:
         "status": "success",
         **detail,
     }
-    append_jsonl(ACTION_LOG_PATH, record)
+    if persist:
+        append_jsonl(ACTION_LOG_PATH, record)
     return {
         "meta": {
             "version": "1.0",
@@ -2321,6 +2600,20 @@ def mark_holding(symbol: str, request: Request, payload: dict[str, Any] | None =
     return action_response("holding_mark", {"symbol": symbol.upper(), "mark": mark, "note": note, "message": f"持仓 {symbol.upper()} 已标记为 {mark}"})
 
 
+@app.post("/api/v1/portfolio/personal-holdings")
+def create_personal_holding(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    verify_action_permission(request)
+    row = upsert_personal_holding(payload)
+    return action_response(
+        "personal_holding_upsert",
+        {
+            "symbol": row["symbol"],
+            "holding": row,
+            "message": f"个人持仓 {row['symbol']} 已保存",
+        },
+    )
+
+
 @app.post("/api/v1/strategies/{strategy_id}/signals/{symbol}/confirm")
 def confirm_strategy_signal(strategy_id: str, symbol: str, request: Request, payload: dict[str, Any] | None = Body(default=None)) -> dict[str, Any]:
     verify_action_permission(request)
@@ -2439,7 +2732,19 @@ def add_watchlist_item(request: Request, response: Response, payload: dict[str, 
     merged = [row for row in items if (row.get("market_region"), row.get("symbol")) != item_key]
     merged.append(item)
     save_watchlist_items(merged)
-    return watchlist_mutation_payload(merged, config_status="saved", response=response)
+    mutation_payload = watchlist_mutation_payload(merged, config_status="saved", response=response)
+    if payload.get("is_personal_holding") or payload.get("portfolio_type") == "personal":
+        personal_row = upsert_personal_holding(watchlist_item_to_personal_holding(item, payload))
+        mutation_payload.setdefault("data", {})["personal_holding"] = personal_row
+        standard_action_payload(
+            "personal_holding_from_watchlist",
+            {
+                "symbol": personal_row["symbol"],
+                "holding": personal_row,
+                "message": f"自选股 {personal_row['symbol']} 已归入个人持仓",
+            },
+        )
+    return mutation_payload
 
 
 @app.delete("/api/v1/watchlist/{symbol}")
@@ -2938,10 +3243,36 @@ def strategy_rows_from_ledger(ledger: list[dict[str, Any]]) -> list[dict[str, An
             "label": row.get("strategy_label") or strategy_id,
             "last_seen": row.get("as_of"),
             "stale_seconds": seconds_since(row.get("as_of")),
-            "source": "joinquant",
+            "source": row.get("source") or "joinquant",
         }
         for strategy_id, row in sorted(latest_by_strategy.items())
     ]
+
+
+def load_static_performance_strategies() -> tuple[list[dict[str, Any]], dict[str, Any], str]:
+    if not PERFORMANCE_NAV_PATH.exists():
+        return [], {}, ""
+    payload = load_json(PERFORMANCE_NAV_PATH)
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    strategies_input = data.get("strategies") if isinstance(data.get("strategies"), dict) else {}
+    rows: list[dict[str, Any]] = []
+    for strategy_id, config in strategies_input.items():
+        if not isinstance(config, dict):
+            continue
+        nav_rows = config.get("nav") if isinstance(config.get("nav"), list) else []
+        if not nav_rows:
+            continue
+        last = nav_rows[-1]
+        rows.append(
+            {
+                "id": str(strategy_id),
+                "label": config.get("label") or strategy_id,
+                "last_seen": last.get("date") or last.get("trade_date"),
+                "stale_seconds": None,
+                "source": config.get("engine") or "static",
+            }
+        )
+    return rows, strategies_input, str(data.get("default_strategy") or "")
 
 
 def fetch_eastmoney_benchmark_nav(benchmark_id: str, days: int = 260) -> dict[str, Any]:
@@ -3107,8 +3438,14 @@ def crop_nav_ledger(rows: list[dict[str, Any]], start_date: date | None, end_dat
 
 
 def build_performance_payload(strategy: str | None, benchmark: str | None, start: str | None, to: str | None) -> dict[str, Any]:
-    ledger = load_joinquant_nav_ledger()
-    strategies = strategy_rows_from_ledger(ledger)
+    joinquant_ledger = load_joinquant_nav_ledger()
+    personal_ledger = build_personal_performance_ledger()
+    ledger = [*joinquant_ledger, *personal_ledger]
+    static_strategies, static_strategy_config, default_static_strategy = load_static_performance_strategies()
+    ledger_strategies = strategy_rows_from_ledger(ledger)
+    strategy_map = {item["id"]: item for item in static_strategies}
+    strategy_map.update({item["id"]: item for item in ledger_strategies})
+    strategies = list(strategy_map.values())
     benchmark_disabled = benchmark is not None and benchmark.lower() in {"", "none", "off", "false"}
     benchmarks = load_or_refresh_benchmarks()
     benchmark_id = "" if benchmark_disabled else (benchmark if benchmark in benchmarks else "CSI300")
@@ -3116,22 +3453,61 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
     query_to = parse_query_date(to, "to")
     now = now_hk()
     today = now.date()
-    selected_strategy = strategy or (strategies[0]["id"] if strategies else "")
+    selected_strategy = strategy or default_static_strategy or (strategies[0]["id"] if strategies else "")
     if strategy and strategy not in {item["id"] for item in strategies}:
         raise HTTPException(status_code=404, detail=f"策略净值不存在：{strategy}")
     strategy_ledger = [row for row in ledger if row.get("strategy_id") == selected_strategy] if selected_strategy else []
+    static_config = static_strategy_config.get(selected_strategy) if isinstance(static_strategy_config.get(selected_strategy), dict) else {}
+    if not strategy_ledger and static_config:
+        static_nav = static_config.get("nav") if isinstance(static_config.get("nav"), list) else []
+        static_curve_rows = normalize_nav_curve(static_nav, query_start, query_to or today)
+        strategy_ledger = [
+            {
+                "snapshot_id": f"{selected_strategy}|{row['date']}",
+                "strategy_id": selected_strategy,
+                "strategy_label": static_config.get("label") or selected_strategy,
+                "run_id": f"static-{selected_strategy}-{row['date']}",
+                "as_of": f"{row['date']}T15:00:00+08:00",
+                "date": row["date"],
+                "trade_date": row["date"],
+                "net_value": row["value"],
+                "total_value": None,
+                "cash": None,
+                "positions_market_value": None,
+                "cash_plus_positions": None,
+                "reconciliation_diff": None,
+                "position_count": None,
+                "trade_count": None,
+                "source": static_config.get("engine") or "static",
+                "trace": {"storage_path": str(PERFORMANCE_NAV_PATH.relative_to(ROOT)), "calculation": "static net_value seed"},
+            }
+            for row in static_curve_rows
+        ]
     latest = max(strategy_ledger, key=lambda row: str(row.get("as_of") or ""), default={})
     latest_trade_date = parse_query_date(str(latest.get("trade_date") or "") or None, "trade_date") if latest else None
     end_date = min(query_to or latest_trade_date or today, latest_trade_date or today, today)
     if query_start and query_start > end_date:
         raise HTTPException(status_code=422, detail="from 不能晚于 to 或数据日期")
     strategy_ledger = crop_nav_ledger(strategy_ledger, query_start, end_date)
+    latest_source = str(latest.get("source") or "")
+    latest_stale_seconds = seconds_since(latest.get("as_of"), now)
+    source_state = (
+        "manual"
+        if latest_source == "manual"
+        else "static"
+        if latest_source and latest_source != "joinquant"
+        else "joinquant-pending"
+        if not latest
+        else "joinquant-stale"
+        if latest_stale_seconds is None or latest_stale_seconds > PERFORMANCE_STALE_SECONDS
+        else "joinquant"
+    )
     equity_curve = [
         {
             "date": row["date"],
             "value": row["net_value"],
             "return_pct": round((to_float(row.get("net_value"), 1) - 1) * 100, 4),
-            "source": "joinquant",
+            "source": row.get("source") or source_state,
             "snapshot_id": row.get("snapshot_id"),
             "snapshot_hash": row.get("snapshot_hash"),
             "strategy_id": row.get("strategy_id"),
@@ -3155,9 +3531,13 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
     ) if benchmark_id else []
     monthly_returns = monthly_returns_from_curve(equity_curve, query_start, end_date)
     last_seen = latest.get("as_of") if latest else None
-    stale = seconds_since(last_seen, now)
-    is_stale = stale is None or stale > PERFORMANCE_STALE_SECONDS
-    source_state = "joinquant-pending" if not latest else "joinquant-stale" if is_stale else "joinquant"
+    stale = latest_stale_seconds
+    nav_storage_path = str(
+        PERFORMANCE_NAV_PATH.relative_to(ROOT)
+        if source_state in {"static", "manual"}
+        else PERFORMANCE_JOINQUANT_NAV_PATH.relative_to(ROOT)
+    )
+    snapshot_storage_path = None if source_state in {"static", "manual"} else str(PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH.relative_to(ROOT))
     payload = {
         "meta": {
             "version": "1.0",
@@ -3169,7 +3549,7 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
             "run_id": f"performance-joinquant-{now.strftime('%Y%m%d-%H%M%S')}",
             "refresh_policy": "performance",
             "refresh_seconds": 30,
-            "storage_path": str(PERFORMANCE_JOINQUANT_NAV_PATH.relative_to(ROOT)),
+            "storage_path": nav_storage_path,
             "query": {"strategy": selected_strategy or None, "benchmark": benchmark_id or None, "from": start, "to": to, "effective_to": end_date.isoformat()},
             "last_seen": last_seen,
             "stale_seconds": stale,
@@ -3201,8 +3581,8 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
             "annotations": [],
             "nav_source": {
                 "source": source_state,
-                "storage_path": str(PERFORMANCE_JOINQUANT_NAV_PATH.relative_to(ROOT)),
-                "snapshot_path": str(PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH.relative_to(ROOT)),
+                "storage_path": nav_storage_path,
+                "snapshot_path": snapshot_storage_path,
                 "last_seen": last_seen,
                 "stale_seconds": stale,
                 "stale_after_seconds": PERFORMANCE_STALE_SECONDS,
@@ -3227,7 +3607,7 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
             },
         },
     }
-    return validate_response_payload("/api/v1/performance", payload, str(PERFORMANCE_JOINQUANT_NAV_PATH.relative_to(ROOT)))
+    return validate_response_payload("/api/v1/performance", payload, nav_storage_path)
 
 
 @app.get("/api/v1/performance")

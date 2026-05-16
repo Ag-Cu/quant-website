@@ -66,7 +66,7 @@ const dom = {
 const integerFormat = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 });
 const STRATEGY_LOG_DISPLAY_LIMIT = 1000;
 
-const performanceState = { strategy: "", benchmark: "CSI300", range: "1Y", from: "", to: "" };
+const performanceState = { strategy: new URLSearchParams(window.location.search).get("strategy") || "", benchmark: "CSI300", range: "1Y", from: "", to: "" };
 let activePage = document.body.dataset.page || "overview";
 
 function formatDateParam(date) {
@@ -970,11 +970,15 @@ function renderWatchlist(payload) {
         </div>
         <div class="watch-add-panel" data-watch-add-panel>
           <form class="watch-add-form" data-watch-add-form>
+            <label class="span-2"><span>操作令牌</span><input name="action_token" type="password" autocomplete="off" placeholder="可选；填写后保存到本机浏览器" /></label>
             <label><span>市场</span><select name="market_region"><option value="cn">A股</option><option value="us">美股</option></select></label>
             <label><span>代码</span><input name="symbol" autocomplete="off" placeholder="600519 / NVDA" required /></label>
             <label><span>名称</span><input name="name" autocomplete="off" placeholder="可选" /></label>
             <label><span>分组</span><input name="sector" autocomplete="off" placeholder="例如 AI 链" /></label>
-            <button class="primary-button" type="submit">保存并获取行情</button>
+            <label class="checkbox-field"><input type="checkbox" name="is_personal_holding" value="true" data-watch-personal-toggle /><span>真实持有</span></label>
+            <label data-watch-personal-field><span>持仓金额</span><input name="personal_amount" inputmode="decimal" placeholder="例如 50000" /></label>
+            <label data-watch-personal-field><span>持仓数量</span><input name="quantity" inputmode="decimal" placeholder="可选" /></label>
+            <button class="primary-button" type="submit">保存</button>
           </form>
           <p class="form-status" data-watch-status></p>
         </div>
@@ -1018,6 +1022,7 @@ function setWatchlistStatus(message, tone = "") {
 
 function watchlistRefreshMessage(payload, fallback = "已保存，行情稍后刷新") {
   const refreshError = payload?.data?.refresh_error || payload?.meta?.warning;
+  if (payload?.data?.personal_holding) return payload.data.refresh_error ? fallback : "已保存到自选和个人持仓";
   return refreshError ? fallback : "";
 }
 
@@ -1030,6 +1035,16 @@ function showWatchlistRefreshMessage(message, tone = "") {
 
 function bindWatchlistInteractions() {
   const panelNode = document.querySelector("[data-watch-add-panel]");
+  const personalToggle = document.querySelector("[data-watch-personal-toggle]");
+  const syncPersonalFields = () => {
+    const active = Boolean(personalToggle?.checked);
+    document.querySelectorAll("[data-watch-personal-field]").forEach((node) => {
+      node.classList.toggle("is-muted", !active);
+      node.querySelector("input")?.toggleAttribute("disabled", !active);
+    });
+  };
+  syncPersonalFields();
+  personalToggle?.addEventListener("change", syncPersonalFields);
   document.querySelector("[data-add-watch]")?.addEventListener("click", () => {
     panelNode?.classList.toggle("open");
     panelNode?.querySelector("input[name='symbol']")?.focus();
@@ -1050,15 +1065,28 @@ function bindWatchlistInteractions() {
       name: String(formData.get("name") || "").trim(),
       sector: String(formData.get("sector") || "").trim(),
     };
+    const token = String(formData.get("action_token") || "").trim();
+    const isPersonalHolding = formData.get("is_personal_holding") === "true";
+    if (token) window.localStorage?.setItem("quant_action_token", token);
+    if (isPersonalHolding) {
+      body.is_personal_holding = true;
+      body.personal_amount = String(formData.get("personal_amount") || "").trim();
+      body.quantity = String(formData.get("quantity") || "").trim();
+      body.portfolio_type = "personal";
+    }
     if (!body.symbol) {
       setWatchlistStatus("请先输入股票代码", "negative");
+      return;
+    }
+    if (isPersonalHolding && !body.personal_amount && !body.quantity) {
+      setWatchlistStatus("真实持有至少需要填写持仓金额或持仓数量", "negative");
       return;
     }
     setWatchlistStatus("正在保存并获取行情...");
     form.querySelector("button[type='submit']")?.setAttribute("disabled", "disabled");
     try {
-      const payload = await sendJson("/api/v1/watchlist", { method: "POST", body: JSON.stringify(body) });
-      const refreshMessage = watchlistRefreshMessage(payload, "已保存，行情稍后刷新");
+      const payload = await sendJson("/api/v1/watchlist", { method: "POST", headers: actionHeaders(), body: JSON.stringify(body) });
+      const refreshMessage = watchlistRefreshMessage(payload, isPersonalHolding ? "已保存到自选和个人持仓，行情稍后刷新" : "已保存，行情稍后刷新");
       renderWatchlist(payload);
       updateShell(payload.meta || {}, payload.meta?.source === "cache" ? "cache" : "live");
       showWatchlistRefreshMessage(refreshMessage);
@@ -1076,7 +1104,7 @@ function bindWatchlistInteractions() {
       button.textContent = "删除中";
       button.setAttribute("disabled", "disabled");
       try {
-        const payload = await sendJson(`/api/v1/watchlist/${encodeURIComponent(symbol)}?market=${encodeURIComponent(market || "")}`, { method: "DELETE" });
+        const payload = await sendJson(`/api/v1/watchlist/${encodeURIComponent(symbol)}?market=${encodeURIComponent(market || "")}`, { method: "DELETE", headers: actionHeaders() });
         const refreshMessage = watchlistRefreshMessage(payload, "已删除，行情稍后刷新");
         renderWatchlist(payload);
         updateShell(payload.meta || {}, payload.meta?.source === "cache" ? "cache" : "live");
@@ -1151,7 +1179,7 @@ function renderPicks(payload) {
 
 function strategySignalTags(signals = []) {
   if (!signals.length) return `<span class="muted-text">--</span>`;
-  return `<div class="holding-signal-tags">${signals.slice(0, 3).map((item) => tag(`${item.strategy_name || "策略"} · ${item.action_label || "--"}`, actionTone(item.action))).join("")}</div>`;
+  return `<div class="holding-signal-tags">${signals.slice(0, 3).map((item) => tag(`${item.strategy_name || "策略"} · ${item.action_label || "--"}`, item.source === "holding" ? "positive" : actionTone(item.action))).join("")}</div>`;
 }
 
 function exitAlertCell(alerts = []) {
@@ -1162,12 +1190,37 @@ function exitAlertCell(alerts = []) {
   }).join("");
 }
 
+function positionStateTag(row = {}) {
+  const state = row.portfolio_state || row.position_status || "actual";
+  if (state === "target") return tag("目标持仓/待成交", "warning");
+  if (row.portfolio_type === "personal") return tag("个人持仓", "blue");
+  return tag("实际持仓", "positive");
+}
+
 function strategyOutputReason(row) {
   const parts = [];
   if (row.reason) parts.push(row.reason);
   if (row.suggested_weight_pct !== null && row.suggested_weight_pct !== undefined) parts.push(`目标 ${valueWithUnit(row.suggested_weight_pct, "%", 0)}`);
   if (row.score !== null && row.score !== undefined) parts.push(`分数 ${valueText(row.score, 0)}`);
   return parts.join(" · ") || "--";
+}
+
+function holdingsPageNote(data = {}) {
+  const targetCount = (data.quant_holdings || []).filter((row) => row.portfolio_state === "target").length;
+  if (!targetCount) return "";
+  return `<div class="inline-note">${tag(`${targetCount} 个目标持仓`, "warning")} 策略买入信号已并入量化持仓；未收到成交回报前会标记为待成交。</div>`;
+}
+
+function strategySourceTone(source = "") {
+  if (source === "manual") return "blue";
+  if (source === "joinquant") return "positive";
+  if (source.includes("backtest") || source === "static") return "neutral";
+  return "warning";
+}
+
+function performanceStrategyTabs(strategies = [], activeStrategy = "") {
+  if (!strategies.length) return `<div class="empty-state">暂无收益曲线</div>`;
+  return strategies.map((item) => `<button type="button" data-strategy="${escapeHtml(item.id)}" class="${item.id === activeStrategy ? "active" : ""}"><span>${escapeHtml(item.label)}</span>${tag(item.source === "manual" ? "个人" : item.source === "joinquant" ? "量化" : "历史", strategySourceTone(item.source || ""))}</button>`).join("");
 }
 
 function renderHoldings(payload) {
@@ -1192,7 +1245,7 @@ function renderHoldings(payload) {
       const marketValue = row.market_value;
       const pnlAmount = row.pnl_amount ?? row.pnl_pct;
       const holdingDays = row.holding_days === null || row.holding_days === undefined || Number.isNaN(Number(row.holding_days)) ? "--" : `${intText(row.holding_days)} 天`;
-      return `<tr class="holding-card-row ${Number(row.pnl_pct) >= 0 ? "profit-row" : "loss-row"}"><td class="holding-stock" data-label="股票"><strong>${escapeHtml(row.symbol)}</strong><br><small>${escapeHtml(row.name)}</small></td><td class="holding-strategy-signal" data-label="策略信号">${options.personal ? tag("个人持仓", "blue") : strategySignalTags(row.strategy_signals || [])}</td><td class="holding-exit-cell" data-label="卖出/风控">${options.personal ? `<span class="muted-text">${escapeHtml(row.notes || "--")}</span>` : exitAlertCell(row.exit_alerts || [])}</td><td data-label="持仓均价">${valueText(avgCost, 2)}</td><td class="holding-price" data-label="最新价">${valueText(row.last_price, 2)}</td><td data-label="持仓量">${intText(row.quantity)}</td><td class="holding-market-value" data-label="市值">${marketValue === null || marketValue === undefined ? "--" : `¥${intText(marketValue)}`}</td><td data-label="盈亏额" class="${toneClassByValue(pnlAmount)}">${pnlAmount === null || pnlAmount === undefined ? "--" : `${Number(pnlAmount) > 0 ? "+" : ""}¥${intText(pnlAmount)}`}</td><td data-label="盈亏%"><div class="pnl-bar ${toneByValue(row.pnl_pct)}"><i style="--bar:${Math.min(100, Math.abs(row.pnl_pct || 0) * 8)}%;"></i><span>${pctText(row.pnl_pct)}</span></div></td><td data-label="仓位占比"><div class="mini-donut" style="--score:${row.weight_pct || 0}%;"></div></td><td data-label="持有天数">${Number(row.holding_days) > 30 ? tag(holdingDays, "warning") : escapeHtml(holdingDays)}</td><td data-label="操作"><div class="action-cell"><button class="row-action" type="button" data-holding-mark="${escapeHtml(row.symbol)}">标记</button><button class="row-action" type="button" data-rebalance-record="${escapeHtml(row.symbol)}" data-weight="${escapeHtml(row.weight_pct || 0)}">调仓记录</button><span class="action-status" data-action-status></span></div></td></tr>`;
+      return `<tr class="holding-card-row ${Number(row.pnl_pct) >= 0 ? "profit-row" : "loss-row"}"><td class="holding-stock" data-label="股票"><strong>${escapeHtml(row.symbol)}</strong><br><small>${escapeHtml(row.name)}</small><div class="holding-state">${positionStateTag(row)}</div></td><td class="holding-strategy-signal" data-label="策略信号">${options.personal ? tag("个人持仓", "blue") : strategySignalTags(row.strategy_signals || [])}</td><td class="holding-exit-cell" data-label="卖出/风控">${options.personal || row.portfolio_state === "target" ? `<span class="muted-text">${escapeHtml(row.notes || "--")}</span>` : exitAlertCell(row.exit_alerts || [])}</td><td data-label="持仓均价">${valueText(avgCost, 2)}</td><td class="holding-price" data-label="最新价">${valueText(row.last_price, 2)}</td><td data-label="持仓量">${row.quantity === null || row.quantity === undefined ? "--" : intText(row.quantity)}</td><td class="holding-market-value" data-label="市值">${marketValue === null || marketValue === undefined ? "--" : `¥${intText(marketValue)}`}</td><td data-label="盈亏额" class="${toneClassByValue(pnlAmount)}">${pnlAmount === null || pnlAmount === undefined ? "--" : `${Number(pnlAmount) > 0 ? "+" : ""}¥${intText(pnlAmount)}`}</td><td data-label="盈亏%"><div class="pnl-bar ${toneByValue(row.pnl_pct)}"><i style="--bar:${Math.min(100, Math.abs(row.pnl_pct || 0) * 8)}%;"></i><span>${pctText(row.pnl_pct)}</span></div></td><td data-label="仓位占比"><div class="mini-donut" style="--score:${row.weight_pct || 0}%;"></div></td><td data-label="持有天数">${row.portfolio_state === "target" ? "--" : Number(row.holding_days) > 30 ? tag(holdingDays, "warning") : escapeHtml(holdingDays)}</td><td data-label="操作"><div class="action-cell"><button class="row-action" type="button" data-holding-mark="${escapeHtml(row.symbol)}">标记</button><button class="row-action" type="button" data-rebalance-record="${escapeHtml(row.symbol)}" data-weight="${escapeHtml(row.weight_pct || 0)}">调仓记录</button><span class="action-status" data-action-status></span></div></td></tr>`;
     }),
     1500,
   );
@@ -1212,6 +1265,7 @@ function renderHoldings(payload) {
       metricCard("仓位使用", valueWithUnit(summary.exposure_pct, "%", 0), `${summary.position_count ?? source.length} 只持仓`),
       metricCard("持仓数量", `${intText(summary.position_count ?? source.length)} 只`, `Sector diversity ${summary.sector_diversity ?? allocation.length}`),
     ])}
+    ${holdingsPageNote(payload.data || {})}
     ${panel({
       title: "量化持仓",
       kicker: "Quant Positions",
@@ -1429,7 +1483,7 @@ function renderPerformance(payload) {
   const equity = data.equity_curve?.length ? data.equity_curve.map((item) => Number(item.return_pct)) : [];
   const benchmark = data.benchmark_curve?.length ? data.benchmark_curve.map((item) => Number(item.return_pct)) : [];
   const monthly = data.monthly_returns || [];
-  const strategies = data.strategies?.length ? data.strategies : [{ id: data.strategy || "momentum", label: data.strategy_label || "动量策略" }];
+  const strategies = data.strategies?.length ? data.strategies : [{ id: data.strategy || "momentum", label: data.strategy_label || "动量策略", source: data.nav_source?.source || "unknown" }];
   const benchmarks = data.benchmarks?.length ? data.benchmarks : [{ id: data.benchmark_id || "CSI300", label: data.benchmark || "沪深300" }];
   const navSource = data.nav_source || {};
   const benchmarkStatus = data.benchmark_status || {};
@@ -1459,7 +1513,7 @@ function renderPerformance(payload) {
   dom.app.innerHTML = `
     <section class="strategy-toolbar">
       <div class="mini-tabs" data-performance-strategies>
-        ${strategies.map((item) => `<button type="button" data-strategy="${escapeHtml(item.id)}" class="${item.id === data.strategy ? "active" : ""}">${escapeHtml(item.label)}</button>`).join("")}
+        ${performanceStrategyTabs(strategies, data.strategy)}
       </div>
       <div class="toolbar">
         ${benchmarks.map((item) => `<label><input type="checkbox" data-benchmark="${escapeHtml(item.id)}" ${item.id === data.benchmark_id ? "checked" : ""} /> 对比 ${escapeHtml(item.label)}</label>`).join("")}
@@ -1487,6 +1541,7 @@ function renderPerformance(payload) {
   dom.app.querySelectorAll("[data-strategy]").forEach((button) => {
     button.addEventListener("click", () => {
       performanceState.strategy = button.dataset.strategy || "";
+      updateUrlQuery({ strategy: performanceState.strategy });
       refreshPerformance();
     });
   });

@@ -68,6 +68,7 @@ def test_endpoints_return_meta_and_data(client: TestClient, path: str) -> None:
         ("post", "/api/v1/watchlist", {"symbol": "600519", "market_region": "cn"}),
         ("delete", "/api/v1/watchlist/600519?market=cn", None),
         ("post", "/api/v1/portfolio/holdings/600519/mark", {"mark": "reviewed"}),
+        ("post", "/api/v1/portfolio/personal-holdings", {"symbol": "600519", "market_value": 10000}),
         ("post", "/api/v1/strategies/etf/signals/600519/confirm", {"action": "confirm"}),
         ("post", "/api/v1/quant/strategies", {"id": "new-alpha", "name": "新策略 Alpha"}),
         ("post", "/api/v1/quant/strategies/new-alpha/snapshot", {"strategy_id": "new-alpha"}),
@@ -313,6 +314,8 @@ def test_portfolio_holdings_include_joinquant_strategy_outputs(
     payload = response.json()
     assert [row["symbol"] for row in payload["data"]["holdings"]] == ["000001"]
     assert [row["symbol"] for row in payload["data"]["personal_holdings"]] == ["000001"]
+    assert "strategy_id" not in payload["data"]["personal_holdings"][0]
+    assert payload["data"]["personal_holdings"][0]["portfolio_type"] == "personal"
     assert payload["data"]["quant_holdings"] == []
     assert payload["data"]["source"] == "joinquant-pending"
     assert payload["data"]["static_holdings_ignored_count"] == 1
@@ -326,24 +329,67 @@ def test_portfolio_holdings_include_joinquant_strategy_outputs(
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    holding = payload["data"]["quant_holdings"][0]
-    assert [item["symbol"] for item in payload["data"]["quant_holdings"]] == ["300476"]
+    holding = next(row for row in payload["data"]["quant_holdings"] if row["symbol"] == "300476")
+    assert {item["symbol"] for item in payload["data"]["quant_holdings"]} == {"300476", "159915"}
     assert [item["symbol"] for item in payload["data"]["personal_holdings"]] == ["000001"]
     assert payload["data"]["source"] == "joinquant"
-    assert payload["data"]["quant_summary"]["position_count"] == 1
+    assert payload["data"]["quant_summary"]["position_count"] == 2
     assert payload["data"]["quant_summary"]["total_market_value"] == 43000
     assert holding["strategy_signals"][0]["strategy_id"] == "small-cap-momentum"
     assert holding["strategy_signals"][0]["action"] == "sell"
     assert holding["quantity"] == 1000
     assert holding["exit_alerts"]
+    etf_target = next(row for row in payload["data"]["quant_holdings"] if row["symbol"] == "159915")
+    assert etf_target["portfolio_state"] == "target"
+    assert etf_target["strategy_id"] == "joinquant-wufu-etf-v43"
+    assert etf_target["target_weight_pct"] == 0
     assert payload["data"]["strategy_outputs"]["signals"][0]["symbol"] in {"300476", "159915"}
     assert any(alert["symbol"] == "300476" for alert in payload["data"]["strategy_outputs"]["sell_alerts"])
+
+
+def test_watchlist_can_create_personal_holding(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    client: TestClient,
+) -> None:
+    monkeypatch.setenv("QUANT_ACTION_TOKEN", "test-action-token")
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(backend_main, "CONFIG_DIR", tmp_path / "data/config")
+    monkeypatch.setattr(backend_main, "WATCHLIST_CONFIG_PATH", tmp_path / "data/config/watchlist.json")
+    monkeypatch.setattr(backend_main, "LIVE_DIR", tmp_path / "data/live")
+    monkeypatch.setattr(backend_main, "ACTION_LOG_PATH", tmp_path / "data/backend/actions/action-log.jsonl")
+    monkeypatch.setattr(backend_main, "run_live_data_refresh", lambda: (False, "offline in test"))
+
+    response = client.post(
+        "/api/v1/watchlist",
+        headers={"X-Action-Token": "test-action-token"},
+        json={
+            "symbol": "600519",
+            "market_region": "cn",
+            "name": "贵州茅台",
+            "sector": "消费",
+            "is_personal_holding": True,
+            "personal_amount": 12345,
+            "quantity": 10,
+        },
+    )
+
+    assert response.status_code == 202, response.text
+    payload = response.json()
+    assert payload["data"]["personal_holding"]["symbol"] == "600519"
+    holdings_path = tmp_path / "data/backend/portfolio/holdings.json"
+    saved = json.loads(holdings_path.read_text(encoding="utf-8"))
+    assert saved["data"]["holdings"][0]["portfolio_type"] == "personal"
+    assert saved["data"]["holdings"][0]["market_value"] == 12345
+    assert "strategy_id" not in saved["data"]["holdings"][0]
 
 
 def patch_joinquant_paths(monkeypatch: pytest.MonkeyPatch, tmp_path) -> dict[str, object]:
     paths = {
         "small_cap": tmp_path / "data/backend/strategies/small-cap.json",
         "etf": tmp_path / "data/backend/strategies/etf.json",
+        "performance_nav": tmp_path / "data/backend/performance/net-values.json",
         "signal_log": tmp_path / "data/backend/strategies/joinquant-signals.jsonl",
         "full_log": tmp_path / "data/backend/strategies/joinquant-full-logs.jsonl",
         "snapshots": tmp_path / "data/backend/performance/joinquant-snapshots.jsonl",
@@ -357,6 +403,7 @@ def patch_joinquant_paths(monkeypatch: pytest.MonkeyPatch, tmp_path) -> dict[str
     monkeypatch.setattr(backend_main, "ETF_STRATEGY_PATH", paths["etf"])
     monkeypatch.setattr(backend_main, "JOINQUANT_SIGNAL_LOG_PATH", paths["signal_log"])
     monkeypatch.setattr(backend_main, "JOINQUANT_FULL_LOG_PATH", paths["full_log"])
+    monkeypatch.setattr(backend_main, "PERFORMANCE_NAV_PATH", paths["performance_nav"])
     monkeypatch.setattr(backend_main, "PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH", paths["snapshots"])
     monkeypatch.setattr(backend_main, "PERFORMANCE_JOINQUANT_NAV_PATH", paths["ledger"])
     monkeypatch.setattr(backend_main, "PERFORMANCE_BENCHMARK_NAV_PATH", paths["benchmarks"])
@@ -378,6 +425,29 @@ def write_live_benchmark_cache(path) -> None:
                         "CSI300": {"id": "CSI300", "label": "沪深300", "source": "eastmoney", "source_name": "东方财富行情中心", "as_of": "2026-05-15T10:30:00+08:00", "trade_date": "2026-05-15", "stale_seconds": 10, "status": "live", "nav": [{"date": "2026-05-14", "value": 1000}, {"date": "2026-05-15", "value": 1006}]},
                         "CSI1000": {"id": "CSI1000", "label": "中证1000", "source": "eastmoney", "source_name": "东方财富行情中心", "as_of": "2026-05-15T10:30:00+08:00", "trade_date": "2026-05-15", "stale_seconds": 10, "status": "live", "nav": [{"date": "2026-05-14", "value": 1000}, {"date": "2026-05-15", "value": 1010}]},
                     }
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_static_performance_nav(path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "meta": {"version": "1.0", "source": "static", "as_of": "2026-05-15T15:00:00+08:00", "trade_date": "2026-05-15", "timezone": "Asia/Hong_Kong", "market_session": "closed", "run_id": "static-nav-test"},
+                "data": {
+                    "default_strategy": "momentum",
+                    "strategies": {
+                        "momentum": {
+                            "label": "动量策略",
+                            "engine": "static",
+                            "nav": [{"date": "2026-05-14", "net_value": 1.0}, {"date": "2026-05-15", "net_value": 1.02}],
+                        }
+                    },
                 },
             },
             ensure_ascii=False,
@@ -478,3 +548,49 @@ def test_performance_uses_live_benchmark_cache(
     assert payload["data"]["benchmark_status"]["trade_date"] == "2026-05-15"
     assert payload["data"]["benchmark_status"]["stale_seconds"] is not None
     assert payload["data"]["benchmark_curve"][-1]["return_pct"] == 1.0
+
+
+def test_performance_lists_static_quant_and_personal_curves(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    client: TestClient,
+) -> None:
+    paths = patch_joinquant_paths(monkeypatch, tmp_path)
+    write_live_benchmark_cache(paths["benchmarks"])
+    write_static_performance_nav(paths["performance_nav"])
+    holdings_path = tmp_path / "data/backend/portfolio/holdings.json"
+    holdings_path.parent.mkdir(parents=True, exist_ok=True)
+    holdings_path.write_text(
+        json.dumps(
+            {
+                "meta": {"version": "1.0", "source": "manual", "as_of": "2026-05-15T15:00:00+08:00", "trade_date": "2026-05-15", "timezone": "Asia/Hong_Kong", "market_session": "closed", "run_id": "manual-holdings-test"},
+                "data": {
+                    "summary": {},
+                    "holdings": [
+                        {
+                            "symbol": "600519",
+                            "name": "贵州茅台",
+                            "portfolio_type": "personal",
+                            "market_value": 110000,
+                            "pnl_amount": 10000,
+                            "entry_date": "2026-05-14",
+                        }
+                    ],
+                    "allocation": [],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    response = client.get("/api/v1/performance?strategy=personal-portfolio&benchmark=none&from=2026-05-14&to=2026-05-15")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    strategy_ids = {item["id"] for item in payload["data"]["strategies"]}
+    assert {"momentum", "personal-portfolio"} <= strategy_ids
+    assert payload["data"]["strategy"] == "personal-portfolio"
+    assert payload["data"]["strategy_label"] == "个人持仓"
+    assert payload["data"]["equity_curve"][-1]["return_pct"] == 10.0
+    assert payload["data"]["nav_source"]["source"] == "manual"

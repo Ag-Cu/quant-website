@@ -640,6 +640,9 @@ body.sidebar-collapsed .sidebar-toggle::before {
 
 .pill,
 .tag {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
   padding: 4px 9px;
   border: 1px solid var(--line);
   background: rgba(20, 20, 19, 0.03);
@@ -1087,6 +1090,17 @@ body.sidebar-collapsed .sidebar-toggle::before {
   padding: 6px 11px;
   font-size: 12px;
   font-weight: 700;
+}
+
+.mini-tabs button {
+  gap: 6px;
+}
+
+.mini-tabs button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .segmented button.active,
@@ -1731,10 +1745,14 @@ body.sidebar-collapsed .sidebar-toggle::before {
 .watch-add-form {
   display: grid;
   grid-template-columns:
-    110px minmax(130px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr)
-    auto;
+    minmax(110px, 0.8fr) minmax(130px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr)
+    minmax(120px, 0.8fr);
   gap: 10px;
   align-items: end;
+}
+
+.watch-add-form .span-2 {
+  grid-column: span 2;
 }
 
 .watch-add-form label {
@@ -1758,6 +1776,38 @@ body.sidebar-collapsed .sidebar-toggle::before {
 .watch-add-form input:focus,
 .watch-add-form select:focus {
   border-color: rgba(140, 90, 43, 0.36);
+}
+
+.checkbox-field {
+  min-height: 34px;
+  align-content: center;
+}
+
+.checkbox-field input {
+  width: auto;
+  min-height: 0;
+  margin-right: 6px;
+}
+
+.checkbox-field span {
+  color: var(--ink);
+}
+
+.is-muted {
+  opacity: 0.45;
+}
+
+.holding-state {
+  margin-top: 5px;
+}
+
+.inline-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -2px 0 14px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .strategy-card-grid {
@@ -2453,6 +2503,10 @@ body.sidebar-collapsed .sidebar-toggle::before {
   .watchlist-layout,
   .watch-add-form {
     grid-template-columns: 1fr;
+  }
+
+  .watch-add-form .span-2 {
+    grid-column: 1;
   }
 
   .sentiment-card,
