@@ -2226,7 +2226,7 @@ body.sidebar-collapsed .sidebar-toggle::before {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -2237,7 +2237,7 @@ body.sidebar-collapsed .sidebar-toggle::before {
   display: grid;
   min-width: 0;
   gap: 3px;
-  padding: 10px 12px;
+  padding: 8px 11px;
   background: rgba(var(--surface-rgb), 0.92);
 }
 
@@ -2265,14 +2265,15 @@ body.sidebar-collapsed .sidebar-toggle::before {
   width: 100%;
   min-width: 720px;
   height: auto;
+  overflow: visible;
 }
 
 .chart-grid-line {
-  stroke: rgba(20, 20, 19, 0.08);
+  stroke: rgba(20, 20, 19, 0.06);
 }
 
 .chart-grid-line.x-grid {
-  stroke: rgba(20, 20, 19, 0.05);
+  stroke: rgba(20, 20, 19, 0.035);
 }
 
 .axis-line {
@@ -2281,8 +2282,7 @@ body.sidebar-collapsed .sidebar-toggle::before {
 }
 
 .axis-tick,
-.axis-label,
-.series-end-label {
+.axis-label {
   fill: var(--muted);
   font-family: var(--font-mono);
   font-size: 11px;
@@ -2308,11 +2308,6 @@ body.sidebar-collapsed .sidebar-toggle::before {
   text-anchor: end;
 }
 
-.series-end-label {
-  fill: var(--ink-soft);
-  font-weight: 700;
-}
-
 .zero-line {
   stroke: rgba(20, 20, 19, 0.2);
   stroke-dasharray: 6 8;
@@ -2331,7 +2326,7 @@ body.sidebar-collapsed .sidebar-toggle::before {
   stroke: var(--accent);
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 2.4;
+  stroke-width: 2.15;
 }
 
 .benchmark-line {
@@ -2344,7 +2339,7 @@ body.sidebar-collapsed .sidebar-toggle::before {
 .chart-last-dot {
   fill: var(--surface);
   stroke: var(--accent);
-  stroke-width: 2.2;
+  stroke-width: 2;
 }
 
 .chart-points {
@@ -2362,12 +2357,19 @@ body.sidebar-collapsed .sidebar-toggle::before {
 
 .chart-point-dot {
   fill: var(--surface);
-  opacity: 0.9;
+  opacity: 0;
   stroke: var(--accent);
-  stroke-width: 1.8;
+  stroke-width: 2.1;
   transform-box: fill-box;
   transform-origin: center;
-  transition: opacity 0.16s ease, stroke-width 0.16s ease, transform 0.16s ease;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.chart-hover-line {
+  opacity: 0;
+  stroke: rgba(20, 20, 19, 0.34);
+  stroke-dasharray: 3 5;
+  transition: opacity 0.12s ease;
 }
 
 .chart-tooltip-fo {
@@ -2380,8 +2382,13 @@ body.sidebar-collapsed .sidebar-toggle::before {
 .chart-point-hit:focus .chart-point-dot,
 .chart-point-hit:focus-visible .chart-point-dot {
   opacity: 1;
-  stroke-width: 2.3;
-  transform: scale(1.7);
+  transform: scale(1.15);
+}
+
+.chart-point-hit:hover .chart-hover-line,
+.chart-point-hit:focus .chart-hover-line,
+.chart-point-hit:focus-visible .chart-hover-line {
+  opacity: 1;
 }
 
 .chart-point-hit:hover .chart-tooltip-fo,
@@ -2392,13 +2399,13 @@ body.sidebar-collapsed .sidebar-toggle::before {
 
 .chart-tooltip {
   display: grid;
-  gap: 6px;
-  width: 198px;
-  padding: 10px 12px;
-  border: 1px solid rgba(20, 20, 19, 0.15);
+  gap: 5px;
+  width: 166px;
+  padding: 9px 10px;
+  border: 1px solid rgba(20, 20, 19, 0.2);
   border-radius: 8px;
-  background: rgba(var(--surface-rgb), 0.97);
-  box-shadow: var(--shadow);
+  background: rgba(255, 254, 250, 0.98);
+  box-shadow: 0 14px 34px rgba(20, 20, 19, 0.16);
   color: var(--ink);
   font-size: 11px;
   line-height: 1.25;
@@ -2414,7 +2421,6 @@ body.sidebar-collapsed .sidebar-toggle::before {
 }
 
 .chart-tooltip-head span,
-.chart-tooltip-title,
 .chart-tooltip-row span {
   overflow: hidden;
   color: var(--muted);
@@ -2422,16 +2428,37 @@ body.sidebar-collapsed .sidebar-toggle::before {
   white-space: nowrap;
 }
 
+.chart-tooltip-head b {
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-tooltip-main {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 19px;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.chart-tooltip-main small {
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 700;
+}
+
 .chart-tooltip-head strong,
 .chart-tooltip-row b {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-
-.chart-tooltip-title {
-  color: var(--ink-soft);
-  font-weight: 750;
 }
 
 .chart-legend {

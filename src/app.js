@@ -744,23 +744,24 @@ function chartMoneyText(value) {
 
 function chartPointTooltip(point, points, index, seriesLabel) {
   const dayReturn = chartPointDayReturn(points, index);
+  const dayReturnClass = dayReturn === null ? "tone-neutral" : toneClassByValue(dayReturn);
   const rows = [
-    ["累计收益", pctText(point.value)],
-    ["当日收益", dayReturn === null ? "--" : pctText(dayReturn)],
-    ["净值", point.nav === null ? "--" : valueText(point.nav, 4)],
-    ["总资产", chartMoneyText(point.totalValue)],
-    ["现金", chartMoneyText(point.cash)],
-    ["持仓市值", chartMoneyText(point.positionsMarketValue)],
+    ["当日", dayReturn === null ? "--" : pctText(dayReturn), dayReturnClass],
+    ["净值", point.nav === null ? "--" : valueText(point.nav, 4), ""],
+    ["总资产", chartMoneyText(point.totalValue), ""],
+    ["现金", chartMoneyText(point.cash), ""],
+    ["持仓", chartMoneyText(point.positionsMarketValue), ""],
   ];
   return `
     <g class="chart-point-hit" tabindex="0" role="listitem" aria-label="${escapeHtml(point.date || `第 ${index + 1} 点`)} ${escapeHtml(seriesLabel)}累计收益 ${escapeHtml(pctText(point.value))}">
-      <circle class="chart-point-target" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="9"></circle>
-      <circle class="chart-point-dot" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="2.8"></circle>
-      <foreignObject class="chart-tooltip-fo" x="${point.tooltipX.toFixed(1)}" y="${point.tooltipY.toFixed(1)}" width="224" height="174">
+      <line class="chart-hover-line" x1="${point.x.toFixed(1)}" x2="${point.x.toFixed(1)}" y1="${point.chartTop.toFixed(1)}" y2="${point.chartBottom.toFixed(1)}"></line>
+      <rect class="chart-point-target" x="${point.hitX.toFixed(1)}" y="${point.chartTop.toFixed(1)}" width="${point.hitWidth.toFixed(1)}" height="${(point.chartBottom - point.chartTop).toFixed(1)}" rx="0"></rect>
+      <circle class="chart-point-dot" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="3.4"></circle>
+      <foreignObject class="chart-tooltip-fo" x="${point.tooltipX.toFixed(1)}" y="${point.tooltipY.toFixed(1)}" width="190" height="146">
         <div class="chart-tooltip" xmlns="http://www.w3.org/1999/xhtml">
-          <div class="chart-tooltip-head"><span>${escapeHtml(point.date || `第 ${index + 1} 点`)}</span><strong class="${toneClassByValue(point.value)}">${escapeHtml(pctText(point.value))}</strong></div>
-          <div class="chart-tooltip-title">${escapeHtml(seriesLabel)}</div>
-          ${rows.map(([label, value]) => `<div class="chart-tooltip-row"><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join("")}
+          <div class="chart-tooltip-head"><span>${escapeHtml(point.date || `第 ${index + 1} 点`)}</span><b>${escapeHtml(seriesLabel)}</b></div>
+          <div class="chart-tooltip-main ${toneClassByValue(point.value)}">${escapeHtml(pctText(point.value))}<small>累计</small></div>
+          ${rows.map(([label, value, className]) => `<div class="chart-tooltip-row"><span>${escapeHtml(label)}</span><b class="${escapeHtml(className || "")}">${escapeHtml(value)}</b></div>`).join("")}
         </div>
       </foreignObject>
     </g>
@@ -792,8 +793,8 @@ function equityChart(series, benchmark = [], options = {}) {
   const benchmarkPoints = Array.isArray(benchmark) ? benchmark.map(chartPoint).filter((point) => Number.isFinite(point.value)) : [];
   const activeBenchmark = benchmarkPoints.length > 1 ? benchmarkPoints : [];
   const width = 1040;
-  const height = 390;
-  const pad = { top: 34, right: 92, bottom: 58, left: 72 };
+  const height = 340;
+  const pad = { top: 28, right: 78, bottom: 50, left: 70 };
   const allPoints = [...points, ...activeBenchmark];
   const values = allPoints.map((point) => point.value);
   const { min, max, ticks } = niceDomain(values);
@@ -812,13 +813,17 @@ function equityChart(series, benchmark = [], options = {}) {
     const y = pad.top + (1 - (point.value - min) / (max - min || 1)) * (height - pad.top - pad.bottom);
     return [x, y];
   };
-  const tooltipWidth = 224;
-  const tooltipHeight = 174;
+  const tooltipWidth = 190;
+  const tooltipHeight = 146;
   const pointPositions = points.map((point, index) => {
     const [x, y] = toPoint(point, index, points.length);
-    const tooltipX = Math.min(Math.max(pad.left, x + 12), width - pad.right - tooltipWidth);
+    const previousX = index > 0 ? toPoint(points[index - 1], index - 1, points.length)[0] : pad.left;
+    const nextX = index < points.length - 1 ? toPoint(points[index + 1], index + 1, points.length)[0] : width - pad.right;
+    const hitX = index === 0 ? pad.left : (previousX + x) / 2;
+    const hitRight = index === points.length - 1 ? width - pad.right : (x + nextX) / 2;
+    const tooltipX = Math.min(Math.max(pad.left + 4, x + 14), width - pad.right - tooltipWidth);
     const tooltipY = Math.min(Math.max(pad.top, y - tooltipHeight - 10), height - pad.bottom - tooltipHeight);
-    return { ...point, x, y, tooltipX, tooltipY };
+    return { ...point, x, y, hitX, hitWidth: Math.max(3, hitRight - hitX), tooltipX, tooltipY, chartTop: pad.top, chartBottom: height - pad.bottom };
   });
   const path = (items) => items.map((point, index) => {
     const [x, y] = toPoint(point, index, items.length);
@@ -828,16 +833,11 @@ function equityChart(series, benchmark = [], options = {}) {
   const firstPoint = points[0];
   const lastBenchmarkPoint = activeBenchmark[activeBenchmark.length - 1];
   const lastSeriesPosition = toPoint(lastPoint, points.length - 1, points.length);
-  const endLabelOnRight = lastSeriesPosition[0] > width - pad.right - 140;
-  const endLabelX = endLabelOnRight ? lastSeriesPosition[0] - 10 : lastSeriesPosition[0] + 10;
-  const endLabelAnchor = endLabelOnRight ? "end" : "start";
   const area = `${path(points)} L${lastSeriesPosition[0].toFixed(1)} ${height - pad.bottom} L${pad.left} ${height - pad.bottom} Z`;
   const zeroY = toPoint({ value: 0, time: timeMode ? minTime : null }, 0, points.length)[1];
   const seriesLabel = options.seriesLabel || "策略";
   const benchmarkLabel = options.benchmarkLabel || "基准";
-  const periodLabel = timeMode
-    ? `${formatAxisDate(minTime, spanTime)} - ${formatAxisDate(maxTime, spanTime)}`
-    : `${intText(points.length)} 点`;
+  const periodLabel = firstPoint.date && lastPoint.date ? `${firstPoint.date} - ${lastPoint.date}` : `${intText(points.length)} 点`;
   const yRangeLabel = `${pctText(min, 1)} 至 ${pctText(max, 1)}`;
 
   return `
@@ -849,7 +849,7 @@ function equityChart(series, benchmark = [], options = {}) {
         <div><span>纵轴</span><strong>${escapeHtml(yRangeLabel)}</strong><small>收益率区间</small></div>
       </div>
       <svg class="equity-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="历史收益曲线">
-        <defs><linearGradient id="equityFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="rgba(140,90,43,.24)"/><stop offset="100%" stop-color="rgba(140,90,43,0)"/></linearGradient></defs>
+        <defs><linearGradient id="equityFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="rgba(140,90,43,.14)"/><stop offset="100%" stop-color="rgba(140,90,43,0)"/></linearGradient></defs>
         <line class="axis-line" x1="${pad.left}" x2="${pad.left}" y1="${pad.top}" y2="${height - pad.bottom}"></line>
         <line class="axis-line" x1="${pad.left}" x2="${width - pad.right}" y1="${height - pad.bottom}" y2="${height - pad.bottom}"></line>
         ${ticks.map((tick) => {
@@ -871,8 +871,7 @@ function equityChart(series, benchmark = [], options = {}) {
         <g class="chart-points" role="list" aria-label="${escapeHtml(seriesLabel)}每日收益点">
           ${pointPositions.map((point, index) => chartPointTooltip(point, pointPositions, index, seriesLabel)).join("")}
         </g>
-        <circle class="chart-last-dot" cx="${lastSeriesPosition[0].toFixed(1)}" cy="${lastSeriesPosition[1].toFixed(1)}" r="4.2"></circle>
-        <text class="series-end-label" x="${endLabelX.toFixed(1)}" y="${(lastSeriesPosition[1] + 4).toFixed(1)}" text-anchor="${endLabelAnchor}">${escapeHtml(seriesLabel)} ${pctText(lastPoint.value, 1)}</text>
+        <circle class="chart-last-dot" cx="${lastSeriesPosition[0].toFixed(1)}" cy="${lastSeriesPosition[1].toFixed(1)}" r="3.8"></circle>
       </svg>
       <div class="chart-legend">
         <span><i class="legend-swatch strategy"></i>${escapeHtml(seriesLabel)}</span>
