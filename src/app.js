@@ -1585,20 +1585,25 @@ function renderPerformance(payload) {
   const navSource = data.nav_source || {};
   const benchmarkStatus = data.benchmark_status || {};
   const reconciliation = data.reconciliation || {};
+  const dataQuality = data.data_quality || {};
   const lastEquityPoint = equity[equity.length - 1] || {};
   const firstEquityPoint = equity[0] || {};
   const lastBenchmarkPoint = benchmark[benchmark.length - 1] || {};
   const selectedStrategyLabel = data.strategy_label || currentStrategyLabel(strategies, data.strategy);
+  const frequencyLabel = dataQuality.frequency_label || navSource.frequency_label || "频率未知";
+  const syntheticCurve = Boolean(dataQuality.synthetic || navSource.synthetic);
   const sourceCards = [
     metricCard("累计收益", pctText(lastEquityPoint.return_pct), `${escapeHtml(firstEquityPoint.date || "--")} 起`, toneByValue(lastEquityPoint.return_pct)),
     metricCard("年化收益", pctText(metricsData.annual_return_pct), "Annualized", toneByValue(metricsData.annual_return_pct)),
     metricCard("最大回撤", pctText(metricsData.max_drawdown_pct), "Max drawdown", toneByValue(metricsData.max_drawdown_pct)),
     metricCard("夏普比率", valueText(metricsData.sharpe, 2), "Sharpe", toneByValue(metricsData.sharpe)),
+    metricCard("曲线频率", frequencyLabel, `${intText(dataQuality.point_count ?? navSource.point_count ?? equity.length)} 点${syntheticCurve ? " · 代理" : ""}`, syntheticCurve ? "warning" : "positive"),
     metricCard("基准收益", benchmark.length ? pctText(lastBenchmarkPoint.return_pct) : "--", data.benchmark || "未选择基准", toneByValue(lastBenchmarkPoint.return_pct)),
   ];
   const statusItems = [
     ["策略", selectedStrategyLabel],
     ["来源", navSource.source || payload.meta?.source || "--"],
+    ["频率", `${frequencyLabel}${dataQuality.average_gap_days ? ` / 间隔 ${valueText(dataQuality.average_gap_days, 1)} 天` : ""}`],
     ["点数", `${intText(navSource.point_count ?? equity.length)} 点`],
     ["最后上报", formatDateTime(navSource.last_seen || payload.meta?.last_seen)],
     ["延迟", secondsText(navSource.stale_seconds ?? payload.meta?.stale_seconds)],
@@ -1639,9 +1644,10 @@ function renderPerformance(payload) {
         title: "历史收益曲线",
         kicker: "Historical Performance",
         span: "span-12 performance-chart-panel",
-        tools: `${pill(`${intText(equity.length)} 点`, "blue")}${benchmark.length ? pill(`基准 ${intText(benchmark.length)} 点`, "neutral") : ""}`,
+        tools: `${pill(frequencyLabel, syntheticCurve ? "warning" : "positive")}${pill(`${intText(equity.length)} 点`, "blue")}${benchmark.length ? pill(`基准 ${intText(benchmark.length)} 点`, "neutral") : ""}`,
         body: equityChart(equity, benchmark, { seriesLabel: selectedStrategyLabel, benchmarkLabel: data.benchmark || data.benchmark_id || "基准" }),
       })}
+      ${syntheticCurve ? `<div class="inline-note performance-frequency-note">${tag("日频代理", "warning")} ${escapeHtml(dataQuality.message || "当前曲线由低频锚点插值生成，真实交易日波动需由 JoinQuant 上报每日净值。")}</div>` : ""}
       <section class="metric-strip performance-metrics-panel">${metrics.map(([label, value, delta, tone]) => `<article class="perf-metric"><span>${label}</span><strong class="tone-${tone}">${value}</strong><small>${delta}</small></article>`).join("")}</section>
       <div class="performance-status-strip" aria-label="数据链路状态">
         ${statusItems.map(([label, value]) => `<span><b>${escapeHtml(label)}</b>${escapeHtml(value)}</span>`).join("")}
@@ -1653,6 +1659,7 @@ function renderPerformance(payload) {
       <div class="source-status-grid compact-source-status">
         <div><span>策略快照</span><strong>${escapeHtml(navSource.source || payload.meta?.source || "--")}</strong><small>${escapeHtml(navSource.snapshot_path || "--")}</small></div>
         <div><span>净值流水</span><strong>${intText(navSource.point_count)} 点</strong><small>${escapeHtml(navSource.storage_path || "--")}</small></div>
+        <div><span>曲线频率</span><strong>${escapeHtml(frequencyLabel)}</strong><small>${escapeHtml(dataQuality.message || "--")}</small></div>
         <div><span>基准来源</span><strong>${escapeHtml(benchmarkStatus.source_name || benchmarkStatus.source || "--")}</strong><small>${escapeHtml(benchmarkStatus.trade_date || "--")} · ${secondsText(benchmarkStatus.stale_seconds)}</small></div>
         <div><span>当前请求</span><strong>${escapeHtml(data.strategy || "--")}</strong><small>${escapeHtml(data.benchmark_id || "无基准")}</small></div>
       </div>

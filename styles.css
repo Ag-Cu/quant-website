@@ -2542,6 +2542,15 @@ body[data-page="performance"] .side-status small {
   font-weight: 750;
 }
 
+.performance-frequency-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(176, 109, 24, 0.2);
+  border-radius: 8px;
+  background: rgba(176, 109, 24, 0.07);
+}
+
 .performance-technical-details {
   margin-top: 10px;
   border: 1px solid var(--line);

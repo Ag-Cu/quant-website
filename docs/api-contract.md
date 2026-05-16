@@ -308,6 +308,34 @@ GET /api/v1/performance?strategy=personal-portfolio&benchmark=none
 - `data/backend/performance/net-values.json` 中已有的静态/回测曲线：作为历史种子曲线展示。
 - `personal-portfolio`: 个人持仓曲线。未接入券商流水前，它以手工持仓市值和盈亏金额生成“成本基准到当前市值”的曲线；接入券商后可替换为真实账户净值流水。
 
+为了看到每个交易日的波动，JoinQuant 快照应优先上报日频净值序列。统一快照入口支持以下任一字段名：
+
+- `nav`
+- `net_values`
+- `equity_curve`
+- `performance_curve`
+- `daily_nav`
+- `daily_net_values`
+
+示例：
+
+```json
+{
+  "strategy_id": "new-alpha",
+  "strategy_name": "新策略 Alpha",
+  "trade_date": "2026-05-16",
+  "as_of": "2026-05-16T15:00:00+08:00",
+  "portfolio": {"total_value": 103500, "cash": 20000},
+  "nav": [
+    {"date": "2026-05-14", "net_value": 1.0000},
+    {"date": "2026-05-15", "net_value": 1.0120},
+    {"date": "2026-05-16", "net_value": 1.0350}
+  ]
+}
+```
+
+如果策略只上报账户总资产快照，收益曲线只能按上报快照频率变化。静态/月度种子曲线会在页面中标记为“日频代理”，用于避免粗折线，但不能替代真实交易日净值。
+
 推荐字段：
 
 - `strategy`: 策略 id。
@@ -320,6 +348,8 @@ GET /api/v1/performance?strategy=personal-portfolio&benchmark=none
 - `monthly_returns[]`: 月度收益热力图。
 - `annotations[]`: 图表备注。
 - `nav_source.source`: `joinquant`、`static` 或 `manual`。
+- `data_quality.frequency`: `daily`、`daily-proxy`、`monthly`、`snapshot` 等。
+- `data_quality.synthetic`: 是否为低频锚点插值得到的代理曲线。
 
 `equity_curve[]` / `benchmark_curve[]` 字段：
 

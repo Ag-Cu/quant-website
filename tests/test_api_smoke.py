@@ -481,6 +481,30 @@ def post_performance_snapshot(client: TestClient, run_id: str, as_of: str, total
     assert payload["data"]["performance_snapshot"]["total_value"] == total_value
 
 
+def post_performance_nav_snapshot(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/joinquant/signals",
+        headers={"X-Webhook-Token": "test-joinquant-token"},
+        json={
+            "strategy_id": "jq-new-alpha",
+            "strategy_name": "新策略 Alpha",
+            "trade_date": "2026-05-16",
+            "as_of": "2026-05-16T15:00:00+08:00",
+            "run_id": "jq-new-alpha-daily-nav",
+            "portfolio": {"total_value": 103500, "cash": 20000, "available_cash": 20000},
+            "nav": [
+                {"date": "2026-05-14", "net_value": 1.0},
+                {"date": "2026-05-15", "net_value": 1.012},
+                {"date": "2026-05-16", "net_value": 1.035},
+            ],
+            "holdings": [
+                {"symbol": "300476.XSHE", "name": "胜宏科技", "quantity": 1000, "last_price": 41.2, "market_value": 41200}
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+
+
 def test_joinquant_webhook_persists_performance_nav_and_is_idempotent(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
@@ -513,6 +537,49 @@ def test_joinquant_webhook_persists_performance_nav_and_is_idempotent(
     assert curve[-1]["trace"]["raw_webhook_log"].endswith("joinquant-signals.jsonl")
     ledger_rows = [json.loads(line) for line in paths["ledger"].read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len([row for row in ledger_rows if row["snapshot_id"].endswith("jq-new-alpha-run-2|2026-05-15T10:30:00+08:00")]) == 1
+
+
+def test_joinquant_webhook_accepts_daily_nav_curve(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    client: TestClient,
+) -> None:
+    paths = patch_joinquant_paths(monkeypatch, tmp_path)
+    write_live_benchmark_cache(paths["benchmarks"])
+
+    post_performance_nav_snapshot(client)
+
+    response = client.get("/api/v1/performance?strategy=jq-new-alpha&benchmark=none&from=2026-05-14&to=2026-05-16")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    curve = payload["data"]["equity_curve"]
+    assert len(curve) == 3
+    assert [row["date"] for row in curve] == ["2026-05-14", "2026-05-15", "2026-05-16"]
+    assert curve[-1]["return_pct"] == 3.5
+    assert payload["data"]["data_quality"]["frequency"] == "daily"
+    assert payload["data"]["data_quality"]["synthetic"] is False
+    assert payload["data"]["nav_source"]["frequency_label"] == "日频"
+
+
+def test_static_monthly_nav_is_expanded_to_daily_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    client: TestClient,
+) -> None:
+    paths = patch_joinquant_paths(monkeypatch, tmp_path)
+    write_live_benchmark_cache(paths["benchmarks"])
+    write_static_performance_nav(paths["performance_nav"])
+
+    response = client.get("/api/v1/performance?strategy=momentum&benchmark=none&from=2026-05-14&to=2026-05-15")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    curve = payload["data"]["equity_curve"]
+    assert len(curve) == 2
+    assert payload["data"]["data_quality"]["frequency"] == "daily-proxy"
+    assert payload["data"]["data_quality"]["synthetic"] is True
+    assert payload["data"]["nav_source"]["frequency_label"] == "日频代理"
 
 
 def test_performance_strategy_switch_does_not_fallback_to_static_seed(

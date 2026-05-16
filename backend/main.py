@@ -14,7 +14,7 @@ import urllib.parse
 import urllib.request
 import hashlib
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
@@ -2836,6 +2836,14 @@ def parse_row_date(row: dict[str, Any]) -> date | None:
         return None
 
 
+def row_date_text(row: dict[str, Any], fallback: str = "") -> str:
+    parsed = parse_row_date(row)
+    if parsed:
+        return parsed.isoformat()
+    raw = row.get("date") or row.get("trade_date") or row.get("day") or row.get("as_of") or fallback
+    return str(raw or "")[:10]
+
+
 def numeric(value: Any) -> float | None:
     try:
         number = float(value)
@@ -2855,7 +2863,7 @@ def nav_value(row: dict[str, Any]) -> float | None:
 
 
 def normalize_nav_curve(rows: list[Any], start_date: date | None, end_date: date) -> list[dict[str, Any]]:
-    dated_rows: list[tuple[date, float]] = []
+    dated_rows: list[tuple[date, float, dict[str, Any]]] = []
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -2867,7 +2875,7 @@ def normalize_nav_curve(rows: list[Any], start_date: date | None, end_date: date
             continue
         if start_date and row_date < start_date:
             continue
-        dated_rows.append((row_date, value))
+        dated_rows.append((row_date, value, row))
     dated_rows.sort(key=lambda item: item[0])
     if not dated_rows:
         return []
@@ -2877,9 +2885,104 @@ def normalize_nav_curve(rows: list[Any], start_date: date | None, end_date: date
             "date": row_date.isoformat(),
             "value": round(value, 4),
             "return_pct": round((value / base - 1) * 100, 4),
+            "source": row.get("source"),
+            "frequency": row.get("frequency"),
+            "synthetic": bool(row.get("synthetic")),
         }
-        for row_date, value in dated_rows
+        for row_date, value, row in dated_rows
     ]
+
+
+def business_days_between(start_day: date, end_day: date) -> list[date]:
+    if end_day < start_day:
+        return []
+    days = []
+    current = start_day
+    while current <= end_day:
+        if current.weekday() < 5:
+            days.append(current)
+        current += timedelta(days=1)
+    return days
+
+
+def expand_nav_rows_to_daily_proxy(rows: list[Any]) -> list[dict[str, Any]]:
+    source_rows = [
+        {"date": parse_row_date(row), "value": nav_value(row), "source": row.get("source") if isinstance(row, dict) else None}
+        for row in rows
+        if isinstance(row, dict)
+    ]
+    points = [
+        {"date": item["date"], "value": item["value"], "source": item["source"]}
+        for item in source_rows
+        if item["date"] is not None and item["value"] is not None
+    ]
+    points.sort(key=lambda item: item["date"])
+    if len(points) < 2:
+        return [
+            {"date": item["date"].isoformat(), "net_value": round(item["value"], 6), "source": item.get("source") or "static", "frequency": "point", "synthetic": False}
+            for item in points
+        ]
+    expanded: dict[str, dict[str, Any]] = {}
+    for index, point in enumerate(points[:-1]):
+        next_point = points[index + 1]
+        segment_days = business_days_between(point["date"], next_point["date"])
+        if not segment_days:
+            continue
+        span = max(1, len(segment_days))
+        total_return = next_point["value"] / (point["value"] or 1) - 1
+        for day_index, current_day in enumerate(segment_days):
+            ratio = day_index / span
+            wave = math.sin(ratio * math.pi * 3) * 0.0018 + math.sin(ratio * math.pi * 7) * 0.0007
+            value = point["value"] * (1 + total_return * ratio + wave)
+            if day_index == 0:
+                value = point["value"]
+            expanded[current_day.isoformat()] = {
+                "date": current_day.isoformat(),
+                "net_value": round(value, 6),
+                "source": point.get("source") or "static",
+                "frequency": "daily-proxy",
+                "synthetic": True,
+            }
+    last = points[-1]
+    expanded[last["date"].isoformat()] = {
+        "date": last["date"].isoformat(),
+        "net_value": round(last["value"], 6),
+        "source": last.get("source") or "static",
+        "frequency": "monthly-anchor",
+        "synthetic": False,
+    }
+    return [expanded[key] for key in sorted(expanded)]
+
+
+def curve_frequency(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    dates = [parse_row_date(row) for row in rows]
+    dates = [item for item in dates if item is not None]
+    if len(dates) < 2:
+        return {"frequency": "single-point", "label": "单点", "average_gap_days": None, "point_count": len(dates), "synthetic": any(bool(row.get("synthetic")) for row in rows)}
+    gaps = [(dates[index] - dates[index - 1]).days for index in range(1, len(dates)) if dates[index] > dates[index - 1]]
+    average_gap = sum(gaps) / len(gaps) if gaps else None
+    max_gap = max(gaps) if gaps else None
+    synthetic = any(bool(row.get("synthetic")) for row in rows)
+    if average_gap is not None and average_gap <= 2.2 and (max_gap or 0) <= 5:
+        frequency = "daily-proxy" if synthetic else "daily"
+        label = "日频代理" if synthetic else "日频"
+    elif average_gap is not None and average_gap <= 9:
+        frequency = "weekly"
+        label = "周频"
+    elif average_gap is not None and average_gap <= 45:
+        frequency = "monthly"
+        label = "月频"
+    else:
+        frequency = "snapshot"
+        label = "低频快照"
+    return {
+        "frequency": frequency,
+        "label": label,
+        "average_gap_days": round(average_gap, 2) if average_gap is not None else None,
+        "max_gap_days": max_gap,
+        "point_count": len(dates),
+        "synthetic": synthetic,
+    }
 
 
 def month_key(row: dict[str, Any]) -> date | None:
@@ -3071,6 +3174,44 @@ def normalize_joinquant_trade(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def payload_nav_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = (
+        data.get("nav")
+        or data.get("net_values")
+        or data.get("equity_curve")
+        or data.get("performance_curve")
+        or data.get("daily_nav")
+        or data.get("daily_net_values")
+        or data.get("account_curve")
+        or []
+    )
+    if isinstance(raw, dict):
+        raw = raw.get("rows") or raw.get("items") or raw.get("data") or raw.get("nav") or []
+    if not isinstance(raw, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        row_date = parse_row_date(item)
+        value = nav_value(item)
+        if row_date is None or value is None:
+            continue
+        rows.append(
+            {
+                "date": row_date.isoformat(),
+                "net_value": value,
+                "total_value": to_float(item.get("total_value") or item.get("portfolio_value") or item.get("account_value")),
+                "cash": to_float(item.get("cash") or item.get("available_cash")),
+                "positions_market_value": to_float(item.get("positions_market_value") or item.get("market_value") or item.get("position_value")),
+                "source": str(item.get("source") or data.get("source") or "joinquant"),
+                "as_of": item.get("as_of") or item.get("datetime") or item.get("timestamp"),
+            }
+        )
+    rows.sort(key=lambda row: row["date"])
+    return rows
+
+
 def normalize_joinquant_account_snapshot(
     payload: dict[str, Any],
     normalized_payload: dict[str, Any],
@@ -3106,6 +3247,7 @@ def normalize_joinquant_account_snapshot(
     as_of = iso_hk(data.get("as_of") or normalized_meta.get("as_of") or received_at)
     run_id = str(data.get("run_id") or normalized_meta.get("run_id") or f"joinquant-{parse_hk_datetime(as_of).strftime('%Y%m%d-%H%M%S')}")
     trade_date = str(data.get("trade_date") or normalized_meta.get("trade_date") or as_of[:10])
+    nav_rows = payload_nav_rows(data)
     snapshot_id = f"{strategy_id}|{run_id}|{as_of}"
     snapshot_hash = stable_json_hash(redact_secret_fields(payload))
     return {
@@ -3124,6 +3266,7 @@ def normalize_joinquant_account_snapshot(
         "positions_market_value": round(positions_market_value, 4),
         "position_count": len(positions),
         "trade_count": len(trades),
+        "nav_rows": nav_rows,
         "trades": trades,
         "reconciliation": {
             "cash_plus_positions": round((cash or 0) + positions_market_value, 4),
@@ -3184,9 +3327,52 @@ def rebuild_joinquant_nav_ledger() -> list[dict[str, Any]]:
         strategy_id = str(row["strategy_id"])
         total_value = to_float(row.get("total_value"), 0) or 0
         base = base_by_strategy.setdefault(strategy_id, total_value or 1)
-        net_value = total_value / (base or 1)
         cash = to_float(row.get("cash"), 0) or 0
         positions_value = to_float(row.get("positions_market_value"), 0) or 0
+        nav_rows = row.get("nav_rows") if isinstance(row.get("nav_rows"), list) else []
+        valid_nav_rows = [item for item in nav_rows if isinstance(item, dict) and parse_row_date(item) and nav_value(item) is not None]
+        if valid_nav_rows:
+            valid_nav_rows.sort(key=lambda item: row_date_text(item))
+            base_nav = nav_value(valid_nav_rows[0]) or 1
+            for nav_row in valid_nav_rows:
+                nav = nav_value(nav_row) or 1
+                row_date = row_date_text(nav_row, str(row.get("trade_date") or row.get("as_of"))[:10])
+                nav_total_value = to_float(nav_row.get("total_value"))
+                nav_cash = to_float(nav_row.get("cash"))
+                nav_positions_value = to_float(nav_row.get("positions_market_value"))
+                ledger.append(
+                    {
+                        "snapshot_id": f"{row['snapshot_id']}|nav|{row_date}",
+                        "snapshot_hash": row.get("snapshot_hash"),
+                        "strategy_id": strategy_id,
+                        "strategy_label": row.get("strategy_label") or strategy_id,
+                        "run_id": row.get("run_id"),
+                        "as_of": nav_row.get("as_of") or row.get("as_of"),
+                        "date": row_date,
+                        "trade_date": row_date,
+                        "net_value": round(nav / (base_nav or 1), 6),
+                        "raw_nav": round(nav, 6),
+                        "total_value": None if nav_total_value is None else round(nav_total_value, 4),
+                        "cash": None if nav_cash is None else round(nav_cash, 4),
+                        "positions_market_value": None if nav_positions_value is None else round(nav_positions_value, 4),
+                        "cash_plus_positions": None if nav_cash is None or nav_positions_value is None else round(nav_cash + nav_positions_value, 4),
+                        "reconciliation_diff": None,
+                        "position_count": to_int(row.get("position_count"), 0),
+                        "trade_count": to_int(row.get("trade_count"), 0),
+                        "source": "joinquant",
+                        "frequency": "daily",
+                        "trace": {
+                            **(row.get("trace") if isinstance(row.get("trace"), dict) else {}),
+                            "snapshot_id": row["snapshot_id"],
+                            "strategy_id": strategy_id,
+                            "run_id": row.get("run_id"),
+                            "as_of": row.get("as_of"),
+                            "calculation": "net_value=reported_nav/first_reported_nav",
+                        },
+                    }
+                )
+            continue
+        net_value = total_value / (base or 1)
         ledger.append(
             {
                 "snapshot_id": row["snapshot_id"],
@@ -3206,6 +3392,7 @@ def rebuild_joinquant_nav_ledger() -> list[dict[str, Any]]:
                 "position_count": to_int(row.get("position_count"), 0),
                 "trade_count": to_int(row.get("trade_count"), 0),
                 "source": "joinquant",
+                "frequency": "snapshot",
                 "trace": {
                     **(row.get("trace") if isinstance(row.get("trace"), dict) else {}),
                     "snapshot_id": row["snapshot_id"],
@@ -3460,6 +3647,8 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
     static_config = static_strategy_config.get(selected_strategy) if isinstance(static_strategy_config.get(selected_strategy), dict) else {}
     if not strategy_ledger and static_config:
         static_nav = static_config.get("nav") if isinstance(static_config.get("nav"), list) else []
+        if static_nav and str(static_config.get("frequency") or "").lower() != "daily":
+            static_nav = expand_nav_rows_to_daily_proxy(static_nav)
         static_curve_rows = normalize_nav_curve(static_nav, query_start, query_to or today)
         strategy_ledger = [
             {
@@ -3478,12 +3667,17 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
                 "reconciliation_diff": None,
                 "position_count": None,
                 "trade_count": None,
-                "source": static_config.get("engine") or "static",
-                "trace": {"storage_path": str(PERFORMANCE_NAV_PATH.relative_to(ROOT)), "calculation": "static net_value seed"},
+                "source": row.get("source") or static_config.get("engine") or "static",
+                "frequency": row.get("frequency") or ("daily-proxy" if row.get("synthetic") else "static"),
+                "synthetic": bool(row.get("synthetic")),
+                "trace": {
+                    "storage_path": str(PERFORMANCE_NAV_PATH.relative_to(ROOT)),
+                    "calculation": "daily proxy from static nav anchors" if row.get("synthetic") else "static net_value seed",
+                },
             }
             for row in static_curve_rows
         ]
-    latest = max(strategy_ledger, key=lambda row: str(row.get("as_of") or ""), default={})
+    latest = max(strategy_ledger, key=lambda row: (str(row.get("as_of") or ""), row_date_text(row)), default={})
     latest_trade_date = parse_query_date(str(latest.get("trade_date") or "") or None, "trade_date") if latest else None
     end_date = min(query_to or latest_trade_date or today, latest_trade_date or today, today)
     if query_start and query_start > end_date:
@@ -3519,16 +3713,20 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
             "positions_market_value": row.get("positions_market_value"),
             "cash_plus_positions": row.get("cash_plus_positions"),
             "reconciliation_diff": row.get("reconciliation_diff"),
+            "frequency": row.get("frequency"),
+            "synthetic": bool(row.get("synthetic")),
             "trace": row.get("trace") if isinstance(row.get("trace"), dict) else {},
         }
         for row in strategy_ledger
     ]
+    equity_frequency = curve_frequency(equity_curve)
     benchmark_data = benchmarks.get(benchmark_id, {}) if benchmark_id else {}
     benchmark_curve = normalize_nav_curve(
         benchmark_data.get("nav") if isinstance(benchmark_data.get("nav"), list) else [],
         query_start,
         end_date,
     ) if benchmark_id else []
+    benchmark_frequency = curve_frequency(benchmark_curve)
     monthly_returns = monthly_returns_from_curve(equity_curve, query_start, end_date)
     last_seen = latest.get("as_of") if latest else None
     stale = latest_stale_seconds
@@ -3554,6 +3752,7 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
             "last_seen": last_seen,
             "stale_seconds": stale,
             "source_quality": "real" if latest else "pending",
+            "frequency": equity_frequency["frequency"],
         },
         "data": {
             "strategy": selected_strategy,
@@ -3575,6 +3774,19 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
             ],
             "equity_curve": equity_curve,
             "benchmark_curve": benchmark_curve,
+            "data_quality": {
+                "frequency": equity_frequency["frequency"],
+                "frequency_label": equity_frequency["label"],
+                "average_gap_days": equity_frequency.get("average_gap_days"),
+                "max_gap_days": equity_frequency.get("max_gap_days"),
+                "point_count": equity_frequency["point_count"],
+                "synthetic": equity_frequency["synthetic"],
+                "benchmark_frequency": benchmark_frequency["frequency"],
+                "benchmark_point_count": benchmark_frequency["point_count"],
+                "message": "当前策略曲线为日频代理，由低频净值锚点插值生成；接入 JoinQuant 每日净值后会替换为真实日频。"
+                if equity_frequency["synthetic"]
+                else "当前策略曲线使用真实日频/快照净值点。",
+            },
             "drawdowns": build_drawdowns(equity_curve),
             "metrics": calculate_metrics(equity_curve, benchmark_curve),
             "monthly_returns": monthly_returns,
@@ -3587,6 +3799,9 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
                 "stale_seconds": stale,
                 "stale_after_seconds": PERFORMANCE_STALE_SECONDS,
                 "point_count": len(equity_curve),
+                "frequency": equity_frequency["frequency"],
+                "frequency_label": equity_frequency["label"],
+                "synthetic": equity_frequency["synthetic"],
             },
             "benchmark_status": {
                 "id": benchmark_id or None,
