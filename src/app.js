@@ -707,14 +707,64 @@ function chartPoint(item, index) {
   const value = typeof item === "object" && item !== null
     ? Number(item.return_pct ?? item.value ?? item.net_value ?? item.equity)
     : Number(item);
+  const nav = typeof item === "object" && item !== null
+    ? Number(item.value ?? item.net_value ?? item.nav ?? item.equity)
+    : NaN;
   const dateText = typeof item === "object" && item !== null ? item.date || item.trade_date || item.as_of || "" : "";
   const timestamp = dateText ? new Date(dateText).getTime() : NaN;
   return {
     value,
+    nav: Number.isFinite(nav) ? nav : null,
     date: dateText ? String(dateText).slice(0, 10) : "",
     time: Number.isNaN(timestamp) ? null : timestamp,
     index,
+    dayReturn: typeof item === "object" && item !== null ? Number(item.day_return_pct ?? item.daily_return_pct ?? item.period_return_pct) : NaN,
+    totalValue: typeof item === "object" && item !== null ? Number(item.total_value) : NaN,
+    cash: typeof item === "object" && item !== null ? Number(item.cash) : NaN,
+    positionsMarketValue: typeof item === "object" && item !== null ? Number(item.positions_market_value) : NaN,
+    source: typeof item === "object" && item !== null ? String(item.source || "") : "",
+    frequency: typeof item === "object" && item !== null ? String(item.frequency || "") : "",
   };
+}
+
+function chartPointDayReturn(points, index) {
+  const point = points[index];
+  if (!point) return null;
+  if (Number.isFinite(point.dayReturn)) return point.dayReturn;
+  const previous = points[index - 1];
+  if (!previous) return null;
+  if (Number.isFinite(point.nav) && Number.isFinite(previous.nav) && previous.nav !== 0) return (point.nav / previous.nav - 1) * 100;
+  if (Number.isFinite(point.value) && Number.isFinite(previous.value)) return point.value - previous.value;
+  return null;
+}
+
+function chartMoneyText(value) {
+  return Number.isFinite(value) ? `¥${intText(value)}` : "--";
+}
+
+function chartPointTooltip(point, points, index, seriesLabel) {
+  const dayReturn = chartPointDayReturn(points, index);
+  const rows = [
+    ["累计收益", pctText(point.value)],
+    ["当日收益", dayReturn === null ? "--" : pctText(dayReturn)],
+    ["净值", point.nav === null ? "--" : valueText(point.nav, 4)],
+    ["总资产", chartMoneyText(point.totalValue)],
+    ["现金", chartMoneyText(point.cash)],
+    ["持仓市值", chartMoneyText(point.positionsMarketValue)],
+  ];
+  return `
+    <g class="chart-point-hit" tabindex="0" role="listitem" aria-label="${escapeHtml(point.date || `第 ${index + 1} 点`)} ${escapeHtml(seriesLabel)}累计收益 ${escapeHtml(pctText(point.value))}">
+      <circle class="chart-point-target" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="9"></circle>
+      <circle class="chart-point-dot" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="2.8"></circle>
+      <foreignObject class="chart-tooltip-fo" x="${point.tooltipX.toFixed(1)}" y="${point.tooltipY.toFixed(1)}" width="224" height="174">
+        <div class="chart-tooltip" xmlns="http://www.w3.org/1999/xhtml">
+          <div class="chart-tooltip-head"><span>${escapeHtml(point.date || `第 ${index + 1} 点`)}</span><strong class="${toneClassByValue(point.value)}">${escapeHtml(pctText(point.value))}</strong></div>
+          <div class="chart-tooltip-title">${escapeHtml(seriesLabel)}</div>
+          ${rows.map(([label, value]) => `<div class="chart-tooltip-row"><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join("")}
+        </div>
+      </foreignObject>
+    </g>
+  `;
 }
 
 function niceDomain(values) {
@@ -762,6 +812,14 @@ function equityChart(series, benchmark = [], options = {}) {
     const y = pad.top + (1 - (point.value - min) / (max - min || 1)) * (height - pad.top - pad.bottom);
     return [x, y];
   };
+  const tooltipWidth = 224;
+  const tooltipHeight = 174;
+  const pointPositions = points.map((point, index) => {
+    const [x, y] = toPoint(point, index, points.length);
+    const tooltipX = Math.min(Math.max(pad.left, x + 12), width - pad.right - tooltipWidth);
+    const tooltipY = Math.min(Math.max(pad.top, y - tooltipHeight - 10), height - pad.bottom - tooltipHeight);
+    return { ...point, x, y, tooltipX, tooltipY };
+  });
   const path = (items) => items.map((point, index) => {
     const [x, y] = toPoint(point, index, items.length);
     return `${index ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`;
@@ -810,6 +868,9 @@ function equityChart(series, benchmark = [], options = {}) {
         <path class="equity-area" d="${area}"></path>
         <path class="equity-line" d="${path(points)}"></path>
         ${activeBenchmark.length ? `<path class="benchmark-line" d="${path(activeBenchmark)}"></path>` : ""}
+        <g class="chart-points" role="list" aria-label="${escapeHtml(seriesLabel)}每日收益点">
+          ${pointPositions.map((point, index) => chartPointTooltip(point, pointPositions, index, seriesLabel)).join("")}
+        </g>
         <circle class="chart-last-dot" cx="${lastSeriesPosition[0].toFixed(1)}" cy="${lastSeriesPosition[1].toFixed(1)}" r="4.2"></circle>
         <text class="series-end-label" x="${endLabelX.toFixed(1)}" y="${(lastSeriesPosition[1] + 4).toFixed(1)}" text-anchor="${endLabelAnchor}">${escapeHtml(seriesLabel)} ${pctText(lastPoint.value, 1)}</text>
       </svg>
