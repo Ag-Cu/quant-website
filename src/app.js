@@ -8,6 +8,7 @@ const PAGE_CONFIG = {
   picks: { endpoint: "/api/v1/strategies/picks", refreshMs: 300_000, render: renderPicks },
   holdings: { endpoint: "/api/v1/portfolio/holdings", refreshMs: 30_000, render: renderHoldings },
   performance: { endpoint: buildPerformanceEndpoint, refreshMs: 30_000, render: renderPerformance },
+  strategy: { endpoint: buildStrategyEndpoint, refreshMs: 300_000, render: renderStrategyHub },
   etf: { endpoint: "/api/v1/strategies/etf", refreshMs: 300_000, render: renderEtf },
   "small-cap": { endpoint: "/api/v1/strategies/small-cap", refreshMs: 300_000, render: renderSmallCap },
   breadth: { endpoint: "/api/v1/market/breadth", refreshMs: 60_000, render: renderBreadth },
@@ -38,6 +39,7 @@ const PAGE_META = {
   picks: ["Daily Picks", "今日选股"],
   holdings: ["Portfolio", "当前持仓"],
   performance: ["Performance", "历史收益"],
+  strategy: ["Quant Strategy", "量化策略"],
   etf: ["ETF Strategy", "ETF 策略"],
   "small-cap": ["Small Cap Strategy", "小盘股策略"],
   breadth: ["Market Breadth", "市场宽度"],
@@ -47,6 +49,7 @@ const PAGE_META = {
 
 const pageState = {
   picks: { strategy: null, date: null, latestDate: null },
+  strategy: { strategyId: new URLSearchParams(window.location.search).get("strategy_id") || "" },
 };
 
 const dom = {
@@ -98,6 +101,12 @@ function buildPerformanceEndpoint() {
   if (performanceState.to) params.set("to", performanceState.to);
   const query = params.toString();
   return `/api/v1/performance${query ? `?${query}` : ""}`;
+}
+
+function buildStrategyEndpoint() {
+  return pageState.strategy.strategyId
+    ? `/api/v1/quant/strategies/${encodeURIComponent(pageState.strategy.strategyId)}`
+    : "/api/v1/quant/strategies";
 }
 
 async function refreshPerformance() {
@@ -185,6 +194,16 @@ function actionStatusText(error) {
   return error?.message || "操作失败";
 }
 
+function apiErrorDetail(error) {
+  const detail = error?.message || "";
+  if (typeof detail === "string") return detail;
+  try {
+    return JSON.stringify(detail);
+  } catch (stringifyError) {
+    return "操作失败";
+  }
+}
+
 function setActionState(button, state, message = "") {
   if (!button) return;
   const idleText = button.dataset.idleText || button.textContent.trim();
@@ -217,8 +236,54 @@ async function postAction(button, path, body = {}, successMessage = "操作成�
   }
 }
 
+async function submitActionForm(form, path, body, successMessage = "操作成功") {
+  const statusNode = form.querySelector("[data-action-status]");
+  const button = form.querySelector("button[type='submit']");
+  if (button) {
+    button.disabled = true;
+    button.dataset.idleText = button.dataset.idleText || button.textContent.trim();
+    button.textContent = "提交中...";
+  }
+  if (statusNode) {
+    statusNode.textContent = "正在提交...";
+    statusNode.className = "action-status loading";
+  }
+  try {
+    const payload = await sendJson(path, { method: "POST", headers: actionHeaders(), body: JSON.stringify(body) });
+    if (statusNode) {
+      statusNode.textContent = payload.data?.message || successMessage;
+      statusNode.className = "action-status success";
+    }
+    return payload;
+  } catch (error) {
+    if (statusNode) {
+      statusNode.textContent = actionStatusText(error);
+      statusNode.className = `action-status ${error?.status === 403 ? "forbidden" : "error"}`;
+    }
+    return null;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = button.dataset.idleText || "提交";
+    }
+  }
+}
+
 function readonlyNote(text = "只读展示") {
   return `<span class="readonly-note" title="该控件仅用于展示当前数据维度">${escapeHtml(text)}</span>`;
+}
+
+function queryParam(name) {
+  return new URLSearchParams(window.location.search).get(name) || "";
+}
+
+function updateUrlQuery(params) {
+  const url = new URL(window.location.href);
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) url.searchParams.set(key, value);
+    else url.searchParams.delete(key);
+  });
+  window.history.replaceState(null, "", url);
 }
 
 async function fetchPayload(config) {
@@ -378,6 +443,12 @@ function icon(name) {
     picks: '<path d="M4 5h16"/><path d="M4 12h10"/><path d="M4 19h7"/><path d="m15 18 2 2 4-5"/>',
     chevron: '<path d="m9 18 6-6-6-6"/>',
     refresh: '<path d="M21 12a9 9 0 0 1-15.3 6.4"/><path d="M3 12A9 9 0 0 1 18.3 5.6"/><path d="M18 2v4h4"/><path d="M6 22v-4H2"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4.2-4.2"/>',
+    close: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+    arrowLeft: '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+    arrowRight: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+    download: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
+    sector: '<path d="M4 6h7v7H4z"/><path d="M13 6h7v4h-7z"/><path d="M13 12h7v6h-7z"/><path d="M4 15h7v3H4z"/>',
   };
   return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.chart}</svg>`;
 }
@@ -387,10 +458,9 @@ function installShell() {
     ["overview", "index.html", "home", "市场总览"],
     ["watchlist", "watchlist.html", "star", "自选股"],
     ["picks", "picks.html", "picks", "今日选股"],
-    ["holdings", "holdings.html", "portfolio", "当前持仓"],
+    ["strategy", "strategy.html", "bot", "量化策略"],
+    ["holdings", "holdings.html", "portfolio", "持仓信息"],
     ["performance", "performance.html", "chart", "历史收益"],
-    ["etf", "etf.html", "bot", "ETF 策略"],
-    ["small-cap", "small-cap.html", "bot", "小盘策略"],
     ["breadth", "breadth.html", "chart", "市场宽度"],
     ["sentiment", "sentiment.html", "bell", "散户情绪"],
     ["macro", "macro.html", "settings", "宏观指标"],
@@ -571,10 +641,10 @@ function scoreBlock(score, label, detail, bars = [], color = "var(--accent)") {
 }
 
 function heatColor(value) {
-  if (Number(value) >= 75) return "rgba(0,200,150,0.18)";
-  if (Number(value) >= 60) return "rgba(0,212,255,0.14)";
-  if (Number(value) >= 45) return "rgba(255,181,71,0.15)";
-  return "rgba(255,77,106,0.16)";
+  if (Number(value) >= 75) return "rgba(40,121,90,0.16)";
+  if (Number(value) >= 60) return "rgba(140,90,43,0.12)";
+  if (Number(value) >= 45) return "rgba(176,109,24,0.13)";
+  return "rgba(178,59,50,0.12)";
 }
 
 function heatmap(items, valueKey, label = "热度") {
@@ -648,7 +718,7 @@ function equityChart(series, benchmark = []) {
   return `
     <div class="chart-panel">
       <svg class="equity-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="历史收益曲线">
-        <defs><linearGradient id="equityFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="rgba(0,212,255,.32)"/><stop offset="100%" stop-color="rgba(0,212,255,0)"/></linearGradient></defs>
+        <defs><linearGradient id="equityFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="rgba(140,90,43,.24)"/><stop offset="100%" stop-color="rgba(140,90,43,0)"/></linearGradient></defs>
         ${[0.2, 0.4, 0.6, 0.8].map((ratio) => `<line class="chart-grid-line" x1="${pad.left}" x2="${width - pad.right}" y1="${pad.top + ratio * (height - pad.top - pad.bottom)}" y2="${pad.top + ratio * (height - pad.top - pad.bottom)}"/>`).join("")}
         <rect class="drawdown-zone" x="430" y="${pad.top}" width="112" height="${height - pad.top - pad.bottom}"></rect>
         <line class="zero-line" x1="${pad.left}" x2="${width - pad.right}" y1="${zeroY}" y2="${zeroY}"></line>
@@ -696,8 +766,8 @@ function sentimentGauge(input) {
         <div class="gauge-score"><strong class="tone-${zone[1]}">${intText(safe)}</strong><span>${zone[0]}</span></div>
       </div>
       <div class="sentiment-compare">
-        <span>昨日 <strong class="${toneClassByValue(dayDiff)}">${dayDiff === null ? "--" : `${dayDiff > 0 ? "↑" : "↓"} ${intText(Math.abs(dayDiff))}`}</strong></span>
-        <span>上周 <strong class="${toneClassByValue(weekDiff)}">${weekDiff === null ? "--" : `${weekDiff > 0 ? "↑" : "↓"} ${intText(Math.abs(weekDiff))}`}</strong></span>
+        <span>昨日 <strong class="${toneClassByValue(dayDiff)}">${dayDiff === null ? "--" : `${dayDiff > 0 ? "+" : "-"}${intText(Math.abs(dayDiff))}`}</strong></span>
+        <span>上周 <strong class="${toneClassByValue(weekDiff)}">${weekDiff === null ? "--" : `${weekDiff > 0 ? "+" : "-"}${intText(Math.abs(weekDiff))}`}</strong></span>
       </div>
       <div class="sentiment-trend-wide">
         ${sparkline(spark, safe, 640, 76, { smooth: true })}
@@ -743,7 +813,7 @@ function marketHeatmapTreemap(heatmap = {}, activeTimeframe = "1D", activeGroupB
           const subtitle = isCn ? cell.symbol : (cell.display_name || cell.name);
           const changeLabel = hasPeriodReturn ? pctText(change) : "无历史数据";
           const cellTone = hasPeriodReturn ? toneByValue(change) : "neutral";
-          const cellColor = hasPeriodReturn ? heatmapScale(change) : "#2A2F3C";
+          const cellColor = hasPeriodReturn ? heatmapScale(change) : "#8c877d";
           return `<div class="treemap-cell ${cellTone}" style="grid-column: span ${weight}; grid-row: span ${row}; --cell:${cellColor};" title="${escapeHtml(cell.market_label || "")} ${escapeHtml(cell.name)} / ${escapeHtml(activeTimeframe)} ${escapeHtml(changeLabel)} / volume ${intText(cell.volume)}"><span class="sector-float">${escapeHtml(cell.market_label || "")} · ${escapeHtml(cell.sector)}</span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(subtitle || "")}</small><em>${escapeHtml(changeLabel)}</em></div>`;
         }).join("") : `<div class="empty-state treemap-empty">暂无热力图数据</div>`}
       </div>
@@ -753,11 +823,11 @@ function marketHeatmapTreemap(heatmap = {}, activeTimeframe = "1D", activeGroupB
 
 function heatmapScale(value) {
   const number = Number(value);
-  if (number <= -2) return "#C0392B";
-  if (number < 0) return "#FF4D6A";
-  if (number === 0) return "#2A2F3C";
-  if (number < 2) return "#00C896";
-  return "#00875A";
+  if (number <= -2) return "#a33a31";
+  if (number < 0) return "#b75b4f";
+  if (number === 0) return "#8c877d";
+  if (number < 2) return "#4f8a68";
+  return "#28795a";
 }
 
 function flattenWatchlistGroups(watchlist = {}) {
@@ -770,7 +840,7 @@ function watchlistOverviewPanel(watchlist = {}) {
     title: "自选股",
     kicker: "Watchlist",
     span: "span-4",
-    tools: `<a class="panel-link" href="watchlist.html">管理 →</a>`,
+    tools: `<a class="panel-link" href="watchlist.html">管理</a>`,
     body: rows.length ? `
       <div class="overview-watchlist">
         ${rows.map((row) => {
@@ -802,7 +872,7 @@ function sectorOverview(input = []) {
     tools: `<div class="mini-tabs"><button class="active">按涨幅</button><button>按跌幅</button><button>按市值</button></div>`,
     body: sectors.length ? `<div class="sector-strip">${sectors.map((item) => {
       const perf = Number(item.performance_pct || 0);
-      return `<article class="sector-card ${perf === best ? "best" : perf === worst ? "worst" : ""}"><span class="sector-icon">${escapeHtml(item.icon || "◇")}</span><small>${escapeHtml(item.name)}</small><strong class="${toneClassByValue(perf)}">${pctText(perf)}</strong>${rangeBar(50 + perf / 3 * 50, toneByValue(perf))}<div><span>↑ ${intText(item.up_count)} stocks</span><span>↓ ${intText(item.down_count)} stocks</span></div></article>`;
+      return `<article class="sector-card ${perf === best ? "best" : perf === worst ? "worst" : ""}"><span class="sector-icon">${icon("sector")}</span><small>${escapeHtml(item.name)}</small><strong class="${toneClassByValue(perf)}">${pctText(perf)}</strong>${rangeBar(50 + perf / 3 * 50, toneByValue(perf))}<div><span>上涨 ${intText(item.up_count)} stocks</span><span>下跌 ${intText(item.down_count)} stocks</span></div></article>`;
     }).join("")}</div>` : `<div class="empty-state">暂无板块表现数据</div>`,
   });
 }
@@ -895,8 +965,8 @@ function renderWatchlist(payload) {
     <section class="watchlist-layout">
       <div class="watchlist-main">
         <div class="watch-toolbar">
-          <label class="search-input"><span>⌕</span><input type="search" placeholder="搜索股票 / ticker" data-watch-search /></label>
-          <div class="toolbar"><select><option>全部分组</option></select><select><option>按涨跌幅</option></select><button class="primary-button" type="button" data-add-watch>+ 添加股票</button></div>
+          <label class="search-input"><span>${icon("search")}</span><input type="search" placeholder="搜索股票 / ticker" data-watch-search /></label>
+          <div class="toolbar"><select><option>全部分组</option></select><select><option>按涨跌幅</option></select><button class="primary-button" type="button" data-add-watch>添加股票</button></div>
         </div>
         <div class="watch-add-panel" data-watch-add-panel>
           <form class="watch-add-form" data-watch-add-form>
@@ -923,7 +993,7 @@ function renderWatchlist(payload) {
       </div>
       <aside class="stock-detail">
         ${selected ? `
-        <div class="inline-between"><div><p class="panel-kicker">Selected Stock</p><h2>${escapeHtml(selected.symbol)}</h2><span>${escapeHtml(selected.name)}</span></div><button class="icon-button">×</button></div>
+        <div class="inline-between"><div><p class="panel-kicker">Selected Stock</p><h2>${escapeHtml(selected.symbol)}</h2><span>${escapeHtml(selected.name)}</span></div><button class="icon-button" type="button" aria-label="关闭详情">${icon("close")}</button></div>
         ${equityChart((selected.price_series || selected.trend || []).map((item) => Number(item.return_pct ?? item.value ?? item)), (selected.benchmark_series || []).map((item) => Number(item.return_pct ?? item.value ?? item)))}
         ${detailGrid([
           { label: "最新价", value: valueText(selected.price, 2), detail: "Last" },
@@ -1063,7 +1133,7 @@ function renderPicks(payload) {
       const label = pickStrategyLabel(item);
       const active = value === activeStrategy || label === strategy_label || label === activeStrategy;
       return `<button type="button" data-pick-strategy="${escapeHtml(value)}" class="${active ? "active" : ""}">${escapeHtml(label)}</button>`;
-    }).join("")}</div><div class="toolbar"><button class="ghost-button" type="button" data-pick-date="prev">← 昨日</button><button class="primary-button" type="button" data-pick-date="today">今日 →</button><button class="ghost-button" type="button" data-pick-export>导出 CSV ↓</button></div></section>
+    }).join("")}</div><div class="toolbar"><button class="ghost-button icon-label" type="button" data-pick-date="prev">${icon("arrowLeft")}<span>昨日</span></button><button class="primary-button icon-label" type="button" data-pick-date="today"><span>今日</span>${icon("arrowRight")}</button><button class="ghost-button icon-label" type="button" data-pick-export>${icon("download")}<span>导出 CSV</span></button></div></section>
     <div class="section-heading"><h2>今日选股结果</h2><span>${escapeHtml(trade_date || pageState.picks.date || "--")} · 共 ${items.length} 只</span></div>
     <section class="pick-grid">
       ${items.length ? items.map((pick) => {
@@ -1103,13 +1173,38 @@ function strategyOutputReason(row) {
 function renderHoldings(payload) {
   const summary = payload.data?.summary || {};
   const source = payload.data?.holdings || [];
-  const allocation = payload.data?.allocation || [];
+  const quantHoldings = payload.data?.quant_holdings || source.filter((row) => row.portfolio_type === "quant");
+  const personalHoldings = payload.data?.personal_holdings || source.filter((row) => row.portfolio_type === "personal");
+  const quantSummary = payload.data?.quant_summary || {};
+  const personalSummary = payload.data?.personal_summary || {};
+  const allocation = payload.data?.quant_allocation || payload.data?.allocation || [];
   const strategyOutputs = payload.data?.strategy_outputs || {};
   const outputSignals = strategyOutputs.signals || [];
   const sellAlerts = strategyOutputs.sell_alerts || [];
+  const activeType = queryParam("type");
+  const activeStrategy = queryParam("strategy_id");
   const holdingHeaders = ["股票", "策略信号", "卖出/风控", "持仓均价", "最新价", "持仓量", "市值", "盈亏额", "盈亏%", "仓位占比", "持有天数", "操作"];
   const totalPnl = source.reduce((sum, item) => sum + Number(item.pnl_pct || 0), 0);
+  const holdingTable = (rows, options = {}) => table(
+    holdingHeaders,
+    rows.map((row) => {
+      const avgCost = row.avg_cost ?? row.cost;
+      const marketValue = row.market_value;
+      const pnlAmount = row.pnl_amount ?? row.pnl_pct;
+      const holdingDays = row.holding_days === null || row.holding_days === undefined || Number.isNaN(Number(row.holding_days)) ? "--" : `${intText(row.holding_days)} 天`;
+      return `<tr class="holding-card-row ${Number(row.pnl_pct) >= 0 ? "profit-row" : "loss-row"}"><td class="holding-stock" data-label="股票"><strong>${escapeHtml(row.symbol)}</strong><br><small>${escapeHtml(row.name)}</small></td><td class="holding-strategy-signal" data-label="策略信号">${options.personal ? tag("个人持仓", "blue") : strategySignalTags(row.strategy_signals || [])}</td><td class="holding-exit-cell" data-label="卖出/风控">${options.personal ? `<span class="muted-text">${escapeHtml(row.notes || "--")}</span>` : exitAlertCell(row.exit_alerts || [])}</td><td data-label="持仓均价">${valueText(avgCost, 2)}</td><td class="holding-price" data-label="最新价">${valueText(row.last_price, 2)}</td><td data-label="持仓量">${intText(row.quantity)}</td><td class="holding-market-value" data-label="市值">${marketValue === null || marketValue === undefined ? "--" : `¥${intText(marketValue)}`}</td><td data-label="盈亏额" class="${toneClassByValue(pnlAmount)}">${pnlAmount === null || pnlAmount === undefined ? "--" : `${Number(pnlAmount) > 0 ? "+" : ""}¥${intText(pnlAmount)}`}</td><td data-label="盈亏%"><div class="pnl-bar ${toneByValue(row.pnl_pct)}"><i style="--bar:${Math.min(100, Math.abs(row.pnl_pct || 0) * 8)}%;"></i><span>${pctText(row.pnl_pct)}</span></div></td><td data-label="仓位占比"><div class="mini-donut" style="--score:${row.weight_pct || 0}%;"></div></td><td data-label="持有天数">${Number(row.holding_days) > 30 ? tag(holdingDays, "warning") : escapeHtml(holdingDays)}</td><td data-label="操作"><div class="action-cell"><button class="row-action" type="button" data-holding-mark="${escapeHtml(row.symbol)}">标记</button><button class="row-action" type="button" data-rebalance-record="${escapeHtml(row.symbol)}" data-weight="${escapeHtml(row.weight_pct || 0)}">调仓记录</button><span class="action-status" data-action-status></span></div></td></tr>`;
+    }),
+    1500,
+  );
   dom.app.innerHTML = `
+    <section class="strategy-toolbar">
+      <div class="mini-tabs">
+        <a class="${!activeType ? "active" : ""}" href="holdings.html">全部</a>
+        <a class="${activeType === "quant" ? "active" : ""}" href="holdings.html?type=quant${activeStrategy ? `&strategy_id=${encodeURIComponent(activeStrategy)}` : ""}">量化持仓</a>
+        <a class="${activeType === "personal" ? "active" : ""}" href="holdings.html?type=personal">个人持仓</a>
+      </div>
+      <div class="toolbar">${activeStrategy ? pill(`策略 ${activeStrategy}`, "blue") : ""}<a class="panel-link" href="strategy.html">量化策略</a></div>
+    </section>
     ${summaryGrid([
       metricCard("总市值", summary.total_market_value === undefined ? "--" : `¥${intText(summary.total_market_value)}`, "Portfolio value"),
       metricCard("今日盈亏", summary.day_pnl_amount === undefined ? "--" : `${Number(summary.day_pnl_amount) > 0 ? "+" : ""}¥${intText(summary.day_pnl_amount)}`, pctText(summary.day_pnl_pct), toneByValue(summary.day_pnl_amount)),
@@ -1118,20 +1213,18 @@ function renderHoldings(payload) {
       metricCard("持仓数量", `${intText(summary.position_count ?? source.length)} 只`, `Sector diversity ${summary.sector_diversity ?? allocation.length}`),
     ])}
     ${panel({
-      title: "当前持仓",
-      kicker: "Current Holdings",
+      title: "量化持仓",
+      kicker: "Quant Positions",
       span: "span-12",
-      body: table(
-        holdingHeaders,
-        source.map((row) => {
-          const avgCost = row.avg_cost ?? row.cost;
-          const marketValue = row.market_value;
-          const pnlAmount = row.pnl_amount ?? row.pnl_pct;
-          const holdingDays = row.holding_days === null || row.holding_days === undefined || Number.isNaN(Number(row.holding_days)) ? "--" : `${intText(row.holding_days)} 天`;
-          return `<tr class="holding-card-row ${Number(row.pnl_pct) >= 0 ? "profit-row" : "loss-row"}"><td class="holding-stock" data-label="股票"><strong>${escapeHtml(row.symbol)}</strong><br><small>${escapeHtml(row.name)}</small></td><td class="holding-strategy-signal" data-label="策略信号">${strategySignalTags(row.strategy_signals || [])}</td><td class="holding-exit-cell" data-label="卖出/风控">${exitAlertCell(row.exit_alerts || [])}</td><td data-label="持仓均价">${valueText(avgCost, 2)}</td><td class="holding-price" data-label="最新价">${valueText(row.last_price, 2)}</td><td data-label="持仓量">${intText(row.quantity)}</td><td class="holding-market-value" data-label="市值">${marketValue === null || marketValue === undefined ? "--" : `¥${intText(marketValue)}`}</td><td data-label="盈亏额" class="${toneClassByValue(pnlAmount)}">${pnlAmount === null || pnlAmount === undefined ? "--" : `${Number(pnlAmount) > 0 ? "+" : ""}¥${intText(pnlAmount)}`}</td><td data-label="盈亏%"><div class="pnl-bar ${toneByValue(row.pnl_pct)}"><i style="--bar:${Math.min(100, Math.abs(row.pnl_pct) * 8)}%;"></i><span>${pctText(row.pnl_pct)}</span></div></td><td data-label="仓位占比"><div class="mini-donut" style="--score:${row.weight_pct || 0}%;"></div></td><td data-label="持有天数">${Number(row.holding_days) > 30 ? tag(holdingDays, "warning") : escapeHtml(holdingDays)}</td><td data-label="操作"><div class="action-cell"><button class="row-action" type="button" data-holding-mark="${escapeHtml(row.symbol)}">标记</button><button class="row-action" type="button" data-rebalance-record="${escapeHtml(row.symbol)}" data-weight="${escapeHtml(row.weight_pct || 0)}">调仓记录</button><span class="action-status" data-action-status></span></div></td></tr>`;
-        }),
-        1500,
-      ),
+      tools: pill(`${intText(quantSummary.position_count ?? quantHoldings.length)} 只`, "blue"),
+      body: holdingTable(quantHoldings),
+    })}
+    ${panel({
+      title: "个人持仓",
+      kicker: "Personal Positions",
+      span: "span-12",
+      tools: pill(`${intText(personalSummary.position_count ?? personalHoldings.length)} 只`, "blue"),
+      body: holdingTable(personalHoldings, { personal: true }),
     })}
     ${panel({
       title: "聚宽策略输出",
@@ -1167,6 +1260,165 @@ function bindHoldingActions() {
       postAction(button, "/api/v1/portfolio/rebalance-records", { symbol: button.dataset.rebalanceRecord, action: "review", weight_pct: button.dataset.weight, note: "前端持仓列表创建调仓记录" }, "调仓记录已保存");
     });
   });
+}
+
+function statusPill(status) {
+  return pill(statusText(status), statusTone(status));
+}
+
+function strategySignals(payloadData = {}) {
+  const signals = payloadData.signals || payloadData.recommendations || [];
+  return Array.isArray(signals) ? signals : [];
+}
+
+function strategyExposure(summary = {}) {
+  return summary.current_exposure_pct ?? summary.exposure_pct ?? 0;
+}
+
+function strategyTargetExposure(summary = {}) {
+  return summary.target_exposure_pct ?? summary.exposure_pct ?? 0;
+}
+
+function strategyCreateForm() {
+  return `
+    <form class="strategy-create-form" data-strategy-create-form>
+      <label class="span-2"><span>操作令牌</span><input name="action_token" type="password" autocomplete="off" placeholder="可选；填写后保存到本机浏览器" /></label>
+      <label><span>策略 ID</span><input name="id" required pattern="[A-Za-z0-9_.-]{2,64}" placeholder="my-new-strategy" /></label>
+      <label><span>策略名称</span><input name="name" required placeholder="我的新策略" /></label>
+      <label><span>类型</span><select name="category"><option value="custom">自定义</option><option value="etf">ETF</option><option value="stock">股票</option><option value="futures">期货</option></select></label>
+      <label><span>状态</span><select name="status"><option value="idle">未运行</option><option value="running">正在运行</option><option value="paused">暂停</option><option value="stopped">停用</option></select></label>
+      <label class="span-2"><span>说明</span><input name="description" placeholder="策略用途、运行频率或 JoinQuant 说明" /></label>
+      <div class="form-actions span-2">
+        <button class="primary-button icon-label" type="submit">${icon("picks")}<span>添加策略</span></button>
+        <span class="action-status" data-action-status></span>
+      </div>
+    </form>
+  `;
+}
+
+function bindStrategyHubControls(payload) {
+  document.querySelectorAll("[data-strategy-select]").forEach((button) => {
+    button.addEventListener("click", () => {
+      pageState.strategy.strategyId = button.dataset.strategySelect || "";
+      updateUrlQuery({ strategy_id: pageState.strategy.strategyId });
+      dom.refreshButton?.click();
+    });
+  });
+  document.querySelector("[data-strategy-list]")?.addEventListener("click", () => {
+    pageState.strategy.strategyId = "";
+    updateUrlQuery({ strategy_id: "" });
+    dom.refreshButton?.click();
+  });
+  document.querySelector("[data-strategy-create-form]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const body = Object.fromEntries(formData.entries());
+    const token = String(body.action_token || "").trim();
+    delete body.action_token;
+    if (token) window.localStorage?.setItem("quant_action_token", token);
+    const result = await submitActionForm(form, "/api/v1/quant/strategies", body, "策略已创建");
+    const strategy = result?.data?.strategy;
+    if (strategy?.id) {
+      pageState.strategy.strategyId = strategy.id;
+      updateUrlQuery({ strategy_id: strategy.id });
+      dom.refreshButton?.click();
+    }
+  });
+}
+
+function strategyListRows(strategies = []) {
+  if (!strategies.length) return `<div class="empty-state">暂无策略</div>`;
+  return `<div class="strategy-card-grid">${strategies.map((row) => `
+    <article class="strategy-overview-card ${row.status || "idle"}">
+      <div class="inline-between">
+        <div><span class="panel-kicker">${escapeHtml(row.category || "strategy")}</span><h3>${escapeHtml(row.name || row.id)}</h3><small class="mono">${escapeHtml(row.id)}</small></div>
+        ${statusPill(row.status)}
+      </div>
+      <p>${escapeHtml(row.decision_title || row.description || "等待策略快照")}</p>
+      <div class="strategy-card-metrics">
+        <div><span>信号</span><strong>${intText(row.signal_count)}</strong></div>
+        <div><span>持仓</span><strong>${intText(row.holding_count)}</strong></div>
+        <div><span>仓位</span><strong>${valueWithUnit(row.current_exposure_pct, "%", 0)}</strong></div>
+      </div>
+      <div class="card-actions">
+        <button class="ghost-button" type="button" data-strategy-select="${escapeHtml(row.id)}">查看策略</button>
+        <a class="panel-link" href="holdings.html?type=quant&strategy_id=${encodeURIComponent(row.id)}">持仓信息</a>
+      </div>
+    </article>
+  `).join("")}</div>`;
+}
+
+function renderStrategyDetail(payload) {
+  const data = payload.data || {};
+  const registry = data.registry || {};
+  const strategy = data.strategy || {};
+  const summary = data.summary || {};
+  const signals = strategySignals(data);
+  const holdings = Array.isArray(data.holdings) ? data.holdings : [];
+  const events = Array.isArray(data.events) ? data.events : [];
+  const logs = Array.isArray(data.logs) ? data.logs : [];
+  const strategyId = registry.id || strategy.id || pageState.strategy.strategyId;
+  const signalCards = signals.map((item) => ({
+    ...item,
+    action: item.action || item.signal || "watch",
+    action_label: item.action_label || item.signal_label || item.signal || item.action || "观察",
+  }));
+  dom.app.innerHTML = `
+    <section class="strategy-toolbar">
+      <button class="ghost-button icon-label" type="button" data-strategy-list>${icon("arrowLeft")}<span>策略列表</span></button>
+      <div class="toolbar">${statusPill(strategy.status || registry.status)}<a class="panel-link" href="holdings.html?type=quant&strategy_id=${encodeURIComponent(strategyId)}">查看持仓信息</a></div>
+    </section>
+    ${pageDecisionBrief({
+      kicker: strategy.name || registry.name || "Quant Strategy",
+      title: strategy.decision_title || "等待策略结论",
+      detail: strategy.decision_detail || "该策略还没有推送运行快照。",
+      tone: strategy.decision_tone || (strategy.status === "running" ? "blue" : "warning"),
+      metrics: [
+        { label: "运行状态", value: statusText(strategy.status || registry.status) },
+        { label: "目标仓位", value: valueWithUnit(strategyTargetExposure(summary), "%", 0) },
+        { label: "当前仓位", value: valueWithUnit(strategyExposure(summary), "%", 0) },
+        { label: "最近更新", value: formatDateTime(payload.meta?.as_of) },
+      ],
+    })}
+    ${summaryGrid([
+      metricCard("信号数量", `${intText(summary.signal_count ?? signals.length)} 条`, `${intText(summary.buy_count)} 条买入`),
+      metricCard("持仓数量", `${intText(summary.hold_count ?? holdings.length)} 只`, `当前 ${valueWithUnit(strategyExposure(summary), "%", 0)}`),
+      metricCard("当日盈亏", pctText(summary.day_pnl_pct), "JoinQuant snapshot", toneByValue(summary.day_pnl_pct)),
+      metricCard("运行来源", registry.source || payload.meta?.source || "--", registry.storage_path || ""),
+    ])}
+    <section class="main-grid">
+      ${panel({ title: "策略信号", kicker: "Signals", span: "span-8", body: compactInstrumentCards(signalCards, strategyId) })}
+      ${panel({ title: "策略档案", kicker: "Registry", span: "span-4", body: detailGrid([{ label: "策略 ID", value: strategyId, detail: registry.builtin ? "内置策略" : "网页新增" }, { label: "类型", value: strategy.category || registry.category || "--", detail: strategy.provider || registry.provider || "--" }, { label: "快照接口", value: `/snapshot`, detail: registry.snapshot_endpoint || data.snapshot_endpoint || "" }, { label: "持仓链接", value: "量化持仓", detail: data.holdings_url || "" }]) })}
+      ${panel({ title: "持仓详情", kicker: "Positions", span: "span-8", body: table(["代码", "名称", "仓位", "成本", "现价", "当日涨跌", "浮动盈亏"], holdings.map((row) => `<tr><td class="mono">${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.name)}</td><td>${valueWithUnit(row.weight_pct, "%", 0)}</td><td>${valueText(row.cost ?? row.avg_cost, 3)}</td><td>${valueText(row.last_price, 3)}</td><td class="${toneClassByValue(row.day_change_pct)}">${pctText(row.day_change_pct)}</td><td class="${toneClassByValue(row.pnl_pct)}">${pctText(row.pnl_pct)}</td></tr>`), 780) })}
+      ${panel({ title: "运行记录", kicker: "Events", span: "span-4", body: timeline(events) })}
+      ${panel({ title: "完整日志", kicker: "Logs", span: "span-12", tools: pill(`${intText(Math.min(logs.length, STRATEGY_LOG_DISPLAY_LIMIT))} lines`, "blue"), body: strategyLogConsole(logs) })}
+    </section>
+  `;
+  bindSignalActions();
+  bindStrategyHubControls(payload);
+}
+
+function renderStrategyHub(payload) {
+  if (payload.data?.strategy) {
+    renderStrategyDetail(payload);
+    return;
+  }
+  const strategies = payload.data?.strategies || [];
+  const summary = payload.data?.summary || {};
+  dom.app.innerHTML = `
+    ${summaryGrid([
+      metricCard("策略数量", `${intText(summary.strategy_count)} 个`, `${intText(summary.running_count)} 个运行中`),
+      metricCard("正在运行", `${intText(summary.running_count)} 个`, "running"),
+      metricCard("未运行", `${intText(summary.inactive_count)} 个`, "idle / pending"),
+      metricCard("新增入口", "网页端", payload.data?.snapshot_endpoint_template || ""),
+    ])}
+    <section class="main-grid">
+      ${panel({ title: "策略列表", kicker: "Quant Strategies", span: "span-8", body: strategyListRows(strategies) })}
+      ${panel({ title: "添加策略", kicker: "Create Strategy", span: "span-4", description: "创建后即可获得统一 snapshot 接口，供 JoinQuant 推送。", body: strategyCreateForm() })}
+    </section>
+  `;
+  bindStrategyHubControls(payload);
 }
 
 function renderPerformance(payload) {
@@ -1383,7 +1635,7 @@ function staleBanner(error, cached) {
   return `
     <aside class="stale-banner" data-stale-banner role="alert">
       <div><strong>刷新失败，当前显示最近成功缓存</strong><span>错误：${escapeHtml(message)} · 缓存时间：${escapeHtml(savedAt)}</span></div>
-      <button type="button" aria-label="关闭缓存提示" data-dismiss-stale>×</button>
+      <button type="button" aria-label="关闭缓存提示" data-dismiss-stale>${icon("close")}</button>
     </aside>
   `;
 }

@@ -1,14 +1,22 @@
 # 聚宽策略 Webhook 接入
 
-目标：聚宽策略继续在聚宽运行和下单，网站只接收策略信号并更新 ETF 策略页。
+目标：聚宽策略继续在聚宽运行和下单，网站只接收策略信号并更新“量化策略”和“持仓信息”页面。
 
 ## 网站后端
 
-后端新增接收入口：
+推荐的新策略接收入口：
+
+```text
+POST /api/v1/quant/strategies/{strategy_id}/snapshot
+```
+
+兼容旧接收入口：
 
 ```text
 POST /api/v1/joinquant/signals
 ```
+
+新策略先在网页端“量化策略”页面创建，创建后即可使用对应的 `{strategy_id}` 上报快照。旧入口仍兼容 ETF 和小盘策略。
 
 启动时需要配置鉴权 token：
 
@@ -26,10 +34,38 @@ X-Webhook-Token: replace-with-a-long-random-token
 X-Action-Token: replace-with-a-long-action-token
 ```
 
-后端收到信号后会：
+后端收到统一快照后会：
 
-- 写入 `data/backend/strategies/etf.json`，ETF 策略页会读取这个文件。
+- 写入 `data/backend/strategies/custom/{strategy_id}.json`，量化策略页会读取这个文件。
+- 将快照中的 `holdings[]` 汇总进持仓信息页的“量化持仓”板块。
 - 追加脱敏原始请求到 `data/backend/strategies/joinquant-signals.jsonl`。
+
+统一快照最小结构：
+
+```json
+{
+  "strategy_id": "new-alpha",
+  "strategy_name": "新策略 Alpha",
+  "trade_date": "2026-05-16",
+  "as_of": "2026-05-16T10:30:00+08:00",
+  "run_id": "jq-new-alpha-20260516-103000",
+  "status": "running",
+  "summary": {
+    "target_exposure_pct": 80,
+    "current_exposure_pct": 62,
+    "day_pnl_pct": 0.35
+  },
+  "signals": [
+    {"symbol": "300476.XSHE", "name": "胜宏科技", "signal": "buy", "score": 88}
+  ],
+  "holdings": [
+    {"symbol": "300476.XSHE", "name": "胜宏科技", "quantity": 1000, "last_price": 42, "market_value": 42000, "weight_pct": 42}
+  ],
+  "logs": [
+    {"time": "2026-05-16 10:30:00", "stage": "snapshot", "message": "策略快照"}
+  ]
+}
+```
 
 ## 聚宽侧上报模块
 

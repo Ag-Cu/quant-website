@@ -31,6 +31,30 @@ def test_health_endpoint(client: TestClient) -> None:
     }
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/",
+        "/index.html",
+        "/etf.html",
+        "/small-cap.html",
+        "/breadth.html",
+        "/sentiment.html",
+        "/macro.html",
+        "/watchlist.html",
+        "/picks.html",
+        "/holdings.html",
+        "/performance.html",
+        "/strategy.html",
+        "/styles.css",
+        "/src/app.js",
+    ],
+)
+def test_static_pages_and_assets_are_served(client: TestClient, path: str) -> None:
+    response = client.get(path)
+    assert response.status_code == 200, response.text
+
+
 @pytest.mark.parametrize("path", sorted(ENDPOINTS))
 def test_endpoints_return_meta_and_data(client: TestClient, path: str) -> None:
     response = client.get(path)
@@ -45,6 +69,8 @@ def test_endpoints_return_meta_and_data(client: TestClient, path: str) -> None:
         ("delete", "/api/v1/watchlist/600519?market=cn", None),
         ("post", "/api/v1/portfolio/holdings/600519/mark", {"mark": "reviewed"}),
         ("post", "/api/v1/strategies/etf/signals/600519/confirm", {"action": "confirm"}),
+        ("post", "/api/v1/quant/strategies", {"id": "new-alpha", "name": "新策略 Alpha"}),
+        ("post", "/api/v1/quant/strategies/new-alpha/snapshot", {"strategy_id": "new-alpha"}),
         ("post", "/api/v1/strategies/picks/export", {}),
         ("post", "/api/v1/portfolio/rebalance-records", {"symbol": "600519"}),
     ],
@@ -149,6 +175,79 @@ def test_small_cap_endpoint_hides_seed_signals_until_joinquant_snapshot(
     assert payload["data"]["ignored_seed_signal_count"] == 4
 
 
+def test_quant_strategy_can_be_created_and_receive_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    client: TestClient,
+) -> None:
+    monkeypatch.setenv("QUANT_ACTION_TOKEN", "test-action-token")
+    monkeypatch.setenv("JOINQUANT_WEBHOOK_TOKEN", "test-joinquant-token")
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(backend_main, "CUSTOM_STRATEGY_DIR", tmp_path / "data/backend/strategies/custom")
+    monkeypatch.setattr(backend_main, "CONFIG_DIR", tmp_path / "data/config")
+    monkeypatch.setattr(backend_main, "STRATEGY_CONFIG_PATH", tmp_path / "data/config/strategies.json")
+    monkeypatch.setattr(backend_main, "ACTION_LOG_PATH", tmp_path / "data/backend/actions/action-log.jsonl")
+    monkeypatch.setattr(backend_main, "JOINQUANT_SIGNAL_LOG_PATH", tmp_path / "data/backend/strategies/joinquant-signals.jsonl")
+    monkeypatch.setattr(backend_main, "JOINQUANT_FULL_LOG_PATH", tmp_path / "data/backend/strategies/joinquant-full-logs.jsonl")
+    monkeypatch.setattr(backend_main, "PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH", tmp_path / "data/backend/performance/joinquant-snapshots.jsonl")
+    monkeypatch.setattr(backend_main, "PERFORMANCE_JOINQUANT_NAV_PATH", tmp_path / "data/backend/performance/joinquant-nav.jsonl")
+
+    response = client.post(
+        "/api/v1/quant/strategies",
+        headers={"X-Action-Token": "test-action-token"},
+        json={"id": "new-alpha", "name": "新策略 Alpha", "category": "stock", "description": "网页创建"},
+    )
+
+    assert response.status_code == 200, response.text
+    created = response.json()["data"]["strategy"]
+    assert created["id"] == "new-alpha"
+    assert (tmp_path / "data/config/strategies.json").exists()
+    assert (tmp_path / "data/backend/strategies/custom/new-alpha.json").exists()
+
+    response = client.post(
+        "/api/v1/quant/strategies/new-alpha/snapshot",
+        headers={"X-Action-Token": "test-action-token", "X-Webhook-Token": "test-joinquant-token"},
+        json={
+            "trade_date": "2026-05-16",
+            "as_of": "2026-05-16T10:30:00+08:00",
+            "run_id": "jq-new-alpha-20260516-103000",
+            "portfolio": {"total_value": 100000, "cash": 30000},
+            "signals": [{"symbol": "300476.XSHE", "name": "胜宏科技", "signal": "buy", "score": 88}],
+            "holdings": [{"symbol": "300476.XSHE", "name": "胜宏科技", "quantity": 1000, "last_price": 42, "market_value": 42000, "weight_pct": 42}],
+            "logs": [{"time": "2026-05-16 10:30:00", "stage": "snapshot", "message": "策略快照"}],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["strategy"]["id"] == "new-alpha"
+    assert payload["data"]["signals"][0]["symbol"] == "300476"
+
+    response = client.get("/api/v1/quant/strategies/new-alpha")
+    assert response.status_code == 200, response.text
+    detail = response.json()
+    assert detail["data"]["registry"]["holding_count"] == 1
+    assert detail["data"]["holdings_url"].endswith("strategy_id=new-alpha")
+
+    response = client.post(
+        "/api/v1/joinquant/signals",
+        headers={"X-Action-Token": "test-action-token", "X-Webhook-Token": "test-joinquant-token"},
+        json={
+            "strategy_id": "new-alpha",
+            "strategy_name": "新策略 Alpha",
+            "trade_date": "2026-05-16",
+            "run_id": "jq-new-alpha-legacy",
+            "holdings": [{"symbol": "300476.XSHE", "name": "胜宏科技", "market_value": 43000}],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    legacy_payload = response.json()
+    assert legacy_payload["data"]["strategy"]["id"] == "new-alpha"
+    assert legacy_payload["data"]["holdings"][0]["market_value"] == 43000
+
+
 def test_portfolio_holdings_include_joinquant_strategy_outputs(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
@@ -212,10 +311,13 @@ def test_portfolio_holdings_include_joinquant_strategy_outputs(
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["data"]["holdings"] == []
+    assert [row["symbol"] for row in payload["data"]["holdings"]] == ["000001"]
+    assert [row["symbol"] for row in payload["data"]["personal_holdings"]] == ["000001"]
+    assert payload["data"]["quant_holdings"] == []
     assert payload["data"]["source"] == "joinquant-pending"
     assert payload["data"]["static_holdings_ignored_count"] == 1
-    assert payload["data"]["summary"]["position_count"] == 0
+    assert payload["data"]["summary"]["position_count"] == 1
+    assert payload["data"]["quant_summary"]["position_count"] == 0
 
     small_cap_path.write_text(small_cap_path.read_text(encoding="utf-8").replace("small-cap-test", "jq-small-cap-20260515-103000"), encoding="utf-8")
     etf_path.write_text(etf_path.read_text(encoding="utf-8").replace("etf-test", "jq-wufu-20260515-103000"), encoding="utf-8")
@@ -224,11 +326,12 @@ def test_portfolio_holdings_include_joinquant_strategy_outputs(
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    holding = payload["data"]["holdings"][0]
-    assert [item["symbol"] for item in payload["data"]["holdings"]] == ["300476"]
+    holding = payload["data"]["quant_holdings"][0]
+    assert [item["symbol"] for item in payload["data"]["quant_holdings"]] == ["300476"]
+    assert [item["symbol"] for item in payload["data"]["personal_holdings"]] == ["000001"]
     assert payload["data"]["source"] == "joinquant"
-    assert payload["data"]["summary"]["position_count"] == 1
-    assert payload["data"]["summary"]["total_market_value"] == 43000
+    assert payload["data"]["quant_summary"]["position_count"] == 1
+    assert payload["data"]["quant_summary"]["total_market_value"] == 43000
     assert holding["strategy_signals"][0]["strategy_id"] == "small-cap-momentum"
     assert holding["strategy_signals"][0]["action"] == "sell"
     assert holding["quantity"] == 1000

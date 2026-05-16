@@ -44,7 +44,8 @@
 | --- | --- | --- | --- |
 | 总览 | `/api/v1/dashboard/overview` | 盘中实时，约 30s | `data/backend/dashboard/overview.json`，可优先读 `data/live/overview.json` |
 | 今日选股 | `/api/v1/strategies/picks` | 每日收盘后或策略任务完成后 | `data/backend/strategies/picks.json` |
-| 当前持仓 | `/api/v1/portfolio/holdings` | 盘中实时，约 30s | `data/backend/portfolio/holdings.json` |
+| 量化策略 | `/api/v1/quant/strategies` | 策略任务刷新，约 5min | `data/config/strategies.json` + `data/backend/strategies/**/*.json` |
+| 持仓信息 | `/api/v1/portfolio/holdings` | 盘中实时，约 30s | `data/backend/portfolio/holdings.json` + 策略快照 |
 | 历史收益 | `/api/v1/performance` | 每日收盘后 | `data/backend/performance/net-values.json` |
 | 自选股 | `/api/v1/watchlist` | 盘中实时，约 15s | `data/backend/watchlist/list.json` |
 | 市场热力图 | `/api/v1/market/heatmap` | 盘中实时，约 30s | `data/backend/market/heatmap.json` |
@@ -55,6 +56,20 @@
 | 市场宽度 | `/api/v1/market/breadth` | 盘中实时或分钟级 | `data/backend/market/breadth.json`，可优先读 `data/live/breadth.json` |
 | 散户情绪 | `/api/v1/market/sentiment` | 盘中实时或分钟级 | `data/backend/market/sentiment.json`，可优先读 `data/live/sentiment.json` |
 | 宏观指标 | `/api/v1/macro` | 小时级或日频 | `data/backend/macro.json`，可优先读 `data/live/macro.json` |
+
+统一量化策略接口：
+
+```text
+GET  /api/v1/quant/strategies
+POST /api/v1/quant/strategies
+GET  /api/v1/quant/strategies/{strategy_id}
+POST /api/v1/quant/strategies/{strategy_id}/snapshot
+GET  /api/v1/quant/strategies/{strategy_id}/logs
+```
+
+`POST /api/v1/quant/strategies` 用于网页端新增策略，写入 `data/config/strategies.json`，并在 `data/backend/strategies/custom/{strategy_id}.json` 创建等待上报的空快照。写接口需要 `X-Action-Token`。
+
+`POST /api/v1/quant/strategies/{strategy_id}/snapshot` 是 JoinQuant 后续推荐使用的统一快照入口。它要求策略先在网页端创建，鉴权同时支持 `X-Webhook-Token` 和 `X-Action-Token`。
 
 前端按每个页面配置的频率刷新当前接口。接口不可用、返回非 2xx 或 JSON 解析失败时，前端只显示“获取失败”，不会 fallback 到 mock。
 
@@ -200,7 +215,18 @@ GET /api/v1/strategies/picks?strategy=momentum&date=2026-05-12
 
 ## 当前持仓字段
 
-`/api/v1/portfolio/holdings` 用于“当前持仓”页面。
+`/api/v1/portfolio/holdings` 用于“持仓信息”页面。页面会拆成两个板块：
+
+- `quant_holdings[]`: 量化持仓，来自 JoinQuant/统一策略快照。
+- `personal_holdings[]`: 个人持仓，来自 `data/backend/portfolio/holdings.json` 中 `portfolio_type=personal` 或未标注类型的手动/导入持仓。
+
+支持查询：
+
+```text
+GET /api/v1/portfolio/holdings?type=quant
+GET /api/v1/portfolio/holdings?type=personal
+GET /api/v1/portfolio/holdings?type=quant&strategy_id=joinquant-wufu-etf-v43
+```
 
 推荐字段：
 
@@ -211,7 +237,9 @@ GET /api/v1/strategies/picks?strategy=momentum&date=2026-05-12
 - `summary.exposure_pct`: 仓位使用率。
 - `summary.position_count`: 持仓数量。
 - `summary.sector_diversity`: 行业分散度。
-- `holdings[]`: 持仓明细。
+- `holdings[]`: 当前查询视角下的持仓明细。
+- `quant_holdings[]`: 全部量化持仓。
+- `personal_holdings[]`: 全部个人持仓。
 - `allocation[]`: 行业配置。
 
 `holdings[]` 字段：

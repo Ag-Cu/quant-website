@@ -33,10 +33,12 @@ BACKEND_DIR = DATA_DIR / "backend"
 LIVE_DIR = DATA_DIR / "live"
 CONFIG_DIR = DATA_DIR / "config"
 WATCHLIST_CONFIG_PATH = CONFIG_DIR / "watchlist.json"
+STRATEGY_CONFIG_PATH = CONFIG_DIR / "strategies.json"
 ACTION_LOG_PATH = BACKEND_DIR / "actions" / "action-log.jsonl"
 EXPORT_DIR = BACKEND_DIR / "exports"
 ETF_STRATEGY_PATH = BACKEND_DIR / "strategies" / "etf.json"
 SMALL_CAP_STRATEGY_PATH = BACKEND_DIR / "strategies" / "small-cap.json"
+CUSTOM_STRATEGY_DIR = BACKEND_DIR / "strategies" / "custom"
 JOINQUANT_SIGNAL_LOG_PATH = BACKEND_DIR / "strategies" / "joinquant-signals.jsonl"
 JOINQUANT_FULL_LOG_PATH = BACKEND_DIR / "strategies" / "joinquant-full-logs.jsonl"
 PERFORMANCE_NAV_PATH = BACKEND_DIR / "performance" / "net-values.json"
@@ -60,6 +62,7 @@ STATIC_PAGES = {
     "/picks.html": "picks.html",
     "/holdings.html": "holdings.html",
     "/performance.html": "performance.html",
+    "/strategy.html": "strategy.html",
     "/etf.html": "etf.html",
     "/small-cap.html": "small-cap.html",
     "/breadth.html": "breadth.html",
@@ -946,6 +949,357 @@ def build_small_cap_strategy_payload_from_joinquant(payload: dict[str, Any]) -> 
     }
 
 
+def safe_strategy_id(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    raw = re.sub(r"[^a-z0-9_.-]+", "-", raw)
+    raw = raw.strip(".-_")
+    if not raw:
+        raise HTTPException(status_code=422, detail="缺少策略 ID")
+    if len(raw) > 64:
+        raise HTTPException(status_code=422, detail="策略 ID 不能超过 64 个字符")
+    return raw
+
+
+def strategy_slug_from_id(value: str) -> str:
+    return safe_strategy_id(value).replace(".", "-")
+
+
+BUILTIN_STRATEGY_DEFINITIONS = [
+    {
+        "id": "joinquant-wufu-etf-v43",
+        "name": "五福 ETF 轮动",
+        "category": "etf",
+        "status": "running",
+        "provider": "joinquant",
+        "endpoint": "/api/v1/strategies/etf",
+        "path_name": "ETF_STRATEGY_PATH",
+        "storage_key": "strategies/etf",
+        "page": "strategy.html",
+        "legacy_page": "etf.html",
+        "signal_key": "recommendations",
+        "action_key": "action",
+        "label_key": "action_label",
+        "builtin": True,
+    },
+    {
+        "id": "small-cap-momentum",
+        "name": "涨停基因小市值",
+        "category": "stock",
+        "status": "pending",
+        "provider": "joinquant",
+        "endpoint": "/api/v1/strategies/small-cap",
+        "path_name": "SMALL_CAP_STRATEGY_PATH",
+        "storage_key": "strategies/small-cap",
+        "page": "strategy.html",
+        "legacy_page": "small-cap.html",
+        "signal_key": "signals",
+        "action_key": "signal",
+        "label_key": "signal_label",
+        "builtin": True,
+    },
+]
+
+
+def load_strategy_config() -> dict[str, Any]:
+    if not STRATEGY_CONFIG_PATH.exists():
+        return {"strategies": []}
+    try:
+        payload = load_json(STRATEGY_CONFIG_PATH)
+    except HTTPException:
+        return {"strategies": []}
+    if not isinstance(payload.get("strategies"), list):
+        payload["strategies"] = []
+    return payload
+
+
+def save_strategy_config(strategies: list[dict[str, Any]]) -> None:
+    write_json_atomic(
+        STRATEGY_CONFIG_PATH,
+        {
+            "strategies": strategies,
+            "updated_at": now_hk().isoformat(),
+        },
+    )
+
+
+def strategy_storage_path(strategy_id: str) -> Path:
+    return CUSTOM_STRATEGY_DIR / f"{strategy_slug_from_id(strategy_id)}.json"
+
+
+def normalize_strategy_definition(item: dict[str, Any], builtin: bool = False) -> dict[str, Any]:
+    strategy_id = safe_strategy_id(item.get("id") or item.get("strategy_id"))
+    name = str(item.get("name") or item.get("strategy_name") or strategy_id).strip()
+    category = str(item.get("category") or "custom").strip().lower()
+    status = str(item.get("status") or "idle").strip().lower()
+    if status not in {"running", "idle", "paused", "stopped", "pending", "error", "stale"}:
+        status = "idle"
+    provider = str(item.get("provider") or "joinquant").strip().lower()
+    definition = {
+        "id": strategy_id,
+        "name": name,
+        "category": category,
+        "status": status,
+        "provider": provider,
+        "endpoint": str(item.get("endpoint") or f"/api/v1/quant/strategies/{strategy_id}"),
+        "path_name": str(item.get("path_name") or ""),
+        "storage_key": str(item.get("storage_key") or f"strategies/custom/{strategy_slug_from_id(strategy_id)}"),
+        "page": str(item.get("page") or "strategy.html"),
+        "legacy_page": str(item.get("legacy_page") or ""),
+        "signal_key": str(item.get("signal_key") or "signals"),
+        "action_key": str(item.get("action_key") or "signal"),
+        "label_key": str(item.get("label_key") or "signal_label"),
+        "description": str(item.get("description") or ""),
+        "created_at": str(item.get("created_at") or now_hk().isoformat()),
+        "updated_at": str(item.get("updated_at") or item.get("created_at") or now_hk().isoformat()),
+        "builtin": bool(item.get("builtin") or builtin),
+    }
+    if item.get("webhook_path"):
+        definition["webhook_path"] = str(item["webhook_path"])
+    return definition
+
+
+def definition_public_row(definition: dict[str, Any], payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    data = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else {}
+    strategy = data.get("strategy") if isinstance(data.get("strategy"), dict) else {}
+    summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+    meta = payload.get("meta") if isinstance(payload, dict) and isinstance(payload.get("meta"), dict) else {}
+    strategy_id = str(strategy.get("id") or definition["id"])
+    signals = data.get(str(definition.get("signal_key") or "signals"))
+    if not isinstance(signals, list):
+        signals = data.get("signals") if isinstance(data.get("signals"), list) else data.get("recommendations") if isinstance(data.get("recommendations"), list) else []
+    holdings = data.get("holdings") if isinstance(data.get("holdings"), list) else []
+    status = str(strategy.get("status") or definition.get("status") or "idle")
+    stale_seconds = seconds_since(meta.get("as_of")) if meta.get("as_of") else None
+    if stale_seconds is not None and stale_seconds > 86_400 and status == "running":
+        status = "stale"
+    return {
+        "id": strategy_id,
+        "name": str(strategy.get("name") or definition["name"]),
+        "category": str(strategy.get("category") or definition.get("category") or "custom"),
+        "provider": str(strategy.get("provider") or definition.get("provider") or "joinquant"),
+        "status": status,
+        "builtin": bool(definition.get("builtin")),
+        "page": f"{definition.get('page') or 'strategy.html'}?strategy_id={urllib.parse.quote(strategy_id)}",
+        "legacy_page": definition.get("legacy_page") or "",
+        "endpoint": f"/api/v1/quant/strategies/{strategy_id}",
+        "snapshot_endpoint": f"/api/v1/quant/strategies/{strategy_id}/snapshot",
+        "storage_path": str(strategy_path_from_definition(definition).relative_to(ROOT)),
+        "updated_at": str(meta.get("as_of") or definition.get("updated_at") or ""),
+        "trade_date": str(meta.get("trade_date") or ""),
+        "run_id": str(meta.get("run_id") or ""),
+        "signal_count": len(signals),
+        "holding_count": len(holdings),
+        "target_exposure_pct": to_float(summary.get("target_exposure_pct") or summary.get("exposure_pct"), 0),
+        "current_exposure_pct": to_float(summary.get("current_exposure_pct") or summary.get("exposure_pct"), 0),
+        "day_pnl_pct": to_float(summary.get("day_pnl_pct")),
+        "decision_title": str(strategy.get("decision_title") or ""),
+        "decision_detail": str(strategy.get("decision_detail") or ""),
+        "description": str(strategy.get("description") or definition.get("description") or ""),
+        "source": str(meta.get("source") or data.get("source") or "manual"),
+        "stale_seconds": stale_seconds,
+    }
+
+
+def strategy_definitions() -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for item in BUILTIN_STRATEGY_DEFINITIONS:
+        definition = normalize_strategy_definition(item, builtin=True)
+        merged[definition["id"]] = definition
+    for item in load_strategy_config().get("strategies", []):
+        if not isinstance(item, dict):
+            continue
+        definition = normalize_strategy_definition(item)
+        if definition["id"] in merged and merged[definition["id"]].get("builtin"):
+            merged[definition["id"]] = {**merged[definition["id"]], **definition, "builtin": True}
+        else:
+            merged[definition["id"]] = definition
+    return list(merged.values())
+
+
+def strategy_definition_by_id(strategy_id: str) -> dict[str, Any] | None:
+    target = safe_strategy_id(strategy_id)
+    for definition in strategy_definitions():
+        if definition["id"] == target:
+            return definition
+    return None
+
+
+def strategy_path_from_definition(definition: dict[str, Any]) -> Path:
+    path_name = str(definition.get("path_name") or "")
+    path = globals().get(path_name)
+    if isinstance(path, Path):
+        return path
+    return BACKEND_DIR / f"{definition.get('storage_key') or f'strategies/custom/{strategy_slug_from_id(definition['id'])}'}.json"
+
+
+def strategy_endpoint_spec(definition: dict[str, Any]) -> EndpointSpec:
+    endpoint = str(definition.get("endpoint") or f"/api/v1/quant/strategies/{definition['id']}")
+    existing = ENDPOINTS.get(endpoint)
+    if existing:
+        return existing
+    return EndpointSpec(
+        endpoint,
+        str(definition.get("storage_key") or f"strategies/custom/{strategy_slug_from_id(definition['id'])}"),
+        "strategy",
+        300,
+        f"{definition.get('name') or definition['id']} 策略运行状态和信号。",
+    )
+
+
+def default_strategy_snapshot(definition: dict[str, Any], status: str | None = None) -> dict[str, Any]:
+    now = now_hk()
+    strategy_status = status or str(definition.get("status") or "idle")
+    return {
+        "meta": {
+            "version": "1.0",
+            "source": "manual",
+            "as_of": now.isoformat(),
+            "trade_date": now.strftime("%Y-%m-%d"),
+            "timezone": "Asia/Hong_Kong",
+            "market_session": market_session(now),
+            "run_id": f"strategy-created-{strategy_slug_from_id(definition['id'])}-{now.strftime('%Y%m%d-%H%M%S')}",
+        },
+        "data": {
+            "strategy": {
+                "id": definition["id"],
+                "name": definition["name"],
+                "status": strategy_status,
+                "category": definition.get("category") or "custom",
+                "provider": definition.get("provider") or "joinquant",
+                "description": definition.get("description") or "",
+                "decision_title": "等待策略上报",
+                "decision_detail": "策略已在网页端创建，等待 JoinQuant 或统一快照接口推送运行数据。",
+                "decision_tone": "warning",
+            },
+            "summary": {
+                "signal_count": 0,
+                "buy_count": 0,
+                "hold_count": 0,
+                "target_exposure_pct": 0,
+                "current_exposure_pct": 0,
+                "day_pnl_pct": None,
+                "floating_pnl_pct": None,
+                "turnover_pct": None,
+            },
+            "signals": [],
+            "recommendations": [],
+            "holdings": [],
+            "themes": [],
+            "risk": {},
+            "regime": {},
+            "events": [
+                {
+                    "time": now.strftime("%H:%M"),
+                    "label": "策略创建",
+                    "detail": "网页端策略注册完成，等待首次快照。",
+                    "status": "done",
+                }
+            ],
+            "logs": [],
+            "source": "manual",
+        },
+    }
+
+
+def build_generic_strategy_payload_from_joinquant(payload: dict[str, Any], definition: dict[str, Any] | None = None) -> dict[str, Any]:
+    now = now_hk()
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    strategy_input = data.get("strategy") if isinstance(data.get("strategy"), dict) else {}
+    summary_input = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+    portfolio_input = data.get("portfolio") if isinstance(data.get("portfolio"), dict) else {}
+    strategy_id = safe_strategy_id(
+        data.get("strategy_id")
+        or strategy_input.get("id")
+        or (definition or {}).get("id")
+    )
+    strategy_name = str(
+        strategy_input.get("name")
+        or data.get("strategy_name")
+        or (definition or {}).get("name")
+        or strategy_id
+    )
+    raw_signals = data.get("signals") or data.get("recommendations") or data.get("targets") or []
+    if not isinstance(raw_signals, list):
+        raw_signals = []
+    signals = [
+        normalize_joinquant_signal(item, index + 1)
+        for index, item in enumerate(raw_signals)
+        if isinstance(item, dict)
+    ]
+    raw_holdings = data.get("holdings") or data.get("positions") or []
+    if not isinstance(raw_holdings, list):
+        raw_holdings = []
+    total_value = to_float(portfolio_input.get("total_value") or data.get("total_value"))
+    holdings = [
+        normalize_joinquant_holding(item, total_value)
+        for item in raw_holdings
+        if isinstance(item, dict)
+    ]
+    raw_events = data.get("events") or []
+    if not isinstance(raw_events, list):
+        raw_events = []
+    events = [normalize_joinquant_event(item) for item in raw_events if isinstance(item, dict)]
+    current_exposure_pct = to_float(summary_input.get("current_exposure_pct") or summary_input.get("exposure_pct") or portfolio_input.get("current_exposure_pct"))
+    if current_exposure_pct is None:
+        current_exposure_pct = sum(to_float(item.get("weight_pct"), 0) or 0 for item in holdings)
+    target_exposure_pct = to_float(summary_input.get("target_exposure_pct"))
+    if target_exposure_pct is None:
+        target_exposure_pct = sum(to_float(item.get("suggested_weight_pct"), 0) or 0 for item in signals)
+    trade_date = str(data.get("trade_date") or now.strftime("%Y-%m-%d"))
+    as_of = str(data.get("as_of") or now.isoformat())
+    run_id = str(data.get("run_id") or f"joinquant-{strategy_slug_from_id(strategy_id)}-{now.strftime('%Y%m%d-%H%M%S')}")
+    latest_logs = normalize_strategy_logs(payload, now.isoformat(), run_id, trade_date, strategy_id)[-ETF_INLINE_LOG_LINES:]
+    decision_title = str(strategy_input.get("decision_title") or data.get("decision_title") or "策略快照已更新")
+    decision_detail = str(
+        strategy_input.get("decision_detail")
+        or data.get("decision_detail")
+        or f"收到 {len(signals)} 条信号，当前持仓 {len(holdings)} 只。"
+    )
+    return {
+        "meta": {
+            "version": "1.0",
+            "source": "joinquant",
+            "as_of": as_of,
+            "trade_date": trade_date,
+            "timezone": "Asia/Hong_Kong",
+            "market_session": market_session(now),
+            "run_id": run_id,
+        },
+        "data": {
+            "strategy": {
+                "id": strategy_id,
+                "name": strategy_name,
+                "status": str(strategy_input.get("status") or data.get("status") or "running"),
+                "category": str(strategy_input.get("category") or (definition or {}).get("category") or "custom"),
+                "provider": "joinquant",
+                "description": str(strategy_input.get("description") or (definition or {}).get("description") or ""),
+                "decision_title": decision_title,
+                "decision_detail": decision_detail,
+                "decision_tone": str(strategy_input.get("decision_tone") or data.get("decision_tone") or "blue"),
+            },
+            "summary": {
+                "signal_count": to_int(summary_input.get("signal_count"), len(signals)),
+                "buy_count": to_int(summary_input.get("buy_count"), sum(1 for row in signals if row.get("action") in {"buy", "add"})),
+                "hold_count": to_int(summary_input.get("hold_count"), len(holdings)),
+                "target_exposure_pct": target_exposure_pct or 0,
+                "current_exposure_pct": current_exposure_pct or 0,
+                "day_pnl_pct": to_float(summary_input.get("day_pnl_pct") or portfolio_input.get("day_pnl_pct")),
+                "floating_pnl_pct": to_float(summary_input.get("floating_pnl_pct") or portfolio_input.get("floating_pnl_pct")),
+                "turnover_pct": to_float(summary_input.get("turnover_pct")),
+            },
+            "signals": signals,
+            "recommendations": signals,
+            "holdings": holdings,
+            "themes": data.get("themes") if isinstance(data.get("themes"), list) else [],
+            "risk": data.get("risk") if isinstance(data.get("risk"), dict) else {},
+            "regime": data.get("regime") if isinstance(data.get("regime"), dict) else {},
+            "events": events or [{"time": now.strftime("%H:%M"), "label": decision_title, "detail": decision_detail, "status": "done"}],
+            "logs": latest_logs,
+            "raw": {"provider": "joinquant", "received_at": now.isoformat()},
+        },
+    }
+
+
 def joinquant_strategy_target(payload: dict[str, Any]) -> tuple[str, str, Path, str]:
     data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
     strategy = data.get("strategy") if isinstance(data.get("strategy"), dict) else {}
@@ -954,31 +1308,13 @@ def joinquant_strategy_target(payload: dict[str, Any]) -> tuple[str, str, Path, 
     text = f"{raw_id} {raw_name}".lower()
     if raw_id == "small-cap-momentum" or "small-cap" in text or "小市值" in text or "涨停基因" in text:
         return "/api/v1/strategies/small-cap", "small-cap-momentum", SMALL_CAP_STRATEGY_PATH, "small_cap"
+    if raw_id and raw_id != "joinquant-wufu-etf-v43":
+        definition = strategy_definition_by_id(raw_id)
+        if definition and not definition.get("builtin"):
+            return str(definition["endpoint"]), definition["id"], strategy_path_from_definition(definition), "generic"
     return "/api/v1/strategies/etf", raw_id or "joinquant-wufu-etf-v43", ETF_STRATEGY_PATH, "etf"
 
 
-STRATEGY_DEFINITIONS = [
-    {
-        "endpoint": "/api/v1/strategies/etf",
-        "path_name": "ETF_STRATEGY_PATH",
-        "default_id": "joinquant-wufu-etf-v43",
-        "default_name": "ETF 策略",
-        "page": "etf.html",
-        "signal_key": "recommendations",
-        "action_key": "action",
-        "label_key": "action_label",
-    },
-    {
-        "endpoint": "/api/v1/strategies/small-cap",
-        "path_name": "SMALL_CAP_STRATEGY_PATH",
-        "default_id": "small-cap-momentum",
-        "default_name": "小市值策略",
-        "page": "small-cap.html",
-        "signal_key": "signals",
-        "action_key": "signal",
-        "label_key": "signal_label",
-    },
-]
 SELL_SIGNAL_ACTIONS = {"sell", "stop", "reduce", "trim"}
 SELL_LOG_KEYWORDS = ("卖出", "止损", "开板", "放量", "换手", "清仓", "全部清仓", "sell", "stop", "reduce", "trim")
 GLOBAL_SELL_KEYWORDS = ("大盘止损", "全部清仓", "清仓")
@@ -990,12 +1326,6 @@ def portfolio_symbol_key(value: Any) -> str:
     return symbol.strip().upper()
 
 
-def strategy_path_from_definition(definition: dict[str, Any]) -> Path:
-    path_name = str(definition.get("path_name") or "")
-    path = globals().get(path_name)
-    return path if isinstance(path, Path) else BACKEND_DIR / "strategies" / f"{definition['default_id']}.json"
-
-
 def load_strategy_payload_for_holdings(definition: dict[str, Any]) -> dict[str, Any] | None:
     path = strategy_path_from_definition(definition)
     if not path.exists():
@@ -1005,7 +1335,7 @@ def load_strategy_payload_for_holdings(definition: dict[str, Any]) -> dict[str, 
     except HTTPException:
         return None
     meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
-    spec = ENDPOINTS[str(definition["endpoint"])]
+    spec = strategy_endpoint_spec(definition)
     return normalize_payload(payload, spec, str(meta.get("source") or "backend"), path)
 
 
@@ -1020,11 +1350,11 @@ def is_real_joinquant_snapshot(payload: dict[str, Any]) -> bool:
 def strategy_context_from_payload(definition: dict[str, Any], payload: dict[str, Any]) -> dict[str, str]:
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     strategy = data.get("strategy") if isinstance(data.get("strategy"), dict) else {}
-    strategy_id = str(strategy.get("id") or definition.get("default_id") or "").strip()
+    strategy_id = str(strategy.get("id") or definition.get("id") or "").strip()
     return {
         "strategy_id": strategy_id,
-        "strategy_name": str(strategy.get("name") or definition.get("default_name") or strategy_id),
-        "strategy_page": str(definition.get("page") or ""),
+        "strategy_name": str(strategy.get("name") or definition.get("name") or strategy_id),
+        "strategy_page": f"{definition.get('page') or 'strategy.html'}?strategy_id={urllib.parse.quote(strategy_id)}",
     }
 
 
@@ -1125,6 +1455,29 @@ def strategy_portfolio_holding_row(
         "trade_date": str(meta.get("trade_date") or ""),
         "run_id": str(meta.get("run_id") or ""),
     }
+
+
+def filter_holdings_payload(payload: dict[str, Any], portfolio_type: str | None = None, strategy_id: str | None = None) -> dict[str, Any]:
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    rows = data.get("holdings") if isinstance(data.get("holdings"), list) else []
+    target_type = str(portfolio_type or "").strip().lower()
+    target_strategy = safe_strategy_id(strategy_id) if strategy_id else ""
+    if target_type in {"quant", "personal"}:
+        rows = [row for row in rows if str(row.get("portfolio_type") or "").lower() == target_type]
+    if target_strategy:
+        rows = [
+            row for row in rows
+            if row.get("strategy_id") and safe_strategy_id(row.get("strategy_id")) == target_strategy
+        ]
+    next_payload = {**payload, "data": {**data}}
+    next_payload["data"]["holdings"] = rows
+    next_payload["data"]["summary"] = strategy_portfolio_summary(rows, data.get("strategy_outputs", {}).get("strategies", []) if isinstance(data.get("strategy_outputs"), dict) else [])
+    next_payload["data"]["allocation"] = strategy_portfolio_allocation(rows)
+    next_payload["meta"] = {
+        **(payload.get("meta") if isinstance(payload.get("meta"), dict) else {}),
+        "query": {"type": portfolio_type or "all", "strategy_id": strategy_id or ""},
+    }
+    return next_payload
 
 
 def strategy_portfolio_summary(rows: list[dict[str, Any]], strategies: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1312,7 +1665,7 @@ def collect_strategy_outputs_for_holdings() -> dict[str, Any]:
     alerts_by_symbol: dict[str, list[dict[str, Any]]] = {}
     strategy_level_alerts: list[dict[str, Any]] = []
 
-    for definition in STRATEGY_DEFINITIONS:
+    for definition in strategy_definitions():
         payload = load_strategy_payload_for_holdings(definition)
         if not payload:
             continue
@@ -1388,6 +1741,15 @@ def enrich_portfolio_holdings_with_strategy_outputs(payload: dict[str, Any]) -> 
     outputs = collect_strategy_outputs_for_holdings()
     source_holdings = outputs["portfolio_rows"]
     static_holdings = data.get("holdings") if isinstance(data.get("holdings"), list) else []
+    personal_holdings = [
+        {
+            **item,
+            "portfolio_type": str(item.get("portfolio_type") or "personal"),
+            "source": str(item.get("source") or "manual"),
+        }
+        for item in static_holdings
+        if isinstance(item, dict) and str(item.get("portfolio_type") or "personal") == "personal"
+    ]
     data["source"] = "joinquant" if outputs["strategies"] else "joinquant-pending"
     data["static_holdings_ignored_count"] = len(static_holdings)
     enriched_holdings: list[dict[str, Any]] = []
@@ -1417,11 +1779,19 @@ def enrich_portfolio_holdings_with_strategy_outputs(payload: dict[str, Any]) -> 
             f"{alert.get('strategy_name')}:{alert.get('action_label')}"
             for alert in exit_alerts[:2]
         )
+        row["portfolio_type"] = "quant"
         enriched_holdings.append(row)
 
-    data["holdings"] = enriched_holdings
-    data["summary"] = strategy_portfolio_summary(enriched_holdings, outputs["strategies"])
-    data["allocation"] = strategy_portfolio_allocation(enriched_holdings)
+    all_holdings = [*enriched_holdings, *personal_holdings]
+    data["holdings"] = all_holdings
+    data["quant_holdings"] = enriched_holdings
+    data["personal_holdings"] = personal_holdings
+    data["summary"] = strategy_portfolio_summary(all_holdings, outputs["strategies"])
+    data["quant_summary"] = strategy_portfolio_summary(enriched_holdings, outputs["strategies"])
+    data["personal_summary"] = strategy_portfolio_summary(personal_holdings, [])
+    data["allocation"] = strategy_portfolio_allocation(all_holdings)
+    data["quant_allocation"] = strategy_portfolio_allocation(enriched_holdings)
+    data["personal_allocation"] = strategy_portfolio_allocation(personal_holdings)
     data["strategy_outputs"] = {
         "updated_at": now_hk().isoformat(),
         "strategies": outputs["strategies"],
@@ -2131,9 +2501,15 @@ def export_strategy_picks(
 
 
 @app.get("/api/v1/portfolio/holdings")
-def portfolio_holdings() -> dict[str, Any]:
+def portfolio_holdings(
+    portfolio_type: str | None = Query(default=None, alias="type"),
+    strategy_id: str | None = Query(default=None),
+) -> dict[str, Any]:
     payload = get_payload("/api/v1/portfolio/holdings")
-    return enrich_portfolio_holdings_with_strategy_outputs(payload)
+    enriched = enrich_portfolio_holdings_with_strategy_outputs(payload)
+    if portfolio_type or strategy_id:
+        return filter_holdings_payload(enriched, portfolio_type, strategy_id)
+    return enriched
 
 
 def parse_query_date(value: str | None, field_name: str) -> date | None:
@@ -2864,6 +3240,190 @@ def performance(
     return build_performance_payload(strategy, benchmark, start, to)
 
 
+def load_quant_strategy_payload(definition: dict[str, Any]) -> dict[str, Any]:
+    path = strategy_path_from_definition(definition)
+    if not path.exists():
+        return normalize_payload(default_strategy_snapshot(definition), strategy_endpoint_spec(definition), "manual", path)
+    payload = load_json(path)
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    return normalize_payload(payload, strategy_endpoint_spec(definition), str(meta.get("source") or "backend"), path)
+
+
+def strategy_status_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        status = str(row.get("status") or "idle")
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+@app.get("/api/v1/quant/strategies")
+def quant_strategies() -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    for definition in strategy_definitions():
+        payload = load_quant_strategy_payload(definition)
+        if definition["id"] == "small-cap-momentum" and not is_real_joinquant_snapshot(payload):
+            payload = pending_small_cap_payload(payload)
+        rows.append(definition_public_row(definition, payload))
+    rows.sort(key=lambda row: (not bool(row.get("builtin")), str(row.get("name") or row.get("id"))))
+    now = now_hk()
+    return {
+        "meta": {
+            "version": "1.0",
+            "source": "backend",
+            "as_of": now.isoformat(),
+            "trade_date": now.strftime("%Y-%m-%d"),
+            "timezone": "Asia/Hong_Kong",
+            "market_session": market_session(now),
+            "run_id": f"quant-strategies-{now.strftime('%Y%m%d-%H%M%S')}",
+            "storage_path": str(STRATEGY_CONFIG_PATH.relative_to(ROOT)),
+        },
+        "data": {
+            "strategies": rows,
+            "summary": {
+                "strategy_count": len(rows),
+                "running_count": sum(1 for row in rows if row.get("status") == "running"),
+                "inactive_count": sum(1 for row in rows if row.get("status") in {"idle", "paused", "stopped", "pending"}),
+                "status_counts": strategy_status_counts(rows),
+            },
+            "create_endpoint": "/api/v1/quant/strategies",
+            "snapshot_endpoint_template": "/api/v1/quant/strategies/{strategy_id}/snapshot",
+        },
+    }
+
+
+@app.post("/api/v1/quant/strategies")
+def create_quant_strategy(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    verify_action_permission(request)
+    definition = normalize_strategy_definition({**payload, "status": payload.get("status") or "idle"})
+    if definition["id"] in {item["id"] for item in BUILTIN_STRATEGY_DEFINITIONS}:
+        raise HTTPException(status_code=409, detail="内置策略不能重复创建")
+    config = load_strategy_config()
+    rows = [normalize_strategy_definition(item) for item in config.get("strategies", []) if isinstance(item, dict)]
+    if any(row["id"] == definition["id"] for row in rows):
+        raise HTTPException(status_code=409, detail="策略 ID 已存在")
+    rows.append(definition)
+    save_strategy_config(rows)
+    storage_path = strategy_path_from_definition(definition)
+    if not storage_path.exists():
+        write_json_atomic(storage_path, default_strategy_snapshot(definition))
+    result = action_response(
+        "strategy_create",
+        {
+            "strategy_id": definition["id"],
+            "strategy_name": definition["name"],
+            "message": "策略已创建",
+            "storage_path": str(storage_path.relative_to(ROOT)),
+        },
+    )
+    result["data"]["strategy"] = definition_public_row(definition, load_quant_strategy_payload(definition))
+    return result
+
+
+@app.get("/api/v1/quant/strategies/{strategy_id}")
+def quant_strategy_detail(strategy_id: str) -> dict[str, Any]:
+    definition = strategy_definition_by_id(strategy_id)
+    if not definition:
+        raise HTTPException(status_code=404, detail="策略不存在")
+    payload = load_quant_strategy_payload(definition)
+    if definition["id"] == "small-cap-momentum" and not is_real_joinquant_snapshot(payload):
+        payload = pending_small_cap_payload(payload)
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    data["registry"] = definition_public_row(definition, payload)
+    data["snapshot_endpoint"] = f"/api/v1/quant/strategies/{definition['id']}/snapshot"
+    data["holdings_url"] = f"/holdings.html?type=quant&strategy_id={urllib.parse.quote(definition['id'])}"
+    return payload
+
+
+@app.post("/api/v1/quant/strategies/{strategy_id}/snapshot")
+def receive_quant_strategy_snapshot(strategy_id: str, request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    verify_action_permission(request)
+    verify_joinquant_token(request, payload)
+    definition = strategy_definition_by_id(strategy_id)
+    if not definition:
+        raise HTTPException(status_code=404, detail="策略不存在，请先在网页端创建策略")
+    payload_data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    payload_data.setdefault("strategy_id", definition["id"])
+    payload_data.setdefault("strategy_name", definition["name"])
+    next_payload = build_generic_strategy_payload_from_joinquant(payload_data, definition)
+    storage_path = strategy_path_from_definition(definition)
+    received_at = now_hk().isoformat()
+    stored_logs = append_strategy_logs(
+        payload_data,
+        received_at,
+        next_payload["meta"]["run_id"],
+        next_payload["meta"]["trade_date"],
+        definition["id"],
+    )
+    if stored_logs:
+        next_payload["data"]["logs"] = stored_logs[-ETF_INLINE_LOG_LINES:]
+    normalized_next_payload = normalize_payload(next_payload, strategy_endpoint_spec(definition), "joinquant", storage_path)
+    performance_snapshot = persist_joinquant_performance_snapshot(
+        payload_data,
+        normalized_next_payload,
+        definition["id"],
+        str(definition["endpoint"]),
+        storage_path,
+        received_at,
+    )
+    if performance_snapshot:
+        next_payload.setdefault("data", {})["performance_snapshot"] = {
+            "snapshot_id": performance_snapshot["snapshot_id"],
+            "total_value": performance_snapshot["total_value"],
+            "cash": performance_snapshot["cash"],
+            "positions_market_value": performance_snapshot["positions_market_value"],
+            "reconciliation_diff": performance_snapshot["reconciliation"]["diff"],
+            "nav_ledger_path": performance_snapshot["trace"]["nav_ledger_path"],
+        }
+        normalized_next_payload.setdefault("data", {})["performance_snapshot"] = next_payload["data"]["performance_snapshot"]
+    write_json_atomic(storage_path, next_payload)
+    append_jsonl(
+        JOINQUANT_SIGNAL_LOG_PATH,
+        {
+            "received_at": received_at,
+            "run_id": next_payload["meta"]["run_id"],
+            "trade_date": next_payload["meta"]["trade_date"],
+            "strategy_id": definition["id"],
+            "endpoint": str(definition["endpoint"]),
+            "source_ip": request.client.host if request.client else None,
+            "log_count": len(stored_logs),
+            "payload": redact_secret_fields(payload_data),
+        },
+    )
+    return normalized_next_payload
+
+
+@app.get("/api/v1/quant/strategies/{strategy_id}/logs")
+def quant_strategy_logs(
+    strategy_id: str,
+    limit: int = Query(default=ETF_INLINE_LOG_LINES, ge=1, le=2000),
+    trade_date: str | None = Query(default=None),
+    run_id: str | None = Query(default=None),
+) -> dict[str, Any]:
+    definition = strategy_definition_by_id(strategy_id)
+    if not definition:
+        raise HTTPException(status_code=404, detail="策略不存在")
+    rows = get_recent_strategy_logs(limit, trade_date=trade_date, run_id=run_id, strategy_id=definition["id"])
+    now = now_hk()
+    return {
+        "meta": {
+            "version": "1.0",
+            "source": "joinquant",
+            "as_of": now.isoformat(),
+            "trade_date": trade_date or now.strftime("%Y-%m-%d"),
+            "timezone": "Asia/Hong_Kong",
+            "market_session": market_session(now),
+            "run_id": f"strategy-logs-{definition['id']}-{now.strftime('%Y%m%d-%H%M%S')}",
+            "storage_path": str(JOINQUANT_FULL_LOG_PATH.relative_to(ROOT)),
+        },
+        "data": {
+            "strategy": definition_public_row(definition),
+            "count": len(rows),
+            "items": rows,
+        },
+    }
+
+
 def heatmap_group_key(cell: dict[str, Any], group_by: str) -> list[tuple[str, str]]:
     if group_by == "size":
         cap = to_float(cell.get("market_cap") or cell.get("weight"), 0) or 0
@@ -3002,8 +3562,11 @@ def receive_joinquant_signals(request: Request, payload: dict[str, Any] = Body(.
     verify_action_permission(request)
     verify_joinquant_token(request, payload)
     target_path, strategy_id, storage_path, strategy_kind = joinquant_strategy_target(payload)
+    definition = strategy_definition_by_id(strategy_id) if strategy_kind == "generic" else None
     if strategy_kind == "small_cap":
         next_payload = build_small_cap_strategy_payload_from_joinquant(payload)
+    elif strategy_kind == "generic":
+        next_payload = build_generic_strategy_payload_from_joinquant(payload, definition)
     else:
         next_payload = build_etf_strategy_payload_from_joinquant(payload)
     received_at = now_hk().isoformat()
@@ -3016,9 +3579,10 @@ def receive_joinquant_signals(request: Request, payload: dict[str, Any] = Body(.
     )
     if stored_logs:
         next_payload["data"]["logs"] = stored_logs[-ETF_INLINE_LOG_LINES:]
+    target_spec = strategy_endpoint_spec(definition) if strategy_kind == "generic" and definition else ENDPOINTS[target_path]
     normalized_next_payload = normalize_payload(
         next_payload,
-        ENDPOINTS[target_path],
+        target_spec,
         "joinquant",
         storage_path,
     )
@@ -3041,7 +3605,7 @@ def receive_joinquant_signals(request: Request, payload: dict[str, Any] = Body(.
         }
         normalized_next_payload.setdefault("data", {})["performance_snapshot"] = next_payload["data"]["performance_snapshot"]
     schema = PAYLOAD_SCHEMAS.get(target_path)
-    if schema:
+    if schema and strategy_kind != "generic":
         try:
             validate_payload(
                 schema,
@@ -3064,6 +3628,8 @@ def receive_joinquant_signals(request: Request, payload: dict[str, Any] = Body(.
             "payload": redact_secret_fields(payload),
         },
     )
+    if strategy_kind == "generic":
+        return normalized_next_payload
     return validate_response_payload(
         target_path,
         normalized_next_payload,
@@ -3136,6 +3702,11 @@ app.mount("/data", StaticFiles(directory=DATA_DIR), name="data")
 app.mount("/src", StaticFiles(directory=ROOT / "src"), name="src")
 if (ROOT / "assets").exists():
     app.mount("/assets", StaticFiles(directory=ROOT / "assets"), name="assets")
+
+
+@app.get("/", include_in_schema=False)
+def static_root() -> FileResponse:
+    return FileResponse(ROOT / STATIC_PAGES["/"])
 
 
 @app.get("/{page_path:path}", include_in_schema=False)
