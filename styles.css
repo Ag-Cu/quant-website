@@ -2222,6 +2222,44 @@ body.sidebar-collapsed .sidebar-toggle::before {
   overflow-x: auto;
 }
 
+.chart-summary-bar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin-bottom: 12px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--line);
+}
+
+.chart-summary-bar > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  padding: 10px 12px;
+  background: rgba(var(--surface-rgb), 0.92);
+}
+
+.chart-summary-bar span,
+.chart-summary-bar small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-summary-bar strong {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 17px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .equity-chart {
   display: block;
   width: 100%;
@@ -2231,6 +2269,48 @@ body.sidebar-collapsed .sidebar-toggle::before {
 
 .chart-grid-line {
   stroke: rgba(20, 20, 19, 0.08);
+}
+
+.chart-grid-line.x-grid {
+  stroke: rgba(20, 20, 19, 0.05);
+}
+
+.axis-line {
+  stroke: rgba(20, 20, 19, 0.28);
+  stroke-width: 1;
+}
+
+.axis-tick,
+.axis-label,
+.series-end-label {
+  fill: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.y-tick {
+  text-anchor: end;
+}
+
+.x-tick {
+  text-anchor: middle;
+}
+
+.axis-label {
+  fill: var(--ink-soft);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.chart-x-label {
+  text-anchor: end;
+}
+
+.series-end-label {
+  fill: var(--ink-soft);
+  font-weight: 700;
 }
 
 .zero-line {
@@ -2259,6 +2339,48 @@ body.sidebar-collapsed .sidebar-toggle::before {
   stroke: var(--muted);
   stroke-dasharray: 6 7;
   stroke-width: 1.4;
+}
+
+.chart-last-dot {
+  fill: var(--surface);
+  stroke: var(--accent);
+  stroke-width: 2.2;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 18px;
+  height: 3px;
+  border-radius: 999px;
+}
+
+.legend-swatch.strategy {
+  background: var(--accent);
+}
+
+.legend-swatch.benchmark {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--muted) 0 5px,
+    transparent 5px 9px
+  );
 }
 
 .metric-strip {
@@ -2317,6 +2439,134 @@ body.sidebar-collapsed .sidebar-toggle::before {
   font-size: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+body[data-page="performance"] .page-content {
+  width: min(1680px, 100%);
+  padding-top: 18px;
+}
+
+body[data-page="performance"] .summary-grid {
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+body[data-page="performance"] .metric-card {
+  gap: 5px;
+  padding: 11px 12px;
+}
+
+body[data-page="performance"] .metric-card strong {
+  font-size: 21px;
+}
+
+body[data-page="performance"] .strategy-toolbar {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+}
+
+body[data-page="performance"] .side-status {
+  gap: 3px;
+  padding: 8px 10px;
+}
+
+body[data-page="performance"] .side-status small {
+  display: none;
+}
+
+.performance-analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.performance-chart-panel {
+  padding: 14px;
+}
+
+.performance-chart-panel .panel-header {
+  margin-bottom: 10px;
+}
+
+.performance-chart-panel .equity-chart {
+  min-width: 920px;
+}
+
+.performance-metrics-panel {
+  grid-column: 1 / -1;
+  grid-auto-columns: minmax(128px, 1fr);
+  gap: 8px;
+  margin-bottom: 0;
+}
+
+.performance-metrics-panel .perf-metric {
+  gap: 4px;
+  padding: 10px 11px;
+}
+
+.performance-metrics-panel .perf-metric strong {
+  font-size: 18px;
+}
+
+.performance-status-strip {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(20, 20, 19, 0.025);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.performance-status-strip span {
+  display: inline-flex;
+  max-width: 100%;
+  min-height: 24px;
+  align-items: center;
+  gap: 5px;
+  border-right: 1px solid var(--line);
+  padding-right: 8px;
+  overflow-wrap: anywhere;
+}
+
+.performance-status-strip span:last-child {
+  border-right: 0;
+}
+
+.performance-status-strip b {
+  color: var(--ink-soft);
+  font-weight: 750;
+}
+
+.performance-technical-details {
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(var(--surface-rgb), 0.74);
+}
+
+.performance-technical-details summary {
+  cursor: pointer;
+  padding: 9px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.performance-technical-details[open] summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.compact-source-status {
+  padding: 10px;
+}
+
+.compact-source-status > div {
+  padding: 9px 10px;
 }
 
 .monthly-heat {
@@ -2491,6 +2741,7 @@ body.sidebar-collapsed .sidebar-toggle::before {
 @media (max-width: 1240px) {
   .summary-grid,
   .source-status-grid,
+  .chart-summary-bar,
   .pick-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2584,6 +2835,7 @@ body.sidebar-collapsed .sidebar-toggle::before {
   .summary-grid,
   .decision-metrics,
   .source-status-grid,
+  .chart-summary-bar,
   .signal-card-grid,
   .strategy-card-grid,
   .strategy-create-form,
@@ -2625,6 +2877,20 @@ body.sidebar-collapsed .sidebar-toggle::before {
 
   .monthly-heat {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .performance-metrics-panel {
+    grid-auto-columns: minmax(120px, 72vw);
+  }
+
+  .performance-status-strip {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .performance-status-strip span {
+    border-right: 0;
+    padding-right: 0;
   }
 }
 
@@ -3021,8 +3287,9 @@ button.is-loading {
   }
 
   .performance-chart-panel .chart-panel {
-    max-height: 340px;
-    overflow: auto hidden;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: visible;
   }
 
   .performance-chart-panel .equity-chart {

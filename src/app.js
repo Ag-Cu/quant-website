@@ -422,6 +422,16 @@ function formatDateTime(value) {
   return new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Hong_Kong", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(date);
 }
 
+function formatAxisDate(value, spanMs = 0) {
+  if (!value && value !== 0) return "--";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
+  const options = spanMs > 370 * 24 * 60 * 60 * 1000
+    ? { timeZone: "Asia/Hong_Kong", year: "2-digit", month: "2-digit" }
+    : { timeZone: "Asia/Hong_Kong", month: "2-digit", day: "2-digit" };
+  return new Intl.DateTimeFormat("zh-CN", options).format(date).replace(/\//g, "-");
+}
+
 function formatFullDateTime(value) {
   if (!value) return "--";
   const date = new Date(value);
@@ -693,39 +703,121 @@ function factorBars(factors = []) {
   }).join("")}</div>`;
 }
 
-function equityChart(series, benchmark = []) {
-  if (!Array.isArray(series) || series.length < 2) return `<div class="empty-state">暂无曲线数据</div>`;
-  const width = 960;
-  const height = 360;
-  const pad = { top: 28, right: 36, bottom: 38, left: 34 };
-  const benchmarkSeries = Array.isArray(benchmark) && benchmark.length > 1 ? benchmark : [];
-  const all = [...series, ...benchmarkSeries];
-  const min = Math.min(...all, -8);
-  const max = Math.max(...all, 10);
-  const toPoint = (value, index, length) => {
-    const x = pad.left + (index / Math.max(1, length - 1)) * (width - pad.left - pad.right);
-    const y = pad.top + (1 - (value - min) / (max - min || 1)) * (height - pad.top - pad.bottom);
+function chartPoint(item, index) {
+  const value = typeof item === "object" && item !== null
+    ? Number(item.return_pct ?? item.value ?? item.net_value ?? item.equity)
+    : Number(item);
+  const dateText = typeof item === "object" && item !== null ? item.date || item.trade_date || item.as_of || "" : "";
+  const timestamp = dateText ? new Date(dateText).getTime() : NaN;
+  return {
+    value,
+    date: dateText ? String(dateText).slice(0, 10) : "",
+    time: Number.isNaN(timestamp) ? null : timestamp,
+    index,
+  };
+}
+
+function niceDomain(values) {
+  const valid = values.filter((value) => Number.isFinite(value));
+  if (!valid.length) return { min: -5, max: 5, ticks: [-5, -2.5, 0, 2.5, 5] };
+  const rawMin = Math.min(...valid, 0);
+  const rawMax = Math.max(...valid, 0);
+  const rawSpan = rawMax - rawMin || Math.max(Math.abs(rawMax), 1);
+  const paddedMin = rawMin - rawSpan * 0.1;
+  const paddedMax = rawMax + rawSpan * 0.1;
+  const targetTicks = 5;
+  const roughStep = (paddedMax - paddedMin) / Math.max(1, targetTicks - 1);
+  const power = 10 ** Math.floor(Math.log10(Math.max(roughStep, 0.0001)));
+  const step = [1, 2, 5, 10].map((unit) => unit * power).find((candidate) => roughStep <= candidate) || power * 10;
+  const min = Math.floor(paddedMin / step) * step;
+  const max = Math.ceil(paddedMax / step) * step;
+  const tickCount = Math.round((max - min) / step);
+  const ticks = Array.from({ length: tickCount + 1 }, (_, index) => Number((min + step * index).toFixed(6)));
+  return { min, max, ticks };
+}
+
+function equityChart(series, benchmark = [], options = {}) {
+  const points = Array.isArray(series) ? series.map(chartPoint).filter((point) => Number.isFinite(point.value)) : [];
+  if (points.length < 2) return `<div class="empty-state">暂无曲线数据</div>`;
+  const benchmarkPoints = Array.isArray(benchmark) ? benchmark.map(chartPoint).filter((point) => Number.isFinite(point.value)) : [];
+  const activeBenchmark = benchmarkPoints.length > 1 ? benchmarkPoints : [];
+  const width = 1040;
+  const height = 390;
+  const pad = { top: 34, right: 92, bottom: 58, left: 72 };
+  const allPoints = [...points, ...activeBenchmark];
+  const values = allPoints.map((point) => point.value);
+  const { min, max, ticks } = niceDomain(values);
+  const timeMode = allPoints.length > 1 && allPoints.every((point) => point.time !== null);
+  const minTime = timeMode ? Math.min(...allPoints.map((point) => point.time)) : 0;
+  const maxTime = timeMode ? Math.max(...allPoints.map((point) => point.time)) : points.length - 1;
+  const spanTime = Math.max(1, maxTime - minTime);
+  const tickPositions = timeMode
+    ? [0, 0.25, 0.5, 0.75, 1].map((ratio) => minTime + spanTime * ratio)
+    : [0, 0.25, 0.5, 0.75, 1].map((ratio) => Math.round((points.length - 1) * ratio));
+  const toPoint = (point, fallbackIndex = 0, fallbackLength = points.length) => {
+    const xRatio = timeMode
+      ? ((point.time ?? minTime) - minTime) / spanTime
+      : fallbackIndex / Math.max(1, fallbackLength - 1);
+    const x = pad.left + xRatio * (width - pad.left - pad.right);
+    const y = pad.top + (1 - (point.value - min) / (max - min || 1)) * (height - pad.top - pad.bottom);
     return [x, y];
   };
-  const path = (items) => items.map((value, index) => {
-    const [x, y] = toPoint(value, index, items.length);
+  const path = (items) => items.map((point, index) => {
+    const [x, y] = toPoint(point, index, items.length);
     return `${index ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`;
   }).join(" ");
-  const lastSeriesValue = series[series.length - 1];
-  const area = `${path(series)} L${toPoint(lastSeriesValue, series.length - 1, series.length)[0].toFixed(1)} ${height - pad.bottom} L${pad.left} ${height - pad.bottom} Z`;
-  const zeroY = toPoint(0, 0, series.length)[1];
+  const lastPoint = points[points.length - 1];
+  const firstPoint = points[0];
+  const lastBenchmarkPoint = activeBenchmark[activeBenchmark.length - 1];
+  const lastSeriesPosition = toPoint(lastPoint, points.length - 1, points.length);
+  const endLabelOnRight = lastSeriesPosition[0] > width - pad.right - 140;
+  const endLabelX = endLabelOnRight ? lastSeriesPosition[0] - 10 : lastSeriesPosition[0] + 10;
+  const endLabelAnchor = endLabelOnRight ? "end" : "start";
+  const area = `${path(points)} L${lastSeriesPosition[0].toFixed(1)} ${height - pad.bottom} L${pad.left} ${height - pad.bottom} Z`;
+  const zeroY = toPoint({ value: 0, time: timeMode ? minTime : null }, 0, points.length)[1];
+  const seriesLabel = options.seriesLabel || "策略";
+  const benchmarkLabel = options.benchmarkLabel || "基准";
+  const periodLabel = timeMode
+    ? `${formatAxisDate(minTime, spanTime)} - ${formatAxisDate(maxTime, spanTime)}`
+    : `${intText(points.length)} 点`;
+  const yRangeLabel = `${pctText(min, 1)} 至 ${pctText(max, 1)}`;
 
   return `
     <div class="chart-panel">
+      <div class="chart-summary-bar">
+        <div><span>${escapeHtml(seriesLabel)}</span><strong class="${toneClassByValue(lastPoint.value)}">${pctText(lastPoint.value)}</strong><small>${escapeHtml(firstPoint.date || "起点")} → ${escapeHtml(lastPoint.date || "最新")}</small></div>
+        ${activeBenchmark.length ? `<div><span>${escapeHtml(benchmarkLabel)}</span><strong class="${toneClassByValue(lastBenchmarkPoint.value)}">${pctText(lastBenchmarkPoint.value)}</strong><small>${intText(activeBenchmark.length)} 个基准点</small></div>` : ""}
+        <div><span>横轴</span><strong>${escapeHtml(periodLabel)}</strong><small>日期范围</small></div>
+        <div><span>纵轴</span><strong>${escapeHtml(yRangeLabel)}</strong><small>收益率区间</small></div>
+      </div>
       <svg class="equity-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="历史收益曲线">
         <defs><linearGradient id="equityFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="rgba(140,90,43,.24)"/><stop offset="100%" stop-color="rgba(140,90,43,0)"/></linearGradient></defs>
-        ${[0.2, 0.4, 0.6, 0.8].map((ratio) => `<line class="chart-grid-line" x1="${pad.left}" x2="${width - pad.right}" y1="${pad.top + ratio * (height - pad.top - pad.bottom)}" y2="${pad.top + ratio * (height - pad.top - pad.bottom)}"/>`).join("")}
-        <rect class="drawdown-zone" x="430" y="${pad.top}" width="112" height="${height - pad.top - pad.bottom}"></rect>
+        <line class="axis-line" x1="${pad.left}" x2="${pad.left}" y1="${pad.top}" y2="${height - pad.bottom}"></line>
+        <line class="axis-line" x1="${pad.left}" x2="${width - pad.right}" y1="${height - pad.bottom}" y2="${height - pad.bottom}"></line>
+        ${ticks.map((tick) => {
+          const y = toPoint({ value: tick, time: timeMode ? minTime : null }, 0, points.length)[1];
+          return `<line class="chart-grid-line" x1="${pad.left}" x2="${width - pad.right}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}"/><text class="axis-tick y-tick" x="${pad.left - 12}" y="${(y + 4).toFixed(1)}">${pctText(tick, Math.abs(tick) < 10 ? 1 : 0)}</text>`;
+        }).join("")}
+        ${tickPositions.map((tick) => {
+          const ratio = timeMode ? (tick - minTime) / spanTime : tick / Math.max(1, points.length - 1);
+          const x = pad.left + ratio * (width - pad.left - pad.right);
+          const label = timeMode ? formatAxisDate(tick, spanTime) : intText(tick + 1);
+          return `<line class="chart-grid-line x-grid" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${pad.top}" y2="${height - pad.bottom}"/><text class="axis-tick x-tick" x="${x.toFixed(1)}" y="${height - pad.bottom + 24}">${escapeHtml(label)}</text>`;
+        }).join("")}
+        <text class="axis-label chart-y-label" x="18" y="${pad.top + 4}">收益率</text>
+        <text class="axis-label chart-x-label" x="${width - pad.right}" y="${height - 16}">日期</text>
         <line class="zero-line" x1="${pad.left}" x2="${width - pad.right}" y1="${zeroY}" y2="${zeroY}"></line>
         <path class="equity-area" d="${area}"></path>
-        <path class="equity-line" d="${path(series)}"></path>
-        ${benchmarkSeries.length ? `<path class="benchmark-line" d="${path(benchmarkSeries)}"></path>` : ""}
+        <path class="equity-line" d="${path(points)}"></path>
+        ${activeBenchmark.length ? `<path class="benchmark-line" d="${path(activeBenchmark)}"></path>` : ""}
+        <circle class="chart-last-dot" cx="${lastSeriesPosition[0].toFixed(1)}" cy="${lastSeriesPosition[1].toFixed(1)}" r="4.2"></circle>
+        <text class="series-end-label" x="${endLabelX.toFixed(1)}" y="${(lastSeriesPosition[1] + 4).toFixed(1)}" text-anchor="${endLabelAnchor}">${escapeHtml(seriesLabel)} ${pctText(lastPoint.value, 1)}</text>
       </svg>
+      <div class="chart-legend">
+        <span><i class="legend-swatch strategy"></i>${escapeHtml(seriesLabel)}</span>
+        ${activeBenchmark.length ? `<span><i class="legend-swatch benchmark"></i>${escapeHtml(benchmarkLabel)}</span>` : ""}
+        <span>点数 ${intText(points.length)}${activeBenchmark.length ? ` / 基准 ${intText(activeBenchmark.length)}` : ""}</span>
+      </div>
     </div>
   `;
 }
@@ -1223,6 +1315,11 @@ function performanceStrategyTabs(strategies = [], activeStrategy = "") {
   return strategies.map((item) => `<button type="button" data-strategy="${escapeHtml(item.id)}" class="${item.id === activeStrategy ? "active" : ""}"><span>${escapeHtml(item.label)}</span>${tag(item.source === "manual" ? "个人" : item.source === "joinquant" ? "量化" : "历史", strategySourceTone(item.source || ""))}</button>`).join("");
 }
 
+function currentStrategyLabel(strategies = [], activeStrategy = "") {
+  const found = strategies.find((item) => item.id === activeStrategy);
+  return found?.label || activeStrategy || "策略";
+}
+
 function renderHoldings(payload) {
   const summary = payload.data?.summary || {};
   const source = payload.data?.holdings || [];
@@ -1480,20 +1577,34 @@ function renderPerformance(payload) {
   const metricsData = data.metrics || {};
   if (data.strategy && !performanceState.strategy) performanceState.strategy = data.strategy;
   if (data.benchmark_id && !performanceState.benchmark) performanceState.benchmark = data.benchmark_id;
-  const equity = data.equity_curve?.length ? data.equity_curve.map((item) => Number(item.return_pct)) : [];
-  const benchmark = data.benchmark_curve?.length ? data.benchmark_curve.map((item) => Number(item.return_pct)) : [];
+  const equity = data.equity_curve?.length ? data.equity_curve : [];
+  const benchmark = data.benchmark_curve?.length ? data.benchmark_curve : [];
   const monthly = data.monthly_returns || [];
   const strategies = data.strategies?.length ? data.strategies : [{ id: data.strategy || "momentum", label: data.strategy_label || "动量策略", source: data.nav_source?.source || "unknown" }];
   const benchmarks = data.benchmarks?.length ? data.benchmarks : [{ id: data.benchmark_id || "CSI300", label: data.benchmark || "沪深300" }];
   const navSource = data.nav_source || {};
   const benchmarkStatus = data.benchmark_status || {};
   const reconciliation = data.reconciliation || {};
-  const sourceTone = navSource.source === "joinquant" ? "positive" : navSource.source === "joinquant-stale" ? "warning" : "neutral";
+  const lastEquityPoint = equity[equity.length - 1] || {};
+  const firstEquityPoint = equity[0] || {};
+  const lastBenchmarkPoint = benchmark[benchmark.length - 1] || {};
+  const selectedStrategyLabel = data.strategy_label || currentStrategyLabel(strategies, data.strategy);
   const sourceCards = [
-    metricCard("策略净值来源", navSource.source || payload.meta?.source || "--", `最后上报 ${formatDateTime(navSource.last_seen || payload.meta?.last_seen)}`, sourceTone),
-    metricCard("上报延迟", secondsText(navSource.stale_seconds ?? payload.meta?.stale_seconds), `阈值 ${secondsText(navSource.stale_after_seconds)}`, sourceTone),
-    metricCard("账户总资产", reconciliation.total_value === null || reconciliation.total_value === undefined ? "--" : `¥${intText(reconciliation.total_value)}`, `现金 ¥${intText(reconciliation.cash)}`, "neutral"),
-    metricCard("对账差额", reconciliation.diff === null || reconciliation.diff === undefined ? "--" : `¥${intText(reconciliation.diff)}`, "total - cash - positions", Math.abs(Number(reconciliation.diff || 0)) <= 1 ? "positive" : "warning"),
+    metricCard("累计收益", pctText(lastEquityPoint.return_pct), `${escapeHtml(firstEquityPoint.date || "--")} 起`, toneByValue(lastEquityPoint.return_pct)),
+    metricCard("年化收益", pctText(metricsData.annual_return_pct), "Annualized", toneByValue(metricsData.annual_return_pct)),
+    metricCard("最大回撤", pctText(metricsData.max_drawdown_pct), "Max drawdown", toneByValue(metricsData.max_drawdown_pct)),
+    metricCard("夏普比率", valueText(metricsData.sharpe, 2), "Sharpe", toneByValue(metricsData.sharpe)),
+    metricCard("基准收益", benchmark.length ? pctText(lastBenchmarkPoint.return_pct) : "--", data.benchmark || "未选择基准", toneByValue(lastBenchmarkPoint.return_pct)),
+  ];
+  const statusItems = [
+    ["策略", selectedStrategyLabel],
+    ["来源", navSource.source || payload.meta?.source || "--"],
+    ["点数", `${intText(navSource.point_count ?? equity.length)} 点`],
+    ["最后上报", formatDateTime(navSource.last_seen || payload.meta?.last_seen)],
+    ["延迟", secondsText(navSource.stale_seconds ?? payload.meta?.stale_seconds)],
+    ["账户", reconciliation.total_value === null || reconciliation.total_value === undefined ? "--" : `¥${intText(reconciliation.total_value)}`],
+    ["现金", reconciliation.cash === null || reconciliation.cash === undefined ? "--" : `¥${intText(reconciliation.cash)}`],
+    ["差额", reconciliation.diff === null || reconciliation.diff === undefined ? "--" : `¥${intText(reconciliation.diff)}`],
   ];
   const ranges = [
     { id: "3M", label: "3M" },
@@ -1523,20 +1634,29 @@ function renderPerformance(payload) {
       </div>
     </section>
     ${summaryGrid(sourceCards)}
-    ${panel({ title: "历史收益曲线", kicker: "Historical Performance", span: "span-12", body: equityChart(equity, benchmark) })}
-    ${panel({
-      title: "实时链路状态",
-      kicker: "JoinQuant Performance Chain",
-      span: "span-12",
-      body: `<div class="source-status-grid">
+    <section class="performance-analysis-grid">
+      ${panel({
+        title: "历史收益曲线",
+        kicker: "Historical Performance",
+        span: "span-12 performance-chart-panel",
+        tools: `${pill(`${intText(equity.length)} 点`, "blue")}${benchmark.length ? pill(`基准 ${intText(benchmark.length)} 点`, "neutral") : ""}`,
+        body: equityChart(equity, benchmark, { seriesLabel: selectedStrategyLabel, benchmarkLabel: data.benchmark || data.benchmark_id || "基准" }),
+      })}
+      <section class="metric-strip performance-metrics-panel">${metrics.map(([label, value, delta, tone]) => `<article class="perf-metric"><span>${label}</span><strong class="tone-${tone}">${value}</strong><small>${delta}</small></article>`).join("")}</section>
+      <div class="performance-status-strip" aria-label="数据链路状态">
+        ${statusItems.map(([label, value]) => `<span><b>${escapeHtml(label)}</b>${escapeHtml(value)}</span>`).join("")}
+      </div>
+      ${panel({ title: "月度收益热力", kicker: "Monthly Return Heatmap", span: "span-12", body: monthly.length ? `<div class="monthly-heat">${monthly.map((item) => { const value = Number(item.return_pct || 0); return `<span class="${toneByValue(value)}" title="${item.year || ""}-${item.month || ""} ${pctText(value)}">${pctText(value, 1)}</span>`; }).join("")}</div>` : `<div class="empty-state">暂无月度收益数据</div>` })}
+    </section>
+    <details class="performance-technical-details">
+      <summary>数据链路明细</summary>
+      <div class="source-status-grid compact-source-status">
         <div><span>策略快照</span><strong>${escapeHtml(navSource.source || payload.meta?.source || "--")}</strong><small>${escapeHtml(navSource.snapshot_path || "--")}</small></div>
         <div><span>净值流水</span><strong>${intText(navSource.point_count)} 点</strong><small>${escapeHtml(navSource.storage_path || "--")}</small></div>
         <div><span>基准来源</span><strong>${escapeHtml(benchmarkStatus.source_name || benchmarkStatus.source || "--")}</strong><small>${escapeHtml(benchmarkStatus.trade_date || "--")} · ${secondsText(benchmarkStatus.stale_seconds)}</small></div>
         <div><span>当前请求</span><strong>${escapeHtml(data.strategy || "--")}</strong><small>${escapeHtml(data.benchmark_id || "无基准")}</small></div>
-      </div>`,
-    })}
-    <section class="metric-strip">${metrics.map(([label, value, delta, tone]) => `<article class="perf-metric"><span>${label}</span><strong class="tone-${tone}">${value}</strong><small>${delta}</small></article>`).join("")}</section>
-    ${panel({ title: "月度收益热力", kicker: "Monthly Return Heatmap", span: "span-12", body: monthly.length ? `<div class="monthly-heat">${monthly.map((item) => { const value = Number(item.return_pct || 0); return `<span class="${toneByValue(value)}" title="${item.year || ""}-${item.month || ""} ${pctText(value)}">${pctText(value, 1)}</span>`; }).join("")}</div>` : `<div class="empty-state">暂无月度收益数据</div>` })}
+      </div>
+    </details>
   `;
   dom.app.querySelectorAll("[data-strategy]").forEach((button) => {
     button.addEventListener("click", () => {
