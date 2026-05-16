@@ -1,24 +1,33 @@
 # 聚宽策略 Webhook 接入
 
-目标：聚宽策略继续在聚宽运行和下单，网站只接收策略信号并更新“量化策略”和“持仓信息”页面。
+目标：聚宽策略继续在聚宽运行和下单，网站只接收策略动作事件，并在网站端计算量化持仓和收益曲线。
 
-## 网站后端
+## 推荐链路
 
-推荐的新策略接收入口：
+1. 在网页端“量化策略”页面创建策略，得到 `strategy_id`。
+2. 聚宽只向网站上报动作事件：信号、订单、成交、调仓解释。
+3. 网站把事件写入 `data/backend/performance/strategy-events.jsonl`。
+4. 网站按事件台账、本地现金、持仓成本和交易日收盘价计算 `/api/v1/performance` 的日频收益曲线。
+5. “持仓信息”里的量化持仓也从事件台账和策略快照中生成。
+
+推荐入口：
+
+```text
+POST /api/v1/quant/strategies/{strategy_id}/events
+```
+
+兼容入口：
 
 ```text
 POST /api/v1/quant/strategies/{strategy_id}/snapshot
-```
-
-兼容旧接收入口：
-
-```text
 POST /api/v1/joinquant/signals
 ```
 
-新策略先在网页端“量化策略”页面创建，创建后即可使用对应的 `{strategy_id}` 上报快照。旧入口仍兼容 ETF 和小盘策略。
+兼容入口仍可更新旧策略快照，但不要再把聚宽上报的总资产或净值作为收益主链路。
 
-启动时需要配置鉴权 token：
+## 鉴权
+
+服务端启动时配置：
 
 ```bash
 export JOINQUANT_WEBHOOK_TOKEN="replace-with-a-long-random-token"
@@ -27,49 +36,60 @@ export QUANT_REQUIRE_ACTION_TOKEN=true
 python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
-聚宽侧请求头带 webhook token；如果后端配置了 `QUANT_ACTION_TOKEN` 或 `QUANT_REQUIRE_ACTION_TOKEN=true`，还需要同时携带操作令牌：
+聚宽请求头：
 
 ```text
+Content-Type: application/json
 X-Webhook-Token: replace-with-a-long-random-token
 X-Action-Token: replace-with-a-long-action-token
 ```
 
-后端收到统一快照后会：
+## 事件结构
 
-- 写入 `data/backend/strategies/custom/{strategy_id}.json`，量化策略页会读取这个文件。
-- 将快照中的 `holdings[]` 汇总进持仓信息页的“量化持仓”板块。
-- 追加脱敏原始请求到 `data/backend/strategies/joinquant-signals.jsonl`。
-
-统一快照最小结构：
+最小成交事件：
 
 ```json
 {
-  "strategy_id": "new-alpha",
-  "strategy_name": "新策略 Alpha",
-  "trade_date": "2026-05-16",
-  "as_of": "2026-05-16T10:30:00+08:00",
-  "run_id": "jq-new-alpha-20260516-103000",
-  "status": "running",
-  "summary": {
-    "target_exposure_pct": 80,
-    "current_exposure_pct": 62,
-    "day_pnl_pct": 0.35
-  },
-  "signals": [
-    {"symbol": "300476.XSHE", "name": "胜宏科技", "signal": "buy", "score": 88}
-  ],
-  "holdings": [
-    {"symbol": "300476.XSHE", "name": "胜宏科技", "quantity": 1000, "last_price": 42, "market_value": 42000, "weight_pct": 42}
-  ],
-  "logs": [
-    {"time": "2026-05-16 10:30:00", "stage": "snapshot", "message": "策略快照"}
+  "strategy_name": "五福 ETF",
+  "run_id": "jq-wufu-20260516-145500",
+  "events": [
+    {
+      "event_id": "20260516-145502-159915-buy",
+      "event_type": "trade",
+      "trade_date": "2026-05-16",
+      "time": "2026-05-16T14:55:02+08:00",
+      "symbol": "159915.XSHE",
+      "name": "创业板 ETF 易方达",
+      "side": "buy",
+      "quantity": 10000,
+      "price": 1.923,
+      "commission": 5,
+      "tax": 0,
+      "slippage": 0,
+      "initial_cash": 1000000,
+      "reason": "目标 ETF 动量排名第一，风险过滤通过"
+    }
   ]
 }
 ```
 
-## 聚宽侧上报模块
+字段说明：
 
-把下面这一段加到策略文件顶部参数区附近。不要把真实 token 提交到公开代码里。
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `event_id` | 建议 | 聚宽侧唯一事件 ID；相同 ID 重复上报会覆盖，避免重复成交。 |
+| `event_type` | 是 | `trade` 会改变持仓；`signal`/`order` 只解释，不改变收益。 |
+| `trade_date` | 是 | `YYYY-MM-DD`。 |
+| `time` | 建议 | 带时区的事件时间。 |
+| `symbol` | 是 | 聚宽代码，如 `300476.XSHE`、`600519.XSHG`、`159915.XSHE`。 |
+| `side` | 成交必填 | `buy` 或 `sell`。兼容 `action`。 |
+| `quantity` | 成交必填 | 成交数量。 |
+| `price` | 成交必填 | 成交价。 |
+| `commission`/`tax`/`slippage` | 可选 | 交易成本，参与现金计算。 |
+| `initial_cash` | 首次建议 | 初始资金；不传时网站默认用 100 万或首批买入额较大者。 |
+| `reason` | 建议 | 买入/卖出原因，用于页面解释和审计。 |
+
+## 聚宽侧示例代码
 
 ```python
 import json
@@ -80,173 +100,110 @@ try:
 except Exception:
     requests = None
 
-WEBHOOK_URL = "https://your-domain.example.com/api/v1/joinquant/signals"
+EVENTS_URL = "https://quant.quantlife.site/api/v1/quant/strategies/joinquant-wufu-etf-v43/events"
 WEBHOOK_TOKEN = "replace-with-a-long-random-token"
+ACTION_TOKEN = "replace-with-a-long-action-token"
 WEBHOOK_TIMEOUT = 5
+INITIAL_CASH = 1000000
 
 
-def jq_code_parts(code):
-    raw = str(code or "")
-    if "." not in raw:
-        return raw, ""
-    symbol, suffix = raw.split(".", 1)
-    market = {"XSHG": "SH", "XSHE": "SZ"}.get(suffix, suffix)
-    return symbol, market
-
-
-def build_position_payload(context):
-    total_value = getattr(context.portfolio, "total_value", 0) or 0
-    rows = []
-    for security, position in context.portfolio.positions.items():
-        if position.total_amount <= 0:
-            continue
-        symbol, market = jq_code_parts(security)
-        market_value = position.total_amount * position.price
-        rows.append({
-            "symbol": security,
-            "name": get_security_name(security),
-            "market": market,
-            "weight_pct": market_value / total_value * 100 if total_value else 0,
-            "avg_cost": position.avg_cost,
-            "last_price": position.price,
-            "market_value": market_value,
-            "pnl_pct": (position.price / position.avg_cost - 1) * 100 if position.avg_cost else 0,
-        })
-    return rows
-
-
-def build_recommendation_payload(context):
-    rows = []
-    ranked = getattr(g, "ranked_etfs_result", []) or []
-    target_set = set(getattr(g, "target_etfs_list", []) or [])
-    for index, item in enumerate(ranked[:10], start=1):
-        code = item.get("etf")
-        if not code:
-            continue
-        rows.append({
-            "symbol": code,
-            "name": item.get("etf_name") or get_security_name(code),
-            "action": "buy" if code in target_set else "watch",
-            "rank": index,
-            "score": item.get("momentum_score"),
-            "suggested_weight_pct": 100.0 / g.holdings_num if code in target_set and g.holdings_num else 0,
-            "last_price": item.get("current_price"),
-            "change_pct": 0,
-            "volume_ratio": item.get("volume_ratio"),
-            "reason": "动量、R2、成交量、短期风控和动态滤波综合排序",
-        })
-    return rows
-
-
-def post_strategy_signal(context, stage, extra=None):
+def post_strategy_events(context, events):
     if requests is None:
         log.warning("【Webhook】当前聚宽环境无法导入 requests，跳过上报")
         return False
+    if not events:
+        return True
     now = context.current_dt
-    target_count = len(getattr(g, "target_etfs_list", []) or [])
-    current_exposure = 0
-    if context.portfolio.total_value:
-        current_exposure = (
-            context.portfolio.total_value - context.portfolio.available_cash
-        ) / context.portfolio.total_value * 100
     payload = {
-        "strategy_name": "五福闹新春 v4.3",
-        "strategy_id": "joinquant-wufu-etf-v43",
-        "trade_date": str(now.date()),
-        "as_of": now.strftime("%Y-%m-%dT%H:%M:%S+08:00"),
-        "run_id": "jq-wufu-%s-%s" % (now.strftime("%Y%m%d-%H%M%S"), stage),
-        "risk_state": getattr(g, "risk_state", "正常期"),
-        "current_filter": getattr(g, "current_filter", "正常期"),
-        "summary": {
-            "buy_count": target_count,
-            "watch_count": max(0, len(getattr(g, "ranked_etfs_result", []) or []) - target_count),
-            "target_exposure_pct": 100 if target_count else 0,
-            "current_exposure_pct": current_exposure,
-            "day_pnl_pct": 0,
-            "max_drawdown_pct": 0,
-        },
-        "recommendations": build_recommendation_payload(context),
-        "holdings": build_position_payload(context),
-        "events": [{
-            "time": now.strftime("%H:%M"),
-            "label": stage,
-            "detail": extra or "",
-            "status": "done",
-        }],
+        "strategy_name": "五福 ETF",
+        "run_id": "jq-wufu-%s" % now.strftime("%Y%m%d-%H%M%S"),
+        "events": events,
     }
     try:
         response = requests.post(
-            WEBHOOK_URL,
+            EVENTS_URL,
             data=json.dumps(payload),
             headers={
                 "Content-Type": "application/json",
                 "X-Webhook-Token": WEBHOOK_TOKEN,
+                "X-Action-Token": ACTION_TOKEN,
             },
             timeout=WEBHOOK_TIMEOUT,
         )
         if response.status_code >= 300:
-            log.warning("【Webhook】上报失败 HTTP %s: %s" % (response.status_code, response.text[:200]))
+            log.warning("【Webhook】事件上报失败 HTTP %s: %s" % (response.status_code, response.text[:200]))
             return False
-        log.info("【Webhook】已上报：%s" % stage)
+        log.info("【Webhook】事件已上报：%s 条" % len(events))
         return True
-    except Exception as e:
-        log.warning("【Webhook】上报异常：%s" % e)
+    except Exception as exc:
+        log.warning("【Webhook】事件上报异常：%s" % exc)
         return False
+
+
+def trade_event(context, security, side, quantity, price, reason, event_id=None):
+    now = context.current_dt
+    return {
+        "event_id": event_id or "%s-%s-%s-%s" % (now.strftime("%Y%m%d-%H%M%S"), security, side, quantity),
+        "event_type": "trade",
+        "trade_date": str(now.date()),
+        "time": now.strftime("%Y-%m-%dT%H:%M:%S+08:00"),
+        "symbol": security,
+        "name": get_security_name(security),
+        "side": side,
+        "quantity": quantity,
+        "price": price,
+        "commission": 0,
+        "tax": 0,
+        "slippage": 0,
+        "initial_cash": INITIAL_CASH,
+        "reason": reason,
+    }
 ```
 
-## 在原策略中调用
-
-建议在关键节点调用，不要在 `every_bar` 里无条件调用。
+调用方式：只在真实下单成功或成交确认后上报 `trade`。
 
 ```python
-def morning_routine(context):
-    # 原有逻辑...
-    daily_merge_etf_pools(context)
-    post_strategy_signal(
-        context,
-        "晨间池更新完成",
-        "固定池%s只，动态池%s只，合并池%s只" % (
-            len(getattr(g, "filtered_fixed_pool", [])),
-            len(getattr(g, "dynamic_etf_pool", [])),
-            len(getattr(g, "merged_etf_pool", [])),
-        )
-    )
+# 买入成功后
+post_strategy_events(context, [
+    trade_event(context, security, "buy", amount, current_price, "目标 ETF 动量排名第一")
+])
 
-
-def afternoon_routine(context):
-    # 原有逻辑...
-    calculate_and_log_ranked_etfs(context)
-    post_strategy_signal(context, "午后目标生成")
-    execute_sell_trades(context)
-    post_strategy_signal(context, "卖出执行完成")
-    execute_buy_trades(context)
-    post_strategy_signal(context, "买入执行完成")
+# 卖出成功后
+post_strategy_events(context, [
+    trade_event(context, security, "sell", amount, current_price, "止损触发或排名跌出持仓池")
+])
 ```
 
-止损处可以只在实际卖出成功后上报：
+如果只是策略判断，没有成交，发 `signal`：
 
 ```python
-if success and g.enable_stop_loss_trigger:
-    g.stop_loss_triggered_today = True
-    post_strategy_signal(context, "分钟级止损触发", "%s %s" % (security, security_name))
+post_strategy_events(context, [{
+    "event_id": "signal-%s-%s" % (context.current_dt.strftime("%Y%m%d"), security),
+    "event_type": "signal",
+    "trade_date": str(context.current_dt.date()),
+    "time": context.current_dt.strftime("%Y-%m-%dT%H:%M:%S+08:00"),
+    "symbol": security,
+    "name": get_security_name(security),
+    "action": "buy",
+    "score": 88,
+    "target_weight_pct": 50,
+    "reason": "候选买入，但尚未成交"
+}])
 ```
 
 ## 联调
 
-本地先用 curl 模拟聚宽：
-
 ```bash
-curl -X POST http://127.0.0.1:8000/api/v1/joinquant/signals \
+curl -X POST https://quant.quantlife.site/api/v1/quant/strategies/joinquant-wufu-etf-v43/events \
   -H "Content-Type: application/json" \
   -H "X-Webhook-Token: replace-with-a-long-random-token" \
   -H "X-Action-Token: replace-with-a-long-action-token" \
-  -d '{"strategy_name":"五福闹新春 v4.3","recommendations":[{"symbol":"518880.XSHG","name":"黄金ETF","action":"buy","score":4.2,"suggested_weight_pct":100}],"events":[{"time":"13:10","label":"测试信号","status":"done"}]}'
+  -d '{"strategy_name":"五福 ETF","events":[{"event_id":"demo-buy-1","event_type":"trade","trade_date":"2026-05-16","time":"2026-05-16T14:55:02+08:00","symbol":"159915.XSHE","name":"创业板 ETF 易方达","side":"buy","quantity":10000,"price":1.923,"initial_cash":1000000,"reason":"联调买入"}]}'
 ```
 
-然后打开：
+验证页面：
 
 ```text
-http://127.0.0.1:8000/etf.html
+https://quant.quantlife.site/holdings.html?type=quant&strategy_id=joinquant-wufu-etf-v43
+https://quant.quantlife.site/performance.html?strategy=joinquant-wufu-etf-v43&benchmark=none
 ```
-
-如果聚宽无法直接访问你的后端，优先把后端部署到有公网 HTTPS 的服务器；临时测试可以用内网穿透，但不要在公开 URL 上使用弱 token。

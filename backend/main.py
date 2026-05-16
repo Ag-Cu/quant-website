@@ -45,11 +45,14 @@ PERFORMANCE_NAV_PATH = BACKEND_DIR / "performance" / "net-values.json"
 PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH = BACKEND_DIR / "performance" / "joinquant-snapshots.jsonl"
 PERFORMANCE_JOINQUANT_NAV_PATH = BACKEND_DIR / "performance" / "joinquant-nav.jsonl"
 PERFORMANCE_BENCHMARK_NAV_PATH = BACKEND_DIR / "performance" / "benchmarks-live.json"
+PERFORMANCE_EVENTS_PATH = BACKEND_DIR / "performance" / "strategy-events.jsonl"
+PERFORMANCE_PRICE_CACHE_PATH = BACKEND_DIR / "performance" / "price-cache.json"
 STRATEGY_PICKS_PARTITION_DIR = BACKEND_DIR / "strategies" / "picks"
 MAX_STRATEGY_LOG_LINES = 1000
 ETF_INLINE_LOG_LINES = 1000
 PERFORMANCE_STALE_SECONDS = 900
 BENCHMARK_CACHE_SECONDS = 3_600
+DEFAULT_STRATEGY_INITIAL_CASH = 1_000_000.0
 REAL_BENCHMARKS = {
     "CSI300": {"label": "沪深300", "secid": "1.000300", "sina_symbol": "sh000300", "source_name": "东方财富行情中心/新浪财经"},
     "CSI1000": {"label": "中证1000", "secid": "1.000852", "sina_symbol": "sh000852", "source_name": "东方财富行情中心/新浪财经"},
@@ -133,7 +136,7 @@ ENDPOINTS: dict[str, EndpointSpec] = {
         "performance/net-values",
         "daily",
         30,
-        "历史绩效曲线，由聚宽 webhook 实盘账户快照实时更新。",
+        "历史绩效曲线，优先由聚宽动作事件台账和本地价格计算。",
     ),
     "/api/v1/market/heatmap": EndpointSpec(
         "/api/v1/market/heatmap",
@@ -1086,6 +1089,7 @@ def definition_public_row(definition: dict[str, Any], payload: dict[str, Any] | 
         "legacy_page": definition.get("legacy_page") or "",
         "endpoint": f"/api/v1/quant/strategies/{strategy_id}",
         "snapshot_endpoint": f"/api/v1/quant/strategies/{strategy_id}/snapshot",
+        "events_endpoint": f"/api/v1/quant/strategies/{strategy_id}/events",
         "storage_path": str(strategy_path_from_definition(definition).relative_to(ROOT)),
         "updated_at": str(meta.get("as_of") or definition.get("updated_at") or ""),
         "trade_date": str(meta.get("trade_date") or ""),
@@ -1171,7 +1175,7 @@ def default_strategy_snapshot(definition: dict[str, Any], status: str | None = N
                 "provider": definition.get("provider") or "joinquant",
                 "description": definition.get("description") or "",
                 "decision_title": "等待策略上报",
-                "decision_detail": "策略已在网页端创建，等待 JoinQuant 或统一快照接口推送运行数据。",
+                "decision_detail": "策略已在网页端创建，等待 JoinQuant 事件接口推送运行数据。",
                 "decision_tone": "warning",
             },
             "summary": {
@@ -1194,7 +1198,7 @@ def default_strategy_snapshot(definition: dict[str, Any], status: str | None = N
                 {
                     "time": now.strftime("%H:%M"),
                     "label": "策略创建",
-                    "detail": "网页端策略注册完成，等待首次快照。",
+                    "detail": "网页端策略注册完成，等待首次事件上报。",
                     "status": "done",
                 }
             ],
@@ -1922,6 +1926,7 @@ def collect_strategy_outputs_for_holdings() -> dict[str, Any]:
     by_symbol: dict[str, list[dict[str, Any]]] = {}
     alerts_by_symbol: dict[str, list[dict[str, Any]]] = {}
     strategy_level_alerts: list[dict[str, Any]] = []
+    strategy_seen: set[str] = set()
 
     for definition in strategy_definitions():
         payload = load_strategy_payload_for_holdings(definition)
@@ -1934,6 +1939,7 @@ def collect_strategy_outputs_for_holdings() -> dict[str, Any]:
         context = strategy_context_from_payload(definition, payload)
         context_signals: list[dict[str, Any]] = []
         context_holding_symbols: set[str] = set()
+        strategy_seen.add(context["strategy_id"])
         strategies.append(
             {
                 **context,
@@ -1978,8 +1984,73 @@ def collect_strategy_outputs_for_holdings() -> dict[str, Any]:
         signal_names = {str(row["symbol"]): str(row["name"]) for row in [*signal_rows, *position_rows] if row.get("symbol")}
         sell_alerts.extend(strategy_sell_alerts_from_logs(payload, context, signal_names))
 
+    events_by_strategy: dict[str, list[dict[str, Any]]] = {}
+    for event in load_strategy_events():
+        events_by_strategy.setdefault(str(event.get("strategy_id") or ""), []).append(event)
+    for strategy_id, events in events_by_strategy.items():
+        if not strategy_id or not events:
+            continue
+        definition = strategy_definition_by_id(strategy_id)
+        strategy_label = str(events[-1].get("strategy_label") or (definition or {}).get("name") or strategy_id)
+        context = {
+            "strategy_id": strategy_id,
+            "strategy_name": strategy_label,
+            "strategy_page": f"{(definition or {}).get('page') or 'strategy.html'}?strategy_id={urllib.parse.quote(strategy_id)}",
+        }
+        if strategy_id not in strategy_seen:
+            strategies.append(
+                {
+                    **context,
+                    "updated_at": str(events[-1].get("as_of") or ""),
+                    "trade_date": str(events[-1].get("trade_date") or ""),
+                    "run_id": str(events[-1].get("run_id") or ""),
+                }
+            )
+            strategy_seen.add(strategy_id)
+        event_signal_rows = strategy_signal_rows_from_events(strategy_id, events)
+        for row in event_signal_rows:
+            signal_rows.append(row)
+            by_symbol.setdefault(str(row["symbol"]), []).append(row)
+            alert = strategy_sell_alert_from_signal(row)
+            if alert:
+                sell_alerts.append(alert)
+        event_position_rows = build_strategy_position_rows_from_events(strategy_id, events)
+        for row in event_position_rows:
+            position_rows.append(
+                {
+                    "strategy_id": context["strategy_id"],
+                    "strategy_name": context["strategy_name"],
+                    "strategy_page": context["strategy_page"],
+                    "source": "holding",
+                    "symbol": row["symbol"],
+                    "name": row["name"],
+                    "action": "hold",
+                    "action_label": "策略持有",
+                    "rank": row.get("rank"),
+                    "score": None,
+                    "suggested_weight_pct": row.get("weight_pct"),
+                    "last_price": row.get("last_price"),
+                    "reason": "事件台账本地重建持仓",
+                    "updated_at": row.get("strategy_updated_at"),
+                    "trade_date": row.get("trade_date"),
+                    "run_id": row.get("run_id"),
+                }
+            )
+            by_symbol.setdefault(str(row["symbol"]), []).append(position_rows[-1])
+            portfolio_rows.append(row)
+
     def sort_key(row: dict[str, Any]) -> str:
         return str(row.get("time") or row.get("updated_at") or row.get("trade_date") or "")
+
+    deduped_portfolio_rows: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in portfolio_rows:
+        key = (
+            str(row.get("strategy_id") or ""),
+            str(row.get("symbol") or ""),
+            str(row.get("portfolio_state") or "actual"),
+        )
+        deduped_portfolio_rows[key] = row
+    portfolio_rows = list(deduped_portfolio_rows.values())
 
     for alert in sell_alerts:
         symbol = str(alert.get("symbol") or "")
@@ -3174,6 +3245,698 @@ def normalize_joinquant_trade(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+EXECUTION_EVENT_TYPES = {"trade", "execution", "fill", "transaction"}
+BUY_EVENT_ACTIONS = {"buy", "add"}
+SELL_EVENT_ACTIONS = {"sell", "reduce", "trim", "stop"}
+
+
+def normalize_trade_side(value: Any) -> tuple[str, str]:
+    action, label = normalize_action(value)
+    if action in BUY_EVENT_ACTIONS:
+        return "buy", "买入"
+    if action in SELL_EVENT_ACTIONS:
+        return "sell", "卖出"
+    return action, label
+
+
+def strategy_event_trade_date(item: dict[str, Any], as_of: str) -> str:
+    for key in ("trade_date", "date", "day"):
+        raw = str(item.get(key) or "").strip()
+        if raw:
+            try:
+                return date.fromisoformat(raw[:10]).isoformat()
+            except ValueError:
+                pass
+    for key in ("time", "timestamp", "datetime", "as_of"):
+        parsed = parse_hk_datetime(item.get(key))
+        if parsed:
+            return parsed.date().isoformat()
+    return as_of[:10]
+
+
+def normalize_strategy_event(
+    item: dict[str, Any],
+    strategy_id: str,
+    strategy_label: str,
+    received_at: str,
+    default_run_id: str | None = None,
+) -> dict[str, Any] | None:
+    data = item.get("data") if isinstance(item.get("data"), dict) else item
+    security = data.get("symbol") or data.get("security") or data.get("code") or data.get("stock") or data.get("etf")
+    symbol, market = cn_code_parts(security)
+    raw_type_hint = str(data.get("type") or "").strip().lower()
+    raw_side = data.get("side") or data.get("action") or data.get("signal") or data.get("order_side") or (
+        data.get("type") if raw_type_hint in BUY_EVENT_ACTIONS | SELL_EVENT_ACTIONS else None
+    )
+    side, side_label = normalize_trade_side(raw_side)
+    quantity = to_float(data.get("quantity") or data.get("amount") or data.get("filled") or data.get("shares"))
+    price = to_float(data.get("price") or data.get("filled_price") or data.get("avg_price") or data.get("trade_price"))
+    turnover = to_float(data.get("value") or data.get("filled_value") or data.get("turnover") or data.get("amount_value"))
+    if quantity is None and price and turnover is not None:
+        quantity = abs(turnover / price)
+    if price is None and quantity and turnover is not None:
+        price = abs(turnover / quantity)
+    raw_type = str(data.get("event_type") or ("" if raw_type_hint in BUY_EVENT_ACTIONS | SELL_EVENT_ACTIONS else data.get("type")) or "").strip().lower().replace("_", "-")
+    if raw_type in {"order-filled", "filled", "deal"}:
+        raw_type = "trade"
+    if not raw_type:
+        raw_type = "trade" if symbol and side in {"buy", "sell"} and quantity is not None and price is not None else "signal"
+    event_type = "trade" if raw_type in EXECUTION_EVENT_TYPES else raw_type or "signal"
+    as_of = iso_hk(data.get("as_of") or data.get("time") or data.get("timestamp") or data.get("datetime") or received_at)
+    trade_date = strategy_event_trade_date(data, as_of)
+    commission = to_float(data.get("commission") or data.get("fee") or data.get("fees"), 0) or 0
+    tax = to_float(data.get("tax") or data.get("stamp_tax"), 0) or 0
+    slippage = to_float(data.get("slippage"), 0) or 0
+    portfolio = data.get("portfolio") if isinstance(data.get("portfolio"), dict) else {}
+    initial_cash = to_float(
+        data.get("initial_cash")
+        or data.get("starting_cash")
+        or data.get("base_cash")
+        or data.get("portfolio_initial_cash")
+        or portfolio.get("initial_cash")
+        or portfolio.get("starting_cash")
+    )
+    close_price = to_float(data.get("close") or data.get("close_price") or data.get("last_price"))
+    order_id = str(data.get("order_id") or data.get("source_order_id") or data.get("trade_id") or data.get("id") or "").strip()
+    event_id = str(data.get("event_id") or data.get("uid") or "").strip()
+    if not event_id:
+        event_id = stable_json_hash(
+            {
+                "strategy_id": strategy_id,
+                "event_type": event_type,
+                "symbol": symbol,
+                "side": side,
+                "trade_date": trade_date,
+                "as_of": as_of,
+                "quantity": quantity,
+                "price": price,
+                "order_id": order_id,
+            }
+        )
+    if not symbol and event_type in {"trade", "signal", "order"}:
+        return None
+    return {
+        "event_uid": f"{strategy_id}|{event_id}",
+        "event_id": event_id,
+        "received_at": received_at,
+        "strategy_id": strategy_id,
+        "strategy_label": strategy_label,
+        "run_id": str(data.get("run_id") or default_run_id or ""),
+        "event_type": event_type,
+        "as_of": as_of,
+        "trade_date": trade_date,
+        "symbol": symbol,
+        "raw_symbol": str(security or ""),
+        "market": market,
+        "name": str(data.get("name") or data.get("security_name") or data.get("etf_name") or symbol),
+        "side": side,
+        "action": side,
+        "action_label": side_label,
+        "quantity": None if quantity is None else round(quantity, 6),
+        "price": None if price is None else round(price, 6),
+        "turnover": None if turnover is None else round(turnover, 4),
+        "commission": round(commission, 4),
+        "tax": round(tax, 4),
+        "slippage": round(slippage, 4),
+        "close_price": None if close_price is None else round(close_price, 6),
+        "initial_cash": None if initial_cash is None else round(initial_cash, 4),
+        "target_weight_pct": to_float(data.get("target_weight_pct") or data.get("weight_pct") or data.get("suggested_weight_pct")),
+        "score": to_float(data.get("score") or data.get("signal_score")),
+        "reason": str(data.get("reason") or data.get("explanation") or data.get("detail") or ""),
+        "order_id": order_id,
+        "raw": redact_secret_fields(data),
+    }
+
+
+def strategy_event_items_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    data = extract_raw_data(payload)
+    rows: list[dict[str, Any]] = []
+    for key, event_type in (
+        ("events", ""),
+        ("trades", "trade"),
+        ("executions", "trade"),
+        ("orders", "order"),
+        ("transactions", "trade"),
+        ("fills", "trade"),
+        ("signals", "signal"),
+        ("recommendations", "signal"),
+        ("targets", "signal"),
+    ):
+        raw = data.get(key)
+        if isinstance(raw, dict):
+            raw = [raw]
+        if not isinstance(raw, list):
+            continue
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            rows.append({**item, **({"event_type": event_type} if event_type and not item.get("event_type") else {})})
+    if not rows and any(data.get(key) is not None for key in ("symbol", "security", "code", "stock", "action", "side", "signal")):
+        rows.append(data)
+    return rows
+
+
+def persist_strategy_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    valid = [row for row in events if row.get("event_uid")]
+    if not valid:
+        return []
+    return upsert_jsonl_rows(PERFORMANCE_EVENTS_PATH, valid, "event_uid")
+
+
+def load_strategy_events(strategy_id: str | None = None) -> list[dict[str, Any]]:
+    target = safe_strategy_id(strategy_id) if strategy_id else ""
+    rows = [
+        row
+        for row in load_jsonl(PERFORMANCE_EVENTS_PATH)
+        if isinstance(row, dict) and row.get("strategy_id") and (not target or safe_strategy_id(row.get("strategy_id")) == target)
+    ]
+    rows.sort(key=lambda row: (str(row.get("strategy_id") or ""), str(row.get("trade_date") or ""), str(row.get("as_of") or ""), str(row.get("event_uid") or "")))
+    return rows
+
+
+def strategy_rows_from_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    latest_by_strategy: dict[str, dict[str, Any]] = {}
+    for row in events:
+        strategy_id = str(row.get("strategy_id") or "")
+        if not strategy_id:
+            continue
+        if strategy_id not in latest_by_strategy or str(row.get("as_of") or "") > str(latest_by_strategy[strategy_id].get("as_of") or ""):
+            latest_by_strategy[strategy_id] = row
+    return [
+        {
+            "id": strategy_id,
+            "label": row.get("strategy_label") or strategy_id,
+            "last_seen": row.get("as_of"),
+            "stale_seconds": seconds_since(row.get("as_of")),
+            "source": "local-ledger",
+        }
+        for strategy_id, row in sorted(latest_by_strategy.items())
+    ]
+
+
+def strategy_initial_cash(events: list[dict[str, Any]]) -> float:
+    for row in events:
+        value = to_float(row.get("initial_cash"))
+        if value and value > 0:
+            return value
+    buy_turnover = sum(
+        (to_float(row.get("turnover")) or ((to_float(row.get("quantity")) or 0) * (to_float(row.get("price")) or 0)))
+        for row in events
+        if str(row.get("event_type") or "") == "trade" and str(row.get("side") or "") == "buy"
+    )
+    return max(DEFAULT_STRATEGY_INITIAL_CASH, buy_turnover or 0)
+
+
+def seed_prices_from_events(events: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+    prices: dict[str, dict[str, float]] = {}
+    for row in events:
+        symbol = str(row.get("symbol") or "")
+        day = row_date_text(row)
+        if not symbol or not day:
+            continue
+        price = to_float(row.get("close_price") or row.get("price"))
+        if price is None:
+            continue
+        prices.setdefault(symbol, {})[day] = price
+    return prices
+
+
+def load_price_cache() -> dict[str, Any]:
+    try:
+        payload = load_json(PERFORMANCE_PRICE_CACHE_PATH)
+    except HTTPException:
+        payload = {"meta": {}, "data": {"prices": {}}}
+    payload.setdefault("data", {}).setdefault("prices", {})
+    return payload
+
+
+def save_price_cache(cache: dict[str, Any]) -> None:
+    cache["meta"] = {
+        "version": "1.0",
+        "source": "eastmoney+sina",
+        "as_of": now_hk().isoformat(),
+        "trade_date": now_hk().strftime("%Y-%m-%d"),
+        "timezone": "Asia/Hong_Kong",
+        "market_session": market_session(),
+        "run_id": f"price-cache-{now_hk().strftime('%Y%m%d-%H%M%S')}",
+    }
+    write_json_atomic(PERFORMANCE_PRICE_CACHE_PATH, cache)
+
+
+def eastmoney_secid_for_symbol(symbol: str) -> str:
+    code, market = cn_code_parts(symbol)
+    if not code:
+        return ""
+    market = market or infer_cn_market(code)
+    prefix = "1" if market == "SH" else "0"
+    return f"{prefix}.{code}"
+
+
+def sina_symbol_for_cn_symbol(symbol: str) -> str:
+    code, market = cn_code_parts(symbol)
+    if not code:
+        return ""
+    market = market or infer_cn_market(code)
+    prefix = "sh" if market == "SH" else "sz"
+    return f"{prefix}{code}"
+
+
+def fetch_eastmoney_strategy_daily_prices(symbol: str, start_day: date, end_day: date) -> dict[str, float]:
+    secid = eastmoney_secid_for_symbol(symbol)
+    if not secid:
+        return {}
+    days = min(max((end_day - start_day).days + 30, 120), 2_000)
+    params = {
+        "secid": secid,
+        "fields1": "f1,f2,f3,f4,f5",
+        "fields2": "f51,f52,f53,f54,f55",
+        "klt": "101",
+        "fqt": "0",
+        "end": end_day.strftime("%Y%m%d"),
+        "lmt": str(days),
+    }
+    url = f"https://push2his.eastmoney.com/api/qt/stock/kline/get?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://quote.eastmoney.com/"})
+    with urllib.request.urlopen(req, timeout=8) as response:
+        data = json.loads(response.read().decode("utf-8", "ignore"))
+    klines = data.get("data", {}).get("klines", []) if isinstance(data, dict) else []
+    prices: dict[str, float] = {}
+    for line in klines:
+        parts = str(line).split(",")
+        if len(parts) < 3:
+            continue
+        day = str(parts[0])
+        close = to_float(parts[2])
+        if close is None:
+            continue
+        try:
+            row_day = date.fromisoformat(day)
+        except ValueError:
+            continue
+        if start_day <= row_day <= end_day:
+            prices[day] = close
+    return prices
+
+
+def fetch_sina_strategy_daily_prices(symbol: str, start_day: date, end_day: date) -> dict[str, float]:
+    sina_symbol = sina_symbol_for_cn_symbol(symbol)
+    if not sina_symbol:
+        return {}
+    days = min(max((end_day - start_day).days + 30, 120), 2_000)
+    params = {"symbol": sina_symbol, "scale": "240", "ma": "no", "datalen": str(days)}
+    url = f"https://quotes.sina.cn/cn/api/openapi.php/CN_MarketDataService.getKLineData?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.sina.com.cn/"})
+    with urllib.request.urlopen(req, timeout=8) as response:
+        data = json.loads(response.read().decode("utf-8", "ignore"))
+    raw_rows = data.get("result", {}).get("data", []) if isinstance(data, dict) else []
+    prices: dict[str, float] = {}
+    for item in raw_rows:
+        if not isinstance(item, dict):
+            continue
+        day = str(item.get("day") or "").strip()
+        close = to_float(item.get("close"))
+        if close is None:
+            continue
+        try:
+            row_day = date.fromisoformat(day)
+        except ValueError:
+            continue
+        if start_day <= row_day <= end_day:
+            prices[day] = close
+    return prices
+
+
+def fetch_strategy_daily_prices(symbol: str, start_day: date, end_day: date) -> dict[str, float]:
+    errors = []
+    for fetcher in (fetch_eastmoney_strategy_daily_prices, fetch_sina_strategy_daily_prices):
+        try:
+            rows = fetcher(symbol, start_day, end_day)
+            if rows:
+                return rows
+        except Exception as exc:
+            errors.append(f"{fetcher.__name__}: {exc}")
+    if errors:
+        raise RuntimeError("; ".join(errors))
+    return {}
+
+
+def strategy_price_series(symbol: str, start_day: date, end_day: date, seed_prices: dict[str, float] | None = None) -> dict[str, float]:
+    seed_prices = seed_prices or {}
+    cache = load_price_cache()
+    prices_root = cache.setdefault("data", {}).setdefault("prices", {})
+    code, market = cn_code_parts(symbol)
+    normalized_symbol = code or str(symbol)
+    entry = prices_root.setdefault(normalized_symbol, {"market": market or infer_cn_market(normalized_symbol), "prices": {}})
+    cached = entry.setdefault("prices", {})
+    changed = False
+    for day, price in seed_prices.items():
+        if price is None:
+            continue
+        if cached.get(day) != price:
+            cached[day] = price
+            changed = True
+    cached_dates = [date.fromisoformat(day) for day in cached if re.match(r"^\d{4}-\d{2}-\d{2}$", day)]
+    needs_fetch = not cached_dates or min(cached_dates) > start_day or max(cached_dates) < end_day
+    if needs_fetch:
+        try:
+            fetched = fetch_strategy_daily_prices(normalized_symbol, start_day, end_day)
+            for day, price in fetched.items():
+                if cached.get(day) != price:
+                    cached[day] = price
+                    changed = True
+            if fetched:
+                entry["source"] = "eastmoney+sina"
+        except Exception as exc:
+            entry["last_error"] = str(exc)
+            changed = True
+    if changed:
+        save_price_cache(cache)
+    result: dict[str, float] = {}
+    for day, price in cached.items():
+        try:
+            current_day = date.fromisoformat(day)
+        except ValueError:
+            continue
+        close = to_float(price)
+        if close is not None and start_day <= current_day <= end_day:
+            result[day] = close
+    return result
+
+
+def event_trade_quantity_price(event: dict[str, Any]) -> tuple[float | None, float | None]:
+    quantity = to_float(event.get("quantity"))
+    price = to_float(event.get("price"))
+    turnover = to_float(event.get("turnover"))
+    if quantity is None and price and turnover is not None:
+        quantity = abs(turnover / price)
+    if price is None and quantity and turnover is not None:
+        price = abs(turnover / quantity)
+    return quantity, price
+
+
+def apply_trade_to_state(
+    holdings: dict[str, dict[str, Any]],
+    cash: float,
+    event: dict[str, Any],
+) -> tuple[float, bool]:
+    if str(event.get("event_type") or "") != "trade":
+        return cash, False
+    side = str(event.get("side") or event.get("action") or "").lower()
+    if side not in {"buy", "sell"}:
+        return cash, False
+    symbol = str(event.get("symbol") or "")
+    quantity, price = event_trade_quantity_price(event)
+    if not symbol or quantity is None or quantity <= 0 or price is None or price <= 0:
+        return cash, False
+    fee = (to_float(event.get("commission"), 0) or 0) + (to_float(event.get("tax"), 0) or 0) + (to_float(event.get("slippage"), 0) or 0)
+    gross = quantity * price
+    row = holdings.setdefault(
+        symbol,
+        {
+            "symbol": symbol,
+            "name": event.get("name") or symbol,
+            "market": event.get("market") or "",
+            "quantity": 0.0,
+            "cost_amount": 0.0,
+            "avg_cost": 0.0,
+            "entry_date": event.get("trade_date") or "",
+        },
+    )
+    if side == "buy":
+        row["name"] = event.get("name") or row.get("name") or symbol
+        row["market"] = event.get("market") or row.get("market") or ""
+        row["entry_date"] = row.get("entry_date") or event.get("trade_date") or ""
+        row["quantity"] = (to_float(row.get("quantity"), 0) or 0) + quantity
+        row["cost_amount"] = (to_float(row.get("cost_amount"), 0) or 0) + gross + fee
+        row["avg_cost"] = (to_float(row.get("cost_amount"), 0) or 0) / row["quantity"] if row["quantity"] else 0
+        cash -= gross + fee
+        return cash, True
+    held_quantity = to_float(row.get("quantity"), 0) or 0
+    sell_quantity = min(quantity, held_quantity)
+    if sell_quantity <= 0:
+        return cash, False
+    avg_cost = to_float(row.get("avg_cost"), 0) or 0
+    row["quantity"] = held_quantity - sell_quantity
+    row["cost_amount"] = max(0.0, (to_float(row.get("cost_amount"), 0) or 0) - avg_cost * sell_quantity)
+    row["avg_cost"] = (to_float(row.get("cost_amount"), 0) or 0) / row["quantity"] if row["quantity"] else 0
+    cash += sell_quantity * price - fee
+    if row["quantity"] <= 0:
+        holdings.pop(symbol, None)
+    return cash, True
+
+
+def executable_strategy_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = [
+        row
+        for row in events
+        if str(row.get("event_type") or "") == "trade" and str(row.get("side") or row.get("action") or "") in {"buy", "sell"}
+    ]
+    rows.sort(key=lambda row: (row_date_text(row), str(row.get("as_of") or ""), str(row.get("event_uid") or "")))
+    return rows
+
+
+def build_local_strategy_nav_ledger(
+    strategy_id: str,
+    events: list[dict[str, Any]],
+    start_date: date | None,
+    end_date: date,
+) -> list[dict[str, Any]]:
+    trades = executable_strategy_events(events)
+    if not trades:
+        return []
+    first_trade_date = parse_row_date(trades[0])
+    if first_trade_date is None or end_date < first_trade_date:
+        return []
+    valuation_start = first_trade_date
+    seed_prices = seed_prices_from_events(events)
+    symbols = sorted({str(row.get("symbol") or "") for row in trades if row.get("symbol")})
+    price_map = {
+        symbol: strategy_price_series(symbol, valuation_start, end_date, seed_prices.get(symbol, {}))
+        for symbol in symbols
+    }
+    trades_by_day: dict[str, list[dict[str, Any]]] = {}
+    for row in trades:
+        trades_by_day.setdefault(row_date_text(row), []).append(row)
+    cash = strategy_initial_cash(events)
+    initial_cash = cash or DEFAULT_STRATEGY_INITIAL_CASH
+    holdings: dict[str, dict[str, Any]] = {}
+    last_price_by_symbol: dict[str, float] = {}
+    ledger: list[dict[str, Any]] = []
+    strategy_label = str(events[-1].get("strategy_label") or strategy_id)
+    applied_trade_count = 0
+    for current_day in business_days_between(valuation_start, end_date):
+        day_text = current_day.isoformat()
+        for trade in trades_by_day.get(day_text, []):
+            cash, applied = apply_trade_to_state(holdings, cash, trade)
+            applied_trade_count += 1 if applied else 0
+            price = to_float(trade.get("price"))
+            if price is not None and trade.get("symbol"):
+                last_price_by_symbol[str(trade["symbol"])] = price
+        positions_value = 0.0
+        position_count = 0
+        for symbol, position in list(holdings.items()):
+            quantity = to_float(position.get("quantity"), 0) or 0
+            if quantity <= 0:
+                continue
+            price = price_map.get(symbol, {}).get(day_text) or last_price_by_symbol.get(symbol) or to_float(position.get("avg_cost"), 0) or 0
+            last_price_by_symbol[symbol] = price
+            positions_value += quantity * price
+            position_count += 1
+        total_value = cash + positions_value
+        if start_date and current_day < start_date:
+            continue
+        ledger.append(
+            {
+                "snapshot_id": f"{strategy_id}|local-ledger|{day_text}",
+                "strategy_id": strategy_id,
+                "strategy_label": strategy_label,
+                "run_id": f"local-ledger-{strategy_id}-{day_text}",
+                "as_of": f"{day_text}T15:00:00+08:00",
+                "date": day_text,
+                "trade_date": day_text,
+                "net_value": round(total_value / (initial_cash or 1), 6),
+                "total_value": round(total_value, 4),
+                "cash": round(cash, 4),
+                "positions_market_value": round(positions_value, 4),
+                "cash_plus_positions": round(cash + positions_value, 4),
+                "reconciliation_diff": 0,
+                "position_count": position_count,
+                "trade_count": applied_trade_count,
+                "source": "local-ledger",
+                "frequency": "daily",
+                "trace": {
+                    "storage_path": str(PERFORMANCE_EVENTS_PATH.relative_to(ROOT)),
+                    "price_cache_path": str(PERFORMANCE_PRICE_CACHE_PATH.relative_to(ROOT)),
+                    "calculation": "cash + local positions marked by daily close; net_value=total_value/initial_cash",
+                    "initial_cash": round(initial_cash, 4),
+                },
+            }
+        )
+    return ledger
+
+
+def build_strategy_position_rows_from_events(strategy_id: str, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    trades = executable_strategy_events(events)
+    if not trades:
+        return []
+    cash = strategy_initial_cash(events)
+    holdings: dict[str, dict[str, Any]] = {}
+    for trade in trades:
+        cash, _applied = apply_trade_to_state(holdings, cash, trade)
+    if not holdings:
+        return []
+    last_trade_date = parse_row_date(trades[-1]) or now_hk().date()
+    end_date = now_hk().date()
+    seed_prices = seed_prices_from_events(events)
+    latest_as_of = str(events[-1].get("as_of") or "")
+    latest_trade_date = row_date_text(events[-1])
+    strategy_label = str(events[-1].get("strategy_label") or strategy_id)
+    rows: list[dict[str, Any]] = []
+    for index, (symbol, position) in enumerate(sorted(holdings.items()), start=1):
+        quantity = to_float(position.get("quantity"), 0) or 0
+        if quantity <= 0:
+            continue
+        prices = strategy_price_series(symbol, last_trade_date, end_date, seed_prices.get(symbol, {}))
+        latest_price_day = max(prices) if prices else ""
+        last_price = (prices.get(latest_price_day) if latest_price_day else None) or to_float(position.get("avg_cost"), 0) or 0
+        avg_cost = to_float(position.get("avg_cost"), 0) or 0
+        market_value = quantity * last_price
+        pnl_amount = (last_price - avg_cost) * quantity
+        rows.append(
+            {
+                "symbol": symbol,
+                "raw_symbol": symbol,
+                "name": str(position.get("name") or symbol),
+                "strategy_id": strategy_id,
+                "strategy_name": strategy_label,
+                "strategy_page": f"strategy.html?strategy_id={urllib.parse.quote(strategy_id)}",
+                "source": "local-ledger",
+                "sector": "量化策略",
+                "avg_cost": round(avg_cost, 4),
+                "cost": round(avg_cost, 4),
+                "last_price": round(last_price, 4),
+                "quantity": round(quantity, 6),
+                "market_value": round(market_value, 4),
+                "pnl_amount": round(pnl_amount, 4),
+                "pnl_pct": round((last_price / avg_cost - 1) * 100, 4) if avg_cost else 0,
+                "weight_pct": None,
+                "day_change_pct": 0,
+                "holding_days": None,
+                "entry_date": str(position.get("entry_date") or ""),
+                "notes": "由策略事件台账本地计算",
+                "rank": index,
+                "strategy_updated_at": latest_as_of,
+                "trade_date": latest_trade_date,
+                "run_id": str(events[-1].get("run_id") or ""),
+                "portfolio_state": "actual",
+            }
+        )
+    return rows
+
+
+def strategy_signal_rows_from_events(strategy_id: str, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    strategy_label = str(events[-1].get("strategy_label") or strategy_id) if events else strategy_id
+    for index, row in enumerate(events[-30:], start=1):
+        symbol = str(row.get("symbol") or "")
+        if not symbol:
+            continue
+        action = str(row.get("action") or row.get("side") or "watch")
+        _normalized_action, label = normalize_trade_side(action)
+        rows.append(
+            {
+                "strategy_id": strategy_id,
+                "strategy_name": strategy_label,
+                "strategy_page": f"strategy.html?strategy_id={urllib.parse.quote(strategy_id)}",
+                "source": str(row.get("event_type") or "event"),
+                "symbol": symbol,
+                "name": str(row.get("name") or symbol),
+                "action": action,
+                "action_label": label,
+                "rank": index,
+                "score": to_float(row.get("score")),
+                "suggested_weight_pct": to_float(row.get("target_weight_pct")),
+                "last_price": to_float(row.get("price") or row.get("close_price")),
+                "reason": str(row.get("reason") or ""),
+                "updated_at": str(row.get("as_of") or ""),
+                "trade_date": str(row.get("trade_date") or ""),
+                "run_id": str(row.get("run_id") or ""),
+            }
+        )
+    return rows
+
+
+def build_strategy_payload_from_events(definition: dict[str, Any], events: list[dict[str, Any]], received_at: str) -> dict[str, Any]:
+    strategy_id = definition["id"]
+    strategy_label = str(events[-1].get("strategy_label") or definition.get("name") or strategy_id) if events else str(definition.get("name") or strategy_id)
+    signals = strategy_signal_rows_from_events(strategy_id, events)
+    holdings = build_strategy_position_rows_from_events(strategy_id, events)
+    latest_event = events[-1] if events else {}
+    event_rows = []
+    for row in events[-20:]:
+        symbol = str(row.get("symbol") or "")
+        quantity = to_float(row.get("quantity"))
+        price = to_float(row.get("price"))
+        action_label = str(row.get("action_label") or row.get("event_type") or "事件")
+        parts = [part for part in (str(row.get("name") or symbol), symbol) if part]
+        detail = " ".join(parts)
+        if quantity is not None and price is not None:
+            detail = f"{detail} {round(quantity, 4)} 股 @ {round(price, 4)}"
+        if row.get("reason"):
+            detail = f"{detail}；{row['reason']}"
+        event_rows.append(
+            {
+                "time": str(row.get("as_of") or received_at)[11:16],
+                "label": action_label,
+                "detail": detail,
+                "status": "done",
+            }
+        )
+    return {
+        "meta": {
+            "version": "1.0",
+            "source": "local-ledger",
+            "as_of": str(latest_event.get("as_of") or received_at),
+            "trade_date": row_date_text(latest_event, received_at[:10]),
+            "timezone": "Asia/Hong_Kong",
+            "market_session": market_session(),
+            "run_id": str(latest_event.get("run_id") or f"strategy-events-{strategy_slug_from_id(strategy_id)}-{now_hk().strftime('%Y%m%d-%H%M%S')}"),
+        },
+        "data": {
+            "strategy": {
+                "id": strategy_id,
+                "name": strategy_label,
+                "status": "running" if executable_strategy_events(events) else "idle",
+                "category": str(definition.get("category") or "custom"),
+                "provider": str(definition.get("provider") or "joinquant"),
+                "description": str(definition.get("description") or ""),
+                "decision_title": "策略事件已同步",
+                "decision_detail": f"本地台账累计 {len(events)} 条事件，其中 {len(executable_strategy_events(events))} 条成交用于计算持仓和收益。",
+                "decision_tone": "blue",
+            },
+            "summary": {
+                "signal_count": len(signals),
+                "buy_count": sum(1 for row in signals if row.get("action") in {"buy", "add"}),
+                "hold_count": len(holdings),
+                "target_exposure_pct": 0,
+                "current_exposure_pct": sum(to_float(row.get("weight_pct"), 0) or 0 for row in holdings),
+                "day_pnl_pct": None,
+                "floating_pnl_pct": None,
+                "turnover_pct": None,
+            },
+            "signals": signals,
+            "recommendations": signals,
+            "holdings": holdings,
+            "themes": [],
+            "risk": {},
+            "regime": {},
+            "events": event_rows,
+            "logs": [],
+            "raw": {"provider": "joinquant", "received_at": received_at, "source": "strategy-events"},
+        },
+    }
+
+
 def payload_nav_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
     raw = (
         data.get("nav")
@@ -3628,10 +4391,13 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
     joinquant_ledger = load_joinquant_nav_ledger()
     personal_ledger = build_personal_performance_ledger()
     ledger = [*joinquant_ledger, *personal_ledger]
+    all_strategy_events = load_strategy_events()
     static_strategies, static_strategy_config, default_static_strategy = load_static_performance_strategies()
     ledger_strategies = strategy_rows_from_ledger(ledger)
+    event_strategies = strategy_rows_from_events(all_strategy_events)
     strategy_map = {item["id"]: item for item in static_strategies}
     strategy_map.update({item["id"]: item for item in ledger_strategies})
+    strategy_map.update({item["id"]: item for item in event_strategies})
     strategies = list(strategy_map.values())
     benchmark_disabled = benchmark is not None and benchmark.lower() in {"", "none", "off", "false"}
     benchmarks = load_or_refresh_benchmarks()
@@ -3643,7 +4409,14 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
     selected_strategy = strategy or default_static_strategy or (strategies[0]["id"] if strategies else "")
     if strategy and strategy not in {item["id"] for item in strategies}:
         raise HTTPException(status_code=404, detail=f"策略净值不存在：{strategy}")
-    strategy_ledger = [row for row in ledger if row.get("strategy_id") == selected_strategy] if selected_strategy else []
+    selected_events = [row for row in all_strategy_events if row.get("strategy_id") == selected_strategy] if selected_strategy else []
+    strategy_ledger = (
+        build_local_strategy_nav_ledger(selected_strategy, selected_events, query_start, min(query_to or today, today))
+        if selected_strategy and selected_events
+        else []
+    )
+    if not strategy_ledger:
+        strategy_ledger = [row for row in ledger if row.get("strategy_id") == selected_strategy] if selected_strategy else []
     static_config = static_strategy_config.get(selected_strategy) if isinstance(static_strategy_config.get(selected_strategy), dict) else {}
     if not strategy_ledger and static_config:
         static_nav = static_config.get("nav") if isinstance(static_config.get("nav"), list) else []
@@ -3688,6 +4461,8 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
     source_state = (
         "manual"
         if latest_source == "manual"
+        else "local-ledger"
+        if latest_source == "local-ledger"
         else "static"
         if latest_source and latest_source != "joinquant"
         else "joinquant-pending"
@@ -3731,11 +4506,13 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
     last_seen = latest.get("as_of") if latest else None
     stale = latest_stale_seconds
     nav_storage_path = str(
-        PERFORMANCE_NAV_PATH.relative_to(ROOT)
+        PERFORMANCE_EVENTS_PATH.relative_to(ROOT)
+        if source_state == "local-ledger"
+        else PERFORMANCE_NAV_PATH.relative_to(ROOT)
         if source_state in {"static", "manual"}
         else PERFORMANCE_JOINQUANT_NAV_PATH.relative_to(ROOT)
     )
-    snapshot_storage_path = None if source_state in {"static", "manual"} else str(PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH.relative_to(ROOT))
+    snapshot_storage_path = None if source_state in {"static", "manual", "local-ledger"} else str(PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH.relative_to(ROOT))
     payload = {
         "meta": {
             "version": "1.0",
@@ -3783,7 +4560,9 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
                 "synthetic": equity_frequency["synthetic"],
                 "benchmark_frequency": benchmark_frequency["frequency"],
                 "benchmark_point_count": benchmark_frequency["point_count"],
-                "message": "当前策略曲线为日频代理，由低频净值锚点插值生成；接入 JoinQuant 每日净值后会替换为真实日频。"
+                "message": "当前策略曲线由交易事件台账、本地现金和持仓、交易日收盘价计算。"
+                if source_state == "local-ledger"
+                else "当前策略曲线为日频代理，由低频净值锚点插值生成；接入 JoinQuant 每日净值后会替换为真实日频。"
                 if equity_frequency["synthetic"]
                 else "当前策略曲线使用真实日频/快照净值点。",
             },
@@ -3818,7 +4597,9 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
                 "positions_market_value": latest.get("positions_market_value"),
                 "cash_plus_positions": latest.get("cash_plus_positions"),
                 "diff": latest.get("reconciliation_diff"),
-                "formula": "net_value=total_value/first_total_value",
+                "formula": "cash + positions marked by daily close; net_value=total_value/initial_cash"
+                if source_state == "local-ledger"
+                else "net_value=total_value/first_total_value",
             },
         },
     }
@@ -3883,6 +4664,7 @@ def quant_strategies() -> dict[str, Any]:
             },
             "create_endpoint": "/api/v1/quant/strategies",
             "snapshot_endpoint_template": "/api/v1/quant/strategies/{strategy_id}/snapshot",
+            "events_endpoint_template": "/api/v1/quant/strategies/{strategy_id}/events",
         },
     }
 
@@ -3926,6 +4708,7 @@ def quant_strategy_detail(strategy_id: str) -> dict[str, Any]:
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     data["registry"] = definition_public_row(definition, payload)
     data["snapshot_endpoint"] = f"/api/v1/quant/strategies/{definition['id']}/snapshot"
+    data["events_endpoint"] = f"/api/v1/quant/strategies/{definition['id']}/events"
     data["holdings_url"] = f"/holdings.html?type=quant&strategy_id={urllib.parse.quote(definition['id'])}"
     return payload
 
@@ -3986,6 +4769,101 @@ def receive_quant_strategy_snapshot(strategy_id: str, request: Request, payload:
         },
     )
     return normalized_next_payload
+
+
+@app.post("/api/v1/quant/strategies/{strategy_id}/events")
+def receive_quant_strategy_events(strategy_id: str, request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    verify_action_permission(request)
+    verify_joinquant_token(request, payload)
+    definition = strategy_definition_by_id(strategy_id)
+    if not definition:
+        raise HTTPException(status_code=404, detail="策略不存在，请先在网页端创建策略")
+    received_at = now_hk().isoformat()
+    data = extract_raw_data(payload)
+    strategy_input = data.get("strategy") if isinstance(data.get("strategy"), dict) else {}
+    strategy_label = str(strategy_input.get("name") or data.get("strategy_name") or definition["name"] or definition["id"])
+    run_id = str(data.get("run_id") or strategy_input.get("run_id") or f"events-{definition['id']}-{now_hk().strftime('%Y%m%d-%H%M%S')}")
+    raw_events = strategy_event_items_from_payload(payload)
+    events = [
+        row
+        for row in (
+            normalize_strategy_event(item, definition["id"], strategy_label, received_at, run_id)
+            for item in raw_events
+        )
+        if row
+    ]
+    if not events:
+        raise HTTPException(status_code=422, detail="缺少可识别的策略事件；至少需要 symbol/action，成交事件还需要 quantity/price")
+    persist_strategy_events(events)
+    merged_events = load_strategy_events(definition["id"])
+    storage_path = strategy_path_from_definition(definition)
+    next_payload = build_strategy_payload_from_events(definition, merged_events, received_at)
+    write_json_atomic(storage_path, next_payload)
+    trade_count = sum(1 for row in events if row.get("event_type") == "trade")
+    signal_count = sum(1 for row in events if row.get("event_type") != "trade")
+    append_jsonl(
+        JOINQUANT_SIGNAL_LOG_PATH,
+        {
+            "received_at": received_at,
+            "run_id": run_id,
+            "trade_date": row_date_text(events[-1], received_at[:10]),
+            "strategy_id": definition["id"],
+            "endpoint": f"/api/v1/quant/strategies/{definition['id']}/events",
+            "source_ip": request.client.host if request.client else None,
+            "event_count": len(events),
+            "trade_count": trade_count,
+            "signal_count": signal_count,
+            "payload": redact_secret_fields(payload),
+        },
+    )
+    result = action_response(
+        "strategy_event_ingest",
+        {
+            "strategy_id": definition["id"],
+            "strategy_name": strategy_label,
+            "message": "策略事件已写入本地台账",
+            "event_count": len(events),
+            "trade_count": trade_count,
+            "signal_count": signal_count,
+            "events_storage_path": str(PERFORMANCE_EVENTS_PATH.relative_to(ROOT)),
+            "strategy_storage_path": str(storage_path.relative_to(ROOT)),
+            "performance_url": f"/performance.html?strategy={urllib.parse.quote(definition['id'])}",
+            "holdings_url": f"/holdings.html?type=quant&strategy_id={urllib.parse.quote(definition['id'])}",
+        },
+    )
+    result["data"]["events"] = events[-20:]
+    return result
+
+
+@app.get("/api/v1/quant/strategies/{strategy_id}/events")
+def quant_strategy_events(
+    strategy_id: str,
+    request: Request,
+    limit: int = Query(default=200, ge=1, le=2000),
+) -> dict[str, Any]:
+    verify_action_permission(request)
+    definition = strategy_definition_by_id(strategy_id)
+    if not definition:
+        raise HTTPException(status_code=404, detail="策略不存在")
+    rows = load_strategy_events(definition["id"])[-limit:]
+    now = now_hk()
+    return {
+        "meta": {
+            "version": "1.0",
+            "source": "local-ledger",
+            "as_of": now.isoformat(),
+            "trade_date": now.strftime("%Y-%m-%d"),
+            "timezone": "Asia/Hong_Kong",
+            "market_session": market_session(now),
+            "run_id": f"strategy-events-{definition['id']}-{now.strftime('%Y%m%d-%H%M%S')}",
+            "storage_path": str(PERFORMANCE_EVENTS_PATH.relative_to(ROOT)),
+        },
+        "data": {
+            "strategy": definition_public_row(definition),
+            "count": len(rows),
+            "items": rows,
+        },
+    }
 
 
 @app.get("/api/v1/quant/strategies/{strategy_id}/logs")

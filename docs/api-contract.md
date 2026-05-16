@@ -46,7 +46,7 @@
 | 今日选股 | `/api/v1/strategies/picks` | 每日收盘后或策略任务完成后 | `data/backend/strategies/picks.json` |
 | 量化策略 | `/api/v1/quant/strategies` | 策略任务刷新，约 5min | `data/config/strategies.json` + `data/backend/strategies/**/*.json` |
 | 持仓信息 | `/api/v1/portfolio/holdings` | 盘中实时，约 30s | `data/backend/portfolio/holdings.json` + 策略快照 |
-| 历史收益 | `/api/v1/performance` | 每日收盘后 | `data/backend/performance/net-values.json` |
+| 历史收益 | `/api/v1/performance` | 每日收盘后 | `data/backend/performance/strategy-events.jsonl` + `data/backend/performance/price-cache.json` |
 | 自选股 | `/api/v1/watchlist` | 盘中实时，约 15s | `data/backend/watchlist/list.json` |
 | 市场热力图 | `/api/v1/market/heatmap` | 盘中实时，约 30s | `data/backend/market/heatmap.json` |
 | 板块表现 | `/api/v1/market/sectors` | 盘中实时，约 60s | `data/backend/market/sectors.json` |
@@ -63,13 +63,17 @@
 GET  /api/v1/quant/strategies
 POST /api/v1/quant/strategies
 GET  /api/v1/quant/strategies/{strategy_id}
+POST /api/v1/quant/strategies/{strategy_id}/events
+GET  /api/v1/quant/strategies/{strategy_id}/events
 POST /api/v1/quant/strategies/{strategy_id}/snapshot
 GET  /api/v1/quant/strategies/{strategy_id}/logs
 ```
 
 `POST /api/v1/quant/strategies` 用于网页端新增策略，写入 `data/config/strategies.json`，并在 `data/backend/strategies/custom/{strategy_id}.json` 创建等待上报的空快照。写接口需要 `X-Action-Token`。
 
-`POST /api/v1/quant/strategies/{strategy_id}/snapshot` 是 JoinQuant 后续推荐使用的统一快照入口。它要求策略先在网页端创建，鉴权同时支持 `X-Webhook-Token` 和 `X-Action-Token`。
+`POST /api/v1/quant/strategies/{strategy_id}/events` 是 JoinQuant 推荐接入入口。聚宽只上报信号、成交、订单等动作事件；网站用本地事件台账、现金、持仓数量和交易日收盘价计算量化持仓与收益曲线。它要求策略先在网页端创建，鉴权同时支持 `X-Webhook-Token` 和 `X-Action-Token`。
+
+`POST /api/v1/quant/strategies/{strategy_id}/snapshot` 是兼容入口，保留给旧策略上报摘要、信号、持仓快照。不要再把它作为收益计算的主链路。
 
 前端按每个页面配置的频率刷新当前接口。接口不可用、返回非 2xx 或 JSON 解析失败时，前端只显示“获取失败”，不会 fallback 到 mock。
 
@@ -302,39 +306,52 @@ GET /api/v1/performance?strategy=joinquant-wufu-etf-v43&from=2025-01-01&to=2026-
 GET /api/v1/performance?strategy=personal-portfolio&benchmark=none
 ```
 
-收益曲线来源分三类：
+收益曲线来源分四类：
 
-- JoinQuant 上报的策略账户快照：每个量化策略独立成一条曲线。
+- JoinQuant 上报的策略事件台账：推荐主链路。聚宽只上报买入、卖出、信号等动作，网站本地按现金、成本、持仓数量和交易日收盘价计算每日净值。
+- JoinQuant 旧账户快照：兼容链路。只用于旧策略尚未改造时的低频展示。
 - `data/backend/performance/net-values.json` 中已有的静态/回测曲线：作为历史种子曲线展示。
 - `personal-portfolio`: 个人持仓曲线。未接入券商流水前，它以手工持仓市值和盈亏金额生成“成本基准到当前市值”的曲线；接入券商后可替换为真实账户净值流水。
 
-为了看到每个交易日的波动，JoinQuant 快照应优先上报日频净值序列。统一快照入口支持以下任一字段名：
+推荐的聚宽上报格式：
 
-- `nav`
-- `net_values`
-- `equity_curve`
-- `performance_curve`
-- `daily_nav`
-- `daily_net_values`
+```text
+POST /api/v1/quant/strategies/{strategy_id}/events
+```
 
 示例：
 
 ```json
 {
-  "strategy_id": "new-alpha",
   "strategy_name": "新策略 Alpha",
-  "trade_date": "2026-05-16",
-  "as_of": "2026-05-16T15:00:00+08:00",
-  "portfolio": {"total_value": 103500, "cash": 20000},
-  "nav": [
-    {"date": "2026-05-14", "net_value": 1.0000},
-    {"date": "2026-05-15", "net_value": 1.0120},
-    {"date": "2026-05-16", "net_value": 1.0350}
+  "run_id": "jq-alpha-20260516-150000",
+  "events": [
+    {
+      "event_id": "order-20260516-0001",
+      "event_type": "trade",
+      "trade_date": "2026-05-16",
+      "time": "2026-05-16T14:55:02+08:00",
+      "symbol": "300476.XSHE",
+      "name": "胜宏科技",
+      "side": "buy",
+      "quantity": 1000,
+      "price": 42.15,
+      "commission": 5,
+      "initial_cash": 1000000,
+      "reason": "动量突破且风险过滤通过"
+    }
   ]
 }
 ```
 
-如果策略只上报账户总资产快照，收益曲线只能按上报快照频率变化。静态/月度种子曲线会在页面中标记为“日频代理”，用于避免粗折线，但不能替代真实交易日净值。
+收益计算规则：
+
+- 成交事件 `event_type=trade` 且 `side=buy/sell` 才会改变本地持仓和现金。
+- `signal`、`order` 等事件只用于解释，不直接改变收益。
+- 买入：现金减少 `quantity * price + commission + tax + slippage`，持仓数量增加，平均成本按加权成本更新。
+- 卖出：现金增加 `quantity * price - commission - tax - slippage`，持仓数量减少。
+- 每个交易日收盘后，网站用本地价格缓存/公开日线行情给持仓估值：`total_value = cash + sum(quantity * close)`，`net_value = total_value / initial_cash`。
+- 旧快照入口仍可识别 `nav`、`net_values`、`equity_curve`、`performance_curve`、`daily_nav`、`daily_net_values`，但这不再是推荐收益链路。
 
 推荐字段：
 
@@ -347,7 +364,7 @@ GET /api/v1/performance?strategy=personal-portfolio&benchmark=none
 - `metrics`: 绩效指标。
 - `monthly_returns[]`: 月度收益热力图。
 - `annotations[]`: 图表备注。
-- `nav_source.source`: `joinquant`、`static` 或 `manual`。
+- `nav_source.source`: `local-ledger`、`joinquant`、`static` 或 `manual`。
 - `data_quality.frequency`: `daily`、`daily-proxy`、`monthly`、`snapshot` 等。
 - `data_quality.synthetic`: 是否为低频锚点插值得到的代理曲线。
 

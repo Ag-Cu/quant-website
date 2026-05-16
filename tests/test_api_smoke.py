@@ -72,6 +72,7 @@ def test_endpoints_return_meta_and_data(client: TestClient, path: str) -> None:
         ("post", "/api/v1/strategies/etf/signals/600519/confirm", {"action": "confirm"}),
         ("post", "/api/v1/quant/strategies", {"id": "new-alpha", "name": "新策略 Alpha"}),
         ("post", "/api/v1/quant/strategies/new-alpha/snapshot", {"strategy_id": "new-alpha"}),
+        ("post", "/api/v1/quant/strategies/joinquant-wufu-etf-v43/events", {"events": []}),
         ("post", "/api/v1/strategies/picks/export", {}),
         ("post", "/api/v1/portfolio/rebalance-records", {"symbol": "600519"}),
     ],
@@ -395,6 +396,9 @@ def patch_joinquant_paths(monkeypatch: pytest.MonkeyPatch, tmp_path) -> dict[str
         "snapshots": tmp_path / "data/backend/performance/joinquant-snapshots.jsonl",
         "ledger": tmp_path / "data/backend/performance/joinquant-nav.jsonl",
         "benchmarks": tmp_path / "data/backend/performance/benchmarks-live.json",
+        "events": tmp_path / "data/backend/performance/strategy-events.jsonl",
+        "prices": tmp_path / "data/backend/performance/price-cache.json",
+        "actions": tmp_path / "data/backend/actions/action-log.jsonl",
     }
     monkeypatch.setenv("JOINQUANT_WEBHOOK_TOKEN", "test-joinquant-token")
     monkeypatch.setattr(backend_main, "ROOT", tmp_path)
@@ -407,6 +411,9 @@ def patch_joinquant_paths(monkeypatch: pytest.MonkeyPatch, tmp_path) -> dict[str
     monkeypatch.setattr(backend_main, "PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH", paths["snapshots"])
     monkeypatch.setattr(backend_main, "PERFORMANCE_JOINQUANT_NAV_PATH", paths["ledger"])
     monkeypatch.setattr(backend_main, "PERFORMANCE_BENCHMARK_NAV_PATH", paths["benchmarks"])
+    monkeypatch.setattr(backend_main, "PERFORMANCE_EVENTS_PATH", paths["events"])
+    monkeypatch.setattr(backend_main, "PERFORMANCE_PRICE_CACHE_PATH", paths["prices"])
+    monkeypatch.setattr(backend_main, "ACTION_LOG_PATH", paths["actions"])
     monkeypatch.setattr(backend_main, "PERFORMANCE_STALE_SECONDS", 10_000_000)
     monkeypatch.setattr(backend_main, "BENCHMARK_CACHE_SECONDS", 10_000_000)
     paths["full_log"].parent.mkdir(parents=True, exist_ok=True)
@@ -560,6 +567,89 @@ def test_joinquant_webhook_accepts_daily_nav_curve(
     assert payload["data"]["data_quality"]["frequency"] == "daily"
     assert payload["data"]["data_quality"]["synthetic"] is False
     assert payload["data"]["nav_source"]["frequency_label"] == "日频"
+
+
+def test_strategy_events_build_local_daily_performance_curve(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    client: TestClient,
+) -> None:
+    paths = patch_joinquant_paths(monkeypatch, tmp_path)
+    write_live_benchmark_cache(paths["benchmarks"])
+
+    def fake_prices(symbol: str, start_day, end_day) -> dict[str, float]:
+        assert symbol == "300476"
+        return {"2026-05-14": 10.0, "2026-05-15": 11.0}
+
+    monkeypatch.setattr(backend_main, "fetch_strategy_daily_prices", fake_prices)
+
+    response = client.post(
+        "/api/v1/quant/strategies/joinquant-wufu-etf-v43/events",
+        headers={"X-Action-Token": "test-action-token", "X-Webhook-Token": "test-joinquant-token"},
+        json={
+            "strategy_name": "五福 ETF",
+            "run_id": "event-ledger-test",
+            "events": [
+                {
+                    "event_id": "buy-300476-20260514",
+                    "event_type": "trade",
+                    "trade_date": "2026-05-14",
+                    "time": "2026-05-14T10:00:00+08:00",
+                    "symbol": "300476.XSHE",
+                    "name": "胜宏科技",
+                    "side": "buy",
+                    "quantity": 100,
+                    "price": 10,
+                    "initial_cash": 10000,
+                    "reason": "动量突破",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["trade_count"] == 1
+    assert paths["events"].exists()
+    holdings_path = tmp_path / "data/backend/portfolio/holdings.json"
+    holdings_path.parent.mkdir(parents=True, exist_ok=True)
+    holdings_path.write_text(
+        json.dumps(
+            {
+                "meta": {"version": "1.0", "source": "manual", "as_of": "2026-05-15T15:00:00+08:00", "trade_date": "2026-05-15", "timezone": "Asia/Hong_Kong", "market_session": "closed", "run_id": "holdings-empty-test"},
+                "data": {"summary": {}, "holdings": [], "allocation": []},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    response = client.get("/api/v1/performance?strategy=joinquant-wufu-etf-v43&benchmark=none&from=2026-05-14&to=2026-05-15")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    curve = payload["data"]["equity_curve"]
+    assert payload["meta"]["source"] == "local-ledger"
+    assert payload["data"]["data_quality"]["frequency"] == "daily"
+    assert payload["data"]["nav_source"]["source"] == "local-ledger"
+    assert [row["date"] for row in curve] == ["2026-05-14", "2026-05-15"]
+    assert curve[0]["total_value"] == 10000
+    assert curve[0]["cash"] == 9000
+    assert curve[-1]["value"] == 1.01
+    assert curve[-1]["return_pct"] == 1.0
+    assert curve[-1]["positions_market_value"] == 1100
+    assert payload["data"]["reconciliation"]["formula"].startswith("cash + positions")
+
+    response = client.get("/api/v1/portfolio/holdings?type=quant&strategy_id=joinquant-wufu-etf-v43")
+
+    assert response.status_code == 200, response.text
+    holdings_payload = response.json()
+    holding = holdings_payload["data"]["holdings"][0]
+    assert holding["symbol"] == "300476"
+    assert holding["portfolio_type"] == "quant"
+    assert holding["source"] == "local-ledger"
+    assert holding["quantity"] == 100
+    assert holding["pnl_pct"] == 10.0
 
 
 def test_static_monthly_nav_is_expanded_to_daily_proxy(
