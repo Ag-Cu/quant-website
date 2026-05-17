@@ -6676,7 +6676,8 @@ def market_etf_rankings(period: str = Query(default="1D")) -> dict[str, Any]:
 
 @app.get("/api/v1/strategies/etf")
 def strategy_etf() -> dict[str, Any]:
-    payload = get_payload("/api/v1/strategies/etf")
+    definition = strategy_definition_by_id("joinquant-wufu-etf-v43")
+    payload = load_quant_strategy_payload(definition) if definition else get_payload("/api/v1/strategies/etf")
     if not is_real_joinquant_snapshot(payload):
         return pending_etf_payload(payload)
     data = payload.get("data", {})

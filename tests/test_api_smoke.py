@@ -913,6 +913,29 @@ def test_etf_endpoint_hides_synthetic_joinquant_snapshot(
     assert payload["data"]["ignored_seed_signal_count"] == 1
 
 
+def test_etf_endpoint_returns_pending_when_snapshot_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    client: TestClient,
+) -> None:
+    etf_path = tmp_path / "data/backend/strategies/etf.json"
+    full_log_path = tmp_path / "data/backend/strategies/joinquant-full-logs.jsonl"
+    full_log_path.parent.mkdir(parents=True)
+    full_log_path.write_text("", encoding="utf-8")
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(backend_main, "ETF_STRATEGY_PATH", etf_path)
+    monkeypatch.setattr(backend_main, "JOINQUANT_FULL_LOG_PATH", full_log_path)
+
+    response = client.get("/api/v1/strategies/etf")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["source"] == "joinquant-pending"
+    assert payload["data"]["recommendations"] == []
+    assert payload["data"]["holdings"] == []
+
+
 def test_quant_strategy_can_be_created_and_receive_snapshot(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
