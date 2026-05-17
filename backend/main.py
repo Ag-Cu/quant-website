@@ -140,7 +140,16 @@ PRIVATE_BACKEND_PREFIXES = (
     "strategies/",
     "watchlist/",
 )
-PRIVATE_LIVE_FILES = {"overview.json", "watchlist.json"}
+PRIVATE_LIVE_FILES = {
+    "overview.json",
+    "watchlist.json",
+    "heatmap.json",
+    "sectors.json",
+    "etf-rankings.json",
+    "breadth.json",
+    "sentiment.json",
+    "macro.json",
+}
 PRIVATE_CONFIG_FILES = {"watchlist.json", "strategies.json"}
 AUTH_LOGIN_FAILURES: dict[str, list[float]] = {}
 
@@ -3033,13 +3042,15 @@ def unavailable_detail(message: str, path: Path) -> dict[str, Any]:
 
 
 def available_path(spec: EndpointSpec) -> tuple[Path, str]:
-    if spec.live_path and spec.live_path.exists():
-        return spec.live_path, "live"
-    if spec.live_key and spec.live_path:
-        raise HTTPException(status_code=503, detail=unavailable_detail(f"{spec.path} 实时数据暂不可用", spec.live_path))
-    if spec.backend_path.exists():
-        return spec.backend_path, "backend"
-    raise HTTPException(status_code=503, detail=unavailable_detail(f"{spec.path} 暂无可用数据", spec.backend_path))
+    live_path = spec.live_path
+    backend_path = spec.backend_path
+    if live_path and live_path.exists():
+        return live_path, "live"
+    if spec.live_key and live_path:
+        raise HTTPException(status_code=503, detail=unavailable_detail(f"{spec.path} 实时数据暂不可用", live_path))
+    if backend_path.exists():
+        return backend_path, "backend"
+    raise HTTPException(status_code=503, detail=unavailable_detail(f"{spec.path} 暂无可用数据", backend_path))
 
 
 def parse_iso_datetime(value: str | None) -> datetime | None:

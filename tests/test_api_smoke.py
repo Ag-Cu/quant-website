@@ -191,6 +191,55 @@ def test_authenticated_user_can_delete_own_watchlist_without_action_token(monkey
     assert [item["symbol"] for item in saved["items"]] == ["NVDA"]
 
 
+def test_authenticated_user_gets_user_scoped_live_market_payloads(monkeypatch: pytest.MonkeyPatch, tmp_path, client: TestClient) -> None:
+    enable_auth(monkeypatch)
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    monkeypatch.setattr(backend_main, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(backend_main, "LIVE_DIR", tmp_path / "data/live")
+    now_meta = {
+        "version": "1.0",
+        "source": "live",
+        "as_of": "2026-05-17T20:30:00+08:00",
+        "trade_date": "2026-05-17",
+        "timezone": "Asia/Hong_Kong",
+        "market_session": "closed",
+        "run_id": "test-live",
+        "source_quality": "real",
+    }
+    root_breadth = tmp_path / "data/live/breadth.json"
+    owner_breadth = tmp_path / "data/backend/users/owner/live/breadth.json"
+    root_breadth.parent.mkdir(parents=True)
+    owner_breadth.parent.mkdir(parents=True)
+    root_breadth.write_text(
+        json.dumps(
+            {
+                "meta": {**now_meta, "run_id": "root-proxy", "source_quality": "proxy"},
+                "data": {"source_algorithm": {"name": "proxy", "source_quality": "proxy"}, "summary": {"industry_count": 2}, "metrics": [], "industry_width": [], "heatmap_history": {}, "style": [], "distribution": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+    owner_breadth.write_text(
+        json.dumps(
+            {
+                "meta": {**now_meta, "run_id": "owner-real", "source_quality": "real"},
+                "data": {"source_algorithm": {"name": "market_width.zip", "source_quality": "real"}, "summary": {"industry_count": 31}, "metrics": [], "industry_width": [], "heatmap_history": {}, "style": [], "distribution": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+    login(client)
+
+    response = client.get("/api/v1/market/breadth")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["meta"]["storage_path"] == "data/backend/users/owner/live/breadth.json"
+    assert payload["meta"]["source_quality"] == "real"
+    assert payload["data"]["summary"]["industry_count"] == 31
+
+
 def test_auth_keeps_joinquant_webhook_token_path_available(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
     enable_auth(monkeypatch)
     monkeypatch.setenv("JOINQUANT_WEBHOOK_TOKEN", "test-joinquant-token")
