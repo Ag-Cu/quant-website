@@ -2244,6 +2244,65 @@ body.sidebar-collapsed .sidebar-toggle::before {
   font-weight: 700;
 }
 
+.pick-rank {
+  display: grid;
+  min-width: 52px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.pick-rank span {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.pick-rank strong {
+  font-family: var(--font-mono);
+  font-size: 18px;
+}
+
+.raw-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.raw-metric-grid div {
+  min-width: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.raw-metric-grid div:nth-child(odd) {
+  border-right: 1px solid var(--line);
+}
+
+.raw-metric-grid div:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+.raw-metric-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.raw-metric-grid strong {
+  display: block;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
 .factor-bars {
   display: grid;
   gap: 8px;

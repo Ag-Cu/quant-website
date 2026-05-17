@@ -747,6 +747,31 @@ function factorBars(factors = []) {
   }).join("")}</div>`;
 }
 
+function pickRawMetrics(pick = {}) {
+  const raw = pick.raw_metrics && typeof pick.raw_metrics === "object" ? pick.raw_metrics : {};
+  const lowNear = Number(raw.low_near);
+  const entry = Number(pick.entry_price ?? pick.entry);
+  const maGapPct = Number.isFinite(Number(raw.ma_gap_pct))
+    ? Number(raw.ma_gap_pct)
+    : Number.isFinite(entry) && Number.isFinite(lowNear) && lowNear !== 0
+    ? ((entry / lowNear) - 1) * 100
+    : NaN;
+  const thresholdPct = Number.isFinite(Number(raw.entry_threshold_pct))
+    ? Number(raw.entry_threshold_pct)
+    : 1.5 - Number(raw.index_ret_pct ?? NaN);
+  const rows = [
+    ["量比", Number.isFinite(Number(raw.vol_ratio)) ? `${fixedText(raw.vol_ratio, 2)}x` : "--"],
+    ["个股涨幅", pctText(raw.ret_pct, 2)],
+    ["沪深300", pctText(raw.index_ret_pct, 2)],
+    ["入池阈值", Number.isFinite(thresholdPct) ? `>${fixedText(thresholdPct, 2)}%` : "--"],
+    ["MA12", fixedText(raw.ma12, 2)],
+    ["MA26", fixedText(raw.ma26, 2)],
+    ["较低均线", fixedText(raw.low_near, 2)],
+    ["均线偏离", Number.isFinite(maGapPct) ? pctText(maGapPct, 2) : "--"],
+  ];
+  return `<div class="raw-metric-grid">${rows.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div>`;
+}
+
 function chartPoint(item, index) {
   const value = typeof item === "object" && item !== null
     ? Number(item.return_pct ?? item.value ?? item.net_value ?? item.equity)
@@ -1368,8 +1393,7 @@ function renderPicks(payload) {
         const entry = pick.entry_price ?? pick.entry;
         const stop = pick.stop_loss ?? pick.stop;
         const target = pick.take_profit ?? pick.target;
-        const tags = pick.tags || [];
-        return `<article class="pick-card ${isFresh ? "fresh" : ""}"><div class="inline-between"><div><strong>${escapeHtml(pick.symbol)}</strong><span>${escapeHtml(pick.name)}</span></div><div class="mini-ring" style="--score:${pick.score}%;"><span>${intText(pick.score)}</span></div></div>${factorBars(pick.factors)}<div class="trade-levels"><div><span>Entry</span><strong>${fixedText(entry, 2)}</strong></div><div><span>Stop</span><strong>${fixedText(stop, 2)}</strong></div><div><span>Target</span><strong>${fixedText(target, 2)}</strong></div></div><div class="tag-row">${tags.map((item) => tag(item, item === "持仓中" || pick.in_portfolio ? "positive" : "blue")).join("")}</div></article>`;
+        return `<article class="pick-card ${isFresh ? "fresh" : ""}"><div class="inline-between"><div><strong>${escapeHtml(pick.symbol)}</strong><span>${escapeHtml(pick.name)}</span></div><div class="pick-rank"><span>Rank</span><strong>${intText(pick.rank || pick.score)}</strong></div></div>${pickRawMetrics(pick)}<div class="trade-levels"><div><span>Entry</span><strong>${fixedText(entry, 2)}</strong></div><div><span>Stop</span><strong>${fixedText(stop, 2)}</strong></div><div><span>Target</span><strong>${fixedText(target, 2)}</strong></div></div></article>`;
       }).join("") : `<div class="empty-state">${escapeHtml(picksEmptyMessage(data))}</div>`}
     </section>
   `;

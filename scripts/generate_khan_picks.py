@@ -296,9 +296,11 @@ def output_items(picks: pd.DataFrame, trade_date: str, index_ret: float, candida
                     "ma12": round(ma12, 4),
                     "ma26": round(ma26, 4),
                     "low_near": round(low_near, 4),
+                    "ma_gap_pct": round(((price / low_near) - 1) * 100, 4) if low_near else None,
                     "vol_ratio": round(vol_ratio, 4),
                     "ret_pct": round(ret_pct, 4),
                     "index_ret_pct": round(index_ret * 100, 4),
+                    "entry_threshold_pct": round(1.5 - index_ret * 100, 4),
                     "candidate_count": candidate_count,
                 },
             }
