@@ -191,6 +191,80 @@ def test_authenticated_user_can_delete_own_watchlist_without_action_token(monkey
     assert [item["symbol"] for item in saved["items"]] == ["NVDA"]
 
 
+def test_watchlist_refresh_failure_keeps_existing_user_live_cache(monkeypatch: pytest.MonkeyPatch, tmp_path, client: TestClient) -> None:
+    enable_auth(monkeypatch)
+    monkeypatch.setenv("QUANT_ACTION_TOKEN", "test-action-token")
+    monkeypatch.setenv("QUANT_REQUIRE_ACTION_TOKEN", "true")
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    monkeypatch.setattr(backend_main, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(backend_main, "LIVE_DIR", tmp_path / "data/live")
+    monkeypatch.setattr(backend_main, "CONFIG_DIR", tmp_path / "data/config")
+    monkeypatch.setattr(backend_main, "WATCHLIST_CONFIG_PATH", tmp_path / "data/config/watchlist.json")
+    monkeypatch.setattr(backend_main, "run_live_data_refresh", lambda: (False, "offline in test"))
+    user_config = tmp_path / "data/backend/users/owner/config/watchlist.json"
+    user_config.parent.mkdir(parents=True)
+    user_config.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {"symbol": "600519", "name": "贵州茅台", "sector": "消费", "market_region": "cn", "market": "SH"},
+                    {"symbol": "NVDA", "name": "NVIDIA", "sector": "科技", "market_region": "us", "provider_symbol": "NVDA"},
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    live_dir = tmp_path / "data/backend/users/owner/live"
+    live_dir.mkdir(parents=True)
+    for name in ("watchlist.json", "overview.json"):
+        if name == "overview.json":
+            data = {
+                "health": {},
+                "account": {},
+                "market": {},
+                "strategy_status": [],
+                "alerts": [],
+                "timeline": [],
+                "decision": {},
+                "sentiment_gauge": {},
+                "heatmap": {},
+                "top_etfs": [],
+                "sectors": [],
+            }
+        else:
+            data = {"groups": [{"name": "existing", "items": [{"symbol": "600519"}]}]}
+        (live_dir / name).write_text(
+            json.dumps(
+                {
+                    "meta": {
+                        "version": "1.0",
+                        "source": "live",
+                        "as_of": "2026-05-17T20:30:00+08:00",
+                        "trade_date": "2026-05-17",
+                        "timezone": "Asia/Hong_Kong",
+                        "market_session": "closed",
+                        "run_id": f"existing-{name}",
+                        "source_quality": "real",
+                    },
+                    "data": data,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+    login(client)
+
+    response = client.delete("/api/v1/watchlist/600519?market=cn")
+
+    assert response.status_code == 202, response.text
+    assert (live_dir / "watchlist.json").exists()
+    assert (live_dir / "overview.json").exists()
+    assert client.get("/api/v1/watchlist").status_code == 200
+    assert client.get("/api/v1/dashboard/overview").status_code == 200
+
+
 def test_authenticated_user_gets_user_scoped_live_market_payloads(monkeypatch: pytest.MonkeyPatch, tmp_path, client: TestClient) -> None:
     enable_auth(monkeypatch)
     monkeypatch.setattr(backend_main, "ROOT", tmp_path)

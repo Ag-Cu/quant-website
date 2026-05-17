@@ -2918,11 +2918,8 @@ def save_watchlist_items(items: list[dict[str, Any]]) -> None:
 
 
 def invalidate_watchlist_live_data() -> None:
-    for path in (LIVE_DIR / "watchlist.json", LIVE_DIR / "overview.json"):
-        try:
-            effective_path(path).unlink()
-        except FileNotFoundError:
-            pass
+    # Keep the last good live payload readable while mutation-triggered refresh runs.
+    return
 
 
 def build_watchlist_config_payload(
@@ -2993,7 +2990,7 @@ def watchlist_mutation_payload(
     return payload
 
 
-def run_live_data_refresh(timeout: int = 45) -> tuple[bool, str]:
+def run_live_data_refresh(timeout: int = 120) -> tuple[bool, str]:
     command = [sys.executable, str(ROOT / "scripts" / "update_live_data.py"), "--root", str(ROOT)]
     if auth_required() and current_user():
         command.extend(["--user", current_user_id()])
