@@ -1,2 +1,0 @@
-{"received_at":"2026-05-14T22:05:06+08:00","run_id":"domain-log-test-20260514-1311","trade_date":"2026-05-14","sequence":1,"time":"2026-05-14 13:10:00","stage":"rank","level":"info","message":"排名完成：159915.XSHE score=4.8 r2=0.72"}
-{"received_at":"2026-05-14T22:05:06+08:00","run_id":"domain-log-test-20260514-1311","trade_date":"2026-05-14","sequence":2,"time":"2026-05-14 13:10:01","stage":"risk","level":"warning","message":"示例风控日志：成交量过滤通过但需观察"}
