@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import backend.main as backend_main
+import scripts.generate_khan_picks as generate_khan_picks
 from backend.main import ENDPOINTS, app
 
 
@@ -268,7 +269,6 @@ def test_strategy_picks_can_filter_khan_strategy(monkeypatch: pytest.MonkeyPatch
                             "entry_price": 13.62,
                             "stop_loss": 12.53,
                             "take_profit": 17.71,
-                            "tags": ["Khan"],
                             "explanation": "复刻 khan-quant-data macd.py 入池逻辑",
                             "invalidation": "跌破入池价 8%",
                         }
@@ -290,6 +290,51 @@ def test_strategy_picks_can_filter_khan_strategy(monkeypatch: pytest.MonkeyPatch
     assert payload["data"]["count"] == 1
     assert payload["data"]["items"][0]["symbol"] == "002889"
     assert payload["data"]["items"][0]["entry_price"] == 13.62
+    assert "tags" not in payload["data"]["items"][0]
+
+
+def test_khan_pick_generator_overwrites_old_pick_strategies(tmp_path) -> None:
+    output = generate_khan_picks.output_path(tmp_path, "owner")
+    output.parent.mkdir(parents=True)
+    output.write_text(
+        json.dumps(
+            {
+                "meta": {"version": "1.0", "source": "old", "as_of": "2026-05-12T10:00:00+08:00", "trade_date": "2026-05-12", "timezone": "Asia/Hong_Kong", "market_session": "closed", "run_id": "old-picks"},
+                "data": {
+                    "strategy": "old",
+                    "strategy_label": "旧选股",
+                    "trade_date": "2026-05-12",
+                    "status": "ready",
+                    "count": 1,
+                    "strategies": [{"id": "old", "label": "旧选股"}],
+                    "items": [{"symbol": "300476", "name": "胜宏科技", "strategy": "old", "tags": ["旧标签"]}],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    payload = {
+        "meta": {"version": "1.0", "source": "tushare+khan-quant-data", "as_of": "2026-05-17T18:20:57+08:00", "trade_date": "2026-05-15", "timezone": "Asia/Hong_Kong", "market_session": "closed", "run_id": "khan-picks-test"},
+        "data": {
+            "strategy": "khan-macd-volume",
+            "strategy_label": "Khan MA 量价选股",
+            "trade_date": "2026-05-15",
+            "status": "ready",
+            "count": 1,
+            "strategies": [{"id": "khan-macd-volume", "label": "Khan MA 量价选股"}],
+            "items": [{"symbol": "002889", "name": "东方嘉盛", "strategy_id": "khan-macd-volume"}],
+        },
+    }
+
+    generate_khan_picks.atomic_write_json(output, payload)
+
+    saved = json.loads(output.read_text(encoding="utf-8"))
+    assert saved["data"]["count"] == 1
+    assert saved["data"]["strategies"] == [{"id": "khan-macd-volume", "label": "Khan MA 量价选股"}]
+    assert [item["symbol"] for item in saved["data"]["items"]] == ["002889"]
+    assert all(item.get("strategy_id") == "khan-macd-volume" for item in saved["data"]["items"])
+    assert all("tags" not in item for item in saved["data"]["items"])
 
 
 @pytest.mark.parametrize(

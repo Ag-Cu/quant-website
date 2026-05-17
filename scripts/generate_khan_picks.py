@@ -57,57 +57,6 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     os.replace(tmp_name, path)
 
 
-def load_existing_payload(path: Path) -> dict[str, Any] | None:
-    if not path.exists():
-        return None
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
-    return payload if isinstance(payload, dict) else None
-
-
-def strategy_value(item: Any) -> str:
-    if isinstance(item, dict):
-        return str(item.get("id") or item.get("key") or item.get("value") or item.get("strategy") or item.get("label") or item.get("name") or "")
-    return str(item or "")
-
-
-def merge_picks_payload(existing: dict[str, Any] | None, khan_payload: dict[str, Any]) -> dict[str, Any]:
-    if not existing or not isinstance(existing.get("data"), dict):
-        return khan_payload
-    existing_data = existing.get("data", {})
-    khan_data = khan_payload["data"]
-    old_items = existing_data.get("items") if isinstance(existing_data.get("items"), list) else []
-    kept_items = [
-        item for item in old_items
-        if not (
-            isinstance(item, dict)
-            and STRATEGY_ID in {str(item.get("strategy") or ""), str(item.get("strategy_id") or ""), str(item.get("strategy_label") or "")}
-        )
-    ]
-    strategies = existing_data.get("strategies") if isinstance(existing_data.get("strategies"), list) else []
-    strategy_by_value = {strategy_value(item): item for item in strategies if strategy_value(item)}
-    strategy_by_value[STRATEGY_ID] = {"id": STRATEGY_ID, "label": STRATEGY_LABEL}
-    merged_items = [*kept_items, *khan_data["items"]]
-    payload = {
-        **existing,
-        "meta": khan_payload["meta"],
-        "data": {
-            **existing_data,
-            "trade_date": khan_data["trade_date"],
-            "status": khan_data["status"],
-            "count": len(merged_items),
-            "strategies": list(strategy_by_value.values()),
-            "items": merged_items,
-            "source": khan_data["source"],
-        },
-    }
-    payload["data"].setdefault("strategy", existing_data.get("strategy") or STRATEGY_ID)
-    payload["data"].setdefault("strategy_label", existing_data.get("strategy_label") or STRATEGY_LABEL)
-    return payload
-
-
 def to_yyyymmdd(value: date) -> str:
     return value.strftime("%Y%m%d")
 
@@ -307,7 +256,6 @@ def output_items(picks: pd.DataFrame, trade_date: str, index_ret: float, candida
     for rank, row in enumerate(picks.to_dict("records"), start=1):
         symbol = str(row.get("symbol") or str(row.get("ts_code", "")).split(".")[0])
         name = str(row.get("name") or symbol)
-        industry_label = str(row.get("industry_name") or row.get("industry") or "unknown")
         price = float(row.get("curr_price") or 0)
         vol_ratio = float(row.get("vol_ratio") or 0)
         ret_pct = float(row.get("ret") or 0) * 100
@@ -338,7 +286,6 @@ def output_items(picks: pd.DataFrame, trade_date: str, index_ret: float, candida
                 "entry_price": round(price, 3),
                 "stop_loss": round(price * 0.92, 3),
                 "take_profit": round(price * 1.30, 3),
-                "tags": ["Khan", "MA12/MA26", "放量", industry_label],
                 "explanation": (
                     f"复刻 khan-quant-data macd.py 入池逻辑：价格在 MA12/MA26 较低者 ±5% 内，"
                     f"量比 {vol_ratio:.2f}，涨幅 {ret_pct:.2f}% 高于 1.5%-沪深300涨幅阈值；"
@@ -417,8 +364,7 @@ def main() -> None:
         raise SystemExit("TUSHARE_TOKEN is required")
     payload = build_payload(token, args.trade_date or None)
     path = output_path(root, args.user)
-    merged = merge_picks_payload(load_existing_payload(path), payload)
-    atomic_write_json(path, merged)
+    atomic_write_json(path, payload)
     print(f"wrote {path.relative_to(root)} with {len(payload['data']['items'])} khan picks for {payload['data']['trade_date']}")
 
 
