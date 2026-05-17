@@ -1241,6 +1241,12 @@ def align_heatmap_rows(old_rows: list[dict[str, Any]], old_columns: list[str], c
     return aligned
 
 
+def heatmap_row_is_current(row: dict[str, Any] | None) -> bool:
+    if not isinstance(row, dict):
+        return False
+    return str(row.get("date") or "") == mmdd()
+
+
 def build_breadth_payload(source: BreadthSource | list[BoardRecord] | None = None, source_name: str = "东方财富全市场行业板块宽度") -> dict[str, Any]:
     payload = base_payload("breadth")
     if isinstance(source, BreadthSource):
@@ -1266,7 +1272,8 @@ def build_breadth_payload(source: BreadthSource | list[BoardRecord] | None = Non
     overall = round(sum(widths) / max(1, len(widths)))
     industry_sum_score = overall
     today_row = {"date": mmdd(), "values": [overall, *widths]}
-    if breadth_source.heatmap_rows:
+    source_rows = breadth_source.heatmap_rows or []
+    if source_rows and heatmap_row_is_current(source_rows[0]):
         rows = breadth_source.heatmap_rows[:10]
         if rows and len(rows[0].get("values") or []) == len(columns):
             first_values = rows[0]["values"]
@@ -1276,7 +1283,7 @@ def build_breadth_payload(source: BreadthSource | list[BoardRecord] | None = Non
     else:
         history = payload.get("data", {}).get("heatmap_history", {})
         old_columns = history.get("columns") or columns
-        old_rows = align_heatmap_rows(history.get("rows") or [], old_columns, columns)
+        old_rows = align_heatmap_rows(source_rows or history.get("rows") or [], old_columns, columns)
         rows = [today_row, *[row for row in old_rows if row.get("date") != today_row["date"]]][:10]
 
     previous_by_name: dict[str, int] = {}

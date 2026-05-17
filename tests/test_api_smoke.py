@@ -731,6 +731,53 @@ def test_user_live_generation_templates_fallback_to_root(monkeypatch: pytest.Mon
     assert sectors["data"]["sectors"] == []
 
 
+def test_breadth_payload_rebuilds_heatmap_when_source_history_is_stale(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.setattr(update_live_data, "ROOT", tmp_path)
+    monkeypatch.setattr(update_live_data, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(update_live_data, "LIVE_DIR", tmp_path / "data/live")
+    monkeypatch.setattr(update_live_data, "now_hk", lambda: update_live_data.datetime(2026, 5, 18, 9, 40, tzinfo=update_live_data.HK_TZ))
+    seed = tmp_path / "data/live/breadth.json"
+    seed.parent.mkdir(parents=True)
+    seed.write_text(
+        json.dumps(
+            {
+                "meta": {"version": "1.0", "source": "live", "as_of": "2026-05-17T21:17:07+08:00", "trade_date": "2026-05-17", "timezone": "Asia/Hong_Kong", "market_session": "closed", "run_id": "old-breadth"},
+                "data": {
+                    "summary": {},
+                    "metrics": [],
+                    "industry_width": [],
+                    "heatmap_history": {"columns": ["全市场", "银行I"], "rows": [{"date": "04-07", "values": [51, 88]}]},
+                    "style": [],
+                    "distribution": [],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    source = update_live_data.BreadthSource(
+        records=[
+            update_live_data.BoardRecord(code="801780", name="银行I", change_pct=1.2, up_count=8, down_count=2, flat_count=0),
+            update_live_data.BoardRecord(code="801750", name="计算机I", change_pct=-0.5, up_count=3, down_count=7, flat_count=0),
+        ],
+        name="stale source",
+        quality="real",
+        universe="test",
+        industry_standard="test",
+        notes=[],
+        heatmap_columns=["全市场", "银行I", "计算机I", "合计"],
+        heatmap_rows=[{"date": "04-07", "values": [51, 88, 22, 10]}],
+    )
+
+    payload = update_live_data.build_breadth_payload(source)
+    rows = payload["data"]["heatmap_history"]["rows"]
+
+    assert rows[0]["date"] == "05-18"
+    assert rows[0]["values"] == [55, 80, 30]
+    assert rows[1]["date"] == "04-07"
+    assert payload["data"]["summary"]["market_width_pct"] == 55
+
+
 def test_macro_payload_does_not_keep_sample_rows_when_sources_are_missing(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     macro_path = tmp_path / "data/backend/macro.json"
     macro_path.parent.mkdir(parents=True)
