@@ -194,11 +194,97 @@ def test_auth_forbids_explicit_other_user_data_paths(monkeypatch: pytest.MonkeyP
     assert response.status_code == 404
 
 
+def test_strategy_id_aliases_keep_old_links_working(monkeypatch: pytest.MonkeyPatch, tmp_path, client: TestClient) -> None:
+    etf_path = tmp_path / "data/backend/strategies/etf.json"
+    etf_path.parent.mkdir(parents=True)
+    etf_path.write_text(
+        json.dumps(
+            {
+                "meta": {"version": "1.0", "source": "joinquant", "as_of": "2026-05-15T10:30:00+08:00", "trade_date": "2026-05-15", "timezone": "Asia/Hong_Kong", "market_session": "open", "run_id": "etf-alias-test"},
+                "data": {
+                    "strategy": {"id": "joinquant-wufu-etf-v43", "name": "五福 ETF", "status": "running"},
+                    "summary": {},
+                    "recommendations": [{"symbol": "159915.XSHE", "name": "创业板ETF", "action": "buy"}],
+                    "holdings": [],
+                    "regime": {},
+                    "events": [],
+                    "logs": [],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(backend_main, "ETF_STRATEGY_PATH", etf_path)
+
+    response = client.get("/api/v1/quant/strategies/etf-rotation")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["strategy"]["id"] == "joinquant-wufu-etf-v43"
+    assert payload["data"]["registry"]["id"] == "joinquant-wufu-etf-v43"
+    assert payload["data"]["holdings_url"].endswith("strategy_id=joinquant-wufu-etf-v43")
+
+
 @pytest.mark.parametrize("path", sorted(ENDPOINTS))
 def test_endpoints_return_meta_and_data(client: TestClient, path: str) -> None:
     response = client.get(path)
     assert response.status_code == 200, response.text
     assert_api_payload(response.json())
+
+
+def test_strategy_picks_can_filter_khan_strategy(monkeypatch: pytest.MonkeyPatch, tmp_path, client: TestClient) -> None:
+    picks_path = tmp_path / "data/backend/strategies/picks.json"
+    picks_path.parent.mkdir(parents=True)
+    picks_path.write_text(
+        json.dumps(
+            {
+                "meta": {"version": "1.0", "source": "tushare+khan-quant-data", "as_of": "2026-05-17T18:20:57+08:00", "trade_date": "2026-05-15", "timezone": "Asia/Hong_Kong", "market_session": "closed", "run_id": "khan-picks-test"},
+                "data": {
+                    "strategy": "khan-macd-volume",
+                    "strategy_label": "Khan MA 量价选股",
+                    "trade_date": "2026-05-15",
+                    "status": "ready",
+                    "count": 1,
+                    "strategies": [{"id": "khan-macd-volume", "label": "Khan MA 量价选股"}],
+                    "items": [
+                        {
+                            "symbol": "002889",
+                            "name": "东方嘉盛",
+                            "strategy": "khan-macd-volume",
+                            "strategy_id": "khan-macd-volume",
+                            "strategy_label": "Khan MA 量价选股",
+                            "trade_date": "2026-05-15",
+                            "score": 94,
+                            "confidence": 0.94,
+                            "factors": [],
+                            "entry_price": 13.62,
+                            "stop_loss": 12.53,
+                            "take_profit": 17.71,
+                            "tags": ["Khan"],
+                            "explanation": "复刻 khan-quant-data macd.py 入池逻辑",
+                            "invalidation": "跌破入池价 8%",
+                        }
+                    ],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+
+    response = client.get("/api/v1/strategies/picks?strategy=khan-macd-volume&date=2026-05-15")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["strategy"] == "khan-macd-volume"
+    assert payload["data"]["count"] == 1
+    assert payload["data"]["items"][0]["symbol"] == "002889"
+    assert payload["data"]["items"][0]["entry_price"] == 13.62
 
 
 @pytest.mark.parametrize(
@@ -271,6 +357,98 @@ def test_joinquant_webhook_routes_small_cap_payload(
     assert storage_path.exists()
     assert signal_log_path.exists()
     assert full_log_path.exists()
+
+
+def test_binance_listing_webhook_roundtrip(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    client: TestClient,
+) -> None:
+    monkeypatch.setenv("CRYPTO_WEBHOOK_TOKEN", "test-crypto-token")
+    strategy_dir = tmp_path / "data/backend/strategies"
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    monkeypatch.setattr(backend_main, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(backend_main, "BINANCE_LISTING_STRATEGY_PATH", strategy_dir / "binance-listing-onchain.json")
+    monkeypatch.setattr(backend_main, "BINANCE_LISTING_HEARTBEAT_LOG_PATH", strategy_dir / "binance-listing-heartbeats.jsonl")
+    monkeypatch.setattr(backend_main, "BINANCE_LISTING_SIGNAL_LOG_PATH", strategy_dir / "binance-listing-signals.jsonl")
+    monkeypatch.setattr(backend_main, "BINANCE_LISTING_TRADE_LOG_PATH", strategy_dir / "binance-listing-trades.jsonl")
+    monkeypatch.setattr(backend_main, "BINANCE_LISTING_EVENT_LOG_PATH", strategy_dir / "binance-listing-events.jsonl")
+    monkeypatch.setattr(backend_main, "BINANCE_LISTING_LOG_PATH", strategy_dir / "binance-listing-logs.jsonl")
+
+    headers = {"X-Crypto-Webhook-Token": "test-crypto-token"}
+    heartbeat = client.post(
+        "/api/v1/crypto/binance-listing/heartbeat",
+        headers=headers,
+        json={
+            "heartbeat": {
+                "mode": "DRY_RUN",
+                "run_id": "listing-test-run",
+                "host": "jp_vps",
+                "catalog_id": 48,
+                "seen_article_count": 12,
+                "stats": {"validated": 1, "orders": 1, "errors": 0},
+                "risk": {"stake_usd": 100, "stop_loss_pct": 0.08, "take_profit_1_pct": 0.10, "take_profit_2_pct": 1.0},
+            },
+            "positions": [
+                {
+                    "symbol": "TEST",
+                    "chain": "base",
+                    "token_address": "0x0000000000000000000000000000000000000001",
+                    "entry_cost_usd": 100,
+                    "remaining_amount_raw": "1000000000000000000",
+                    "listing_time_utc": "2026-05-17T12:00:00Z",
+                }
+            ],
+        },
+    )
+    assert heartbeat.status_code == 200, heartbeat.text
+
+    signal = client.post(
+        "/api/v1/crypto/binance-listing/signals",
+        headers=headers,
+        json={
+            "signals": [
+                {
+                    "symbol": "TEST",
+                    "status": "valid",
+                    "title": "Binance Will List TEST",
+                    "listing_time_utc": "2026-05-17T12:00:00Z",
+                    "binance_spot_pairs": ["TEST/USDT"],
+                    "contract": {"chain": "base", "address": "0x0000000000000000000000000000000000000001"},
+                }
+            ]
+        },
+    )
+    assert signal.status_code == 200, signal.text
+
+    trade = client.post(
+        "/api/v1/crypto/binance-listing/trades",
+        headers=headers,
+        json={
+            "trades": [
+                {
+                    "symbol": "TEST",
+                    "side": "buy",
+                    "status": "dry_run_filled",
+                    "chain": "base",
+                    "quote_token": "USDC",
+                    "order": {"amount_in_usd": 100},
+                }
+            ]
+        },
+    )
+    assert trade.status_code == 200, trade.text
+
+    response = client.get("/api/v1/strategies/binance-listing-onchain")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["strategy"]["id"] == "binance-listing-onchain"
+    assert payload["data"]["summary"]["signal_count"] == 1
+    assert payload["data"]["summary"]["open_position_count"] == 1
+    assert payload["data"]["signals"][0]["symbol"] == "TEST"
+    assert payload["data"]["trades"][0]["side"] == "buy"
+    assert payload["data"]["logs"]
 
 
 def test_small_cap_endpoint_hides_seed_signals_until_joinquant_snapshot(

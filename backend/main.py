@@ -43,6 +43,7 @@ EXPORT_DIR = BACKEND_DIR / "exports"
 ETF_STRATEGY_PATH = BACKEND_DIR / "strategies" / "etf.json"
 SMALL_CAP_STRATEGY_PATH = BACKEND_DIR / "strategies" / "small-cap.json"
 CRYPTO_FUNDING_STRATEGY_PATH = BACKEND_DIR / "strategies" / "crypto-funding.json"
+BINANCE_LISTING_STRATEGY_PATH = BACKEND_DIR / "strategies" / "binance-listing-onchain.json"
 CUSTOM_STRATEGY_DIR = BACKEND_DIR / "strategies" / "custom"
 JOINQUANT_SIGNAL_LOG_PATH = BACKEND_DIR / "strategies" / "joinquant-signals.jsonl"
 JOINQUANT_FULL_LOG_PATH = BACKEND_DIR / "strategies" / "joinquant-full-logs.jsonl"
@@ -51,8 +52,15 @@ CRYPTO_FUNDING_SIGNAL_LOG_PATH = BACKEND_DIR / "strategies" / "crypto-funding-si
 CRYPTO_FUNDING_TRADE_LOG_PATH = BACKEND_DIR / "strategies" / "crypto-funding-trades.jsonl"
 CRYPTO_FUNDING_EVENT_LOG_PATH = BACKEND_DIR / "strategies" / "crypto-funding-events.jsonl"
 CRYPTO_FUNDING_LOG_PATH = BACKEND_DIR / "strategies" / "crypto-funding-logs.jsonl"
+BINANCE_LISTING_HEARTBEAT_LOG_PATH = BACKEND_DIR / "strategies" / "binance-listing-heartbeats.jsonl"
+BINANCE_LISTING_SIGNAL_LOG_PATH = BACKEND_DIR / "strategies" / "binance-listing-signals.jsonl"
+BINANCE_LISTING_TRADE_LOG_PATH = BACKEND_DIR / "strategies" / "binance-listing-trades.jsonl"
+BINANCE_LISTING_EVENT_LOG_PATH = BACKEND_DIR / "strategies" / "binance-listing-events.jsonl"
+BINANCE_LISTING_LOG_PATH = BACKEND_DIR / "strategies" / "binance-listing-logs.jsonl"
 CRYPTO_FUNDING_DEFAULT_STRATEGY_ID = "crypto-funding-rate"
 CRYPTO_FUNDING_AGGREGATE_NAME = "Binance 资金费率"
+BINANCE_LISTING_STRATEGY_ID = "binance-listing-onchain"
+BINANCE_LISTING_STRATEGY_NAME = "Binance 上新链上验证"
 CRYPTO_FUNDING_INSTANCE_PROFILES = {
     "crypto-funding-rate": {
         "name": "1.3% 基线 DRY_RUN",
@@ -117,6 +125,10 @@ AUTH_WEBHOOK_PATHS = {
     "/api/v1/crypto/funding/signals",
     "/api/v1/crypto/funding/trades",
     "/api/v1/crypto/funding/events",
+    "/api/v1/crypto/binance-listing/heartbeat",
+    "/api/v1/crypto/binance-listing/signals",
+    "/api/v1/crypto/binance-listing/trades",
+    "/api/v1/crypto/binance-listing/events",
 }
 AUTH_WEBHOOK_PREFIXES = ("/api/v1/quant/strategies/",)
 PRIVATE_BACKEND_PREFIXES = (
@@ -235,6 +247,13 @@ ENDPOINTS: dict[str, EndpointSpec] = {
         "strategy",
         30,
         "Binance USD-M 资金费率策略实时心跳、信号和模拟交易记录。",
+    ),
+    "/api/v1/strategies/binance-listing-onchain": EndpointSpec(
+        "/api/v1/strategies/binance-listing-onchain",
+        "strategies/binance-listing-onchain",
+        "strategy",
+        30,
+        "Binance 公告上新链上 DRY_RUN 验证，含公告心跳、提取信号、模拟持仓和退出记录。",
     ),
     "/api/v1/market/breadth": EndpointSpec(
         "/api/v1/market/breadth",
@@ -1456,8 +1475,20 @@ def safe_strategy_id(value: Any) -> str:
     return raw
 
 
+STRATEGY_ID_ALIASES = {
+    "etf-rotation": "joinquant-wufu-etf-v43",
+    "joinquant-etf-rotation": "joinquant-wufu-etf-v43",
+    "wufu-etf": "joinquant-wufu-etf-v43",
+}
+
+
+def canonical_strategy_id(value: Any) -> str:
+    strategy_id = safe_strategy_id(value)
+    return STRATEGY_ID_ALIASES.get(strategy_id, strategy_id)
+
+
 def strategy_slug_from_id(value: str) -> str:
-    return safe_strategy_id(value).replace(".", "-")
+    return canonical_strategy_id(value).replace(".", "-")
 
 
 BUILTIN_STRATEGY_DEFINITIONS = [
@@ -1508,6 +1539,23 @@ BUILTIN_STRATEGY_DEFINITIONS = [
         "action_key": "side",
         "label_key": "side_label",
         "description": "Binance USD-M Futures 资金费率 DRY_RUN 策略，含心跳、入场信号和每笔模拟交易盈亏。",
+        "builtin": True,
+    },
+    {
+        "id": "binance-listing-onchain",
+        "name": "Binance 上新链上验证",
+        "category": "crypto",
+        "status": "running",
+        "provider": "binance-announcement",
+        "endpoint": "/api/v1/strategies/binance-listing-onchain",
+        "path_name": "BINANCE_LISTING_STRATEGY_PATH",
+        "storage_key": "strategies/binance-listing-onchain",
+        "page": "strategy.html",
+        "legacy_page": "crypto.html",
+        "signal_key": "signals",
+        "action_key": "action",
+        "label_key": "action_label",
+        "description": "监控 Binance 上新公告，解析官方合约，执行链上 DRY_RUN 买入和止盈止损验证。",
         "builtin": True,
     },
 ]
@@ -1599,6 +1647,11 @@ def definition_public_row(definition: dict[str, Any], payload: dict[str, Any] | 
             summary["open_position_count"] = summary_holding_count
             summary["signal_count"] = max(to_int(summary.get("signal_count")), summary_signal_count, len(signals))
             strategy["decision_title"] = strategy.get("decision_title") or f"{running_count}/{instance_count} 个实例运行中"
+    if definition.get("id") == BINANCE_LISTING_STRATEGY_ID:
+        signals = data.get("signals") if isinstance(data.get("signals"), list) else []
+        holdings = data.get("positions") if isinstance(data.get("positions"), list) else []
+        summary["signal_count"] = max(to_int(summary.get("signal_count")), len(signals))
+        summary["open_position_count"] = max(to_int(summary.get("open_position_count")), len(holdings))
     return {
         "id": strategy_id,
         "name": str(strategy.get("name") or definition["name"]),
@@ -1645,7 +1698,7 @@ def strategy_definitions() -> list[dict[str, Any]]:
 
 
 def strategy_definition_by_id(strategy_id: str) -> dict[str, Any] | None:
-    target = safe_strategy_id(strategy_id)
+    target = canonical_strategy_id(strategy_id)
     for definition in strategy_definitions():
         if definition["id"] == target:
             return definition
@@ -2037,20 +2090,20 @@ def filter_holdings_payload(payload: dict[str, Any], portfolio_type: str | None 
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     rows = data.get("holdings") if isinstance(data.get("holdings"), list) else []
     target_type = str(portfolio_type or "").strip().lower()
-    target_strategy = safe_strategy_id(strategy_id) if strategy_id else ""
+    target_strategy = canonical_strategy_id(strategy_id) if strategy_id else ""
     if target_type in {"quant", "personal"}:
         rows = [row for row in rows if str(row.get("portfolio_type") or "").lower() == target_type]
     if target_strategy:
         rows = [
             row for row in rows
-            if row.get("strategy_id") and safe_strategy_id(row.get("strategy_id")) == target_strategy
+            if row.get("strategy_id") and canonical_strategy_id(row.get("strategy_id")) == target_strategy
         ]
     next_payload = {**payload, "data": {**data}}
     summary_strategies = []
     if target_type == "quant":
         summary_strategies = data.get("strategy_outputs", {}).get("strategies", []) if isinstance(data.get("strategy_outputs"), dict) else []
         if target_strategy:
-            summary_strategies = [row for row in summary_strategies if safe_strategy_id(row.get("strategy_id") or row.get("id")) == target_strategy]
+            summary_strategies = [row for row in summary_strategies if canonical_strategy_id(row.get("strategy_id") or row.get("id")) == target_strategy]
     next_payload["data"]["holdings"] = rows
     next_payload["data"]["summary"] = strategy_portfolio_summary(rows, summary_strategies)
     next_payload["data"]["allocation"] = strategy_portfolio_allocation(rows)
@@ -2062,9 +2115,9 @@ def filter_holdings_payload(payload: dict[str, Any], portfolio_type: str | None 
         filtered_positions = strategy_outputs.get("positions") if isinstance(strategy_outputs.get("positions"), list) else []
         filtered_alerts = strategy_outputs.get("sell_alerts") if isinstance(strategy_outputs.get("sell_alerts"), list) else []
         if target_strategy:
-            filtered_signals = [row for row in filtered_signals if safe_strategy_id(row.get("strategy_id")) == target_strategy]
-            filtered_positions = [row for row in filtered_positions if safe_strategy_id(row.get("strategy_id")) == target_strategy]
-            filtered_alerts = [row for row in filtered_alerts if safe_strategy_id(row.get("strategy_id")) == target_strategy]
+            filtered_signals = [row for row in filtered_signals if canonical_strategy_id(row.get("strategy_id")) == target_strategy]
+            filtered_positions = [row for row in filtered_positions if canonical_strategy_id(row.get("strategy_id")) == target_strategy]
+            filtered_alerts = [row for row in filtered_alerts if canonical_strategy_id(row.get("strategy_id")) == target_strategy]
         next_payload["data"]["quant_by_strategy"] = strategy_groups_for_holdings(
             [row for row in rows if str(row.get("portfolio_type") or "").lower() == "quant"],
             summary_strategies,
@@ -3157,6 +3210,30 @@ def strategy_matches_data(data: dict[str, Any], strategy: str | None) -> bool:
     return target in strategy_aliases(data)
 
 
+def strategy_option_value(option: Any) -> str:
+    if isinstance(option, dict):
+        return str(option.get("id") or option.get("key") or option.get("value") or option.get("strategy") or option.get("label") or option.get("name") or "")
+    return str(option or "")
+
+
+def strategy_label_for_filter(data: dict[str, Any], items: list[dict[str, Any]], strategy: str) -> str:
+    target = normalize_filter_value(strategy)
+    for option in data.get("strategies") if isinstance(data.get("strategies"), list) else []:
+        value = strategy_option_value(option)
+        if normalize_filter_value(value) == target:
+            if isinstance(option, dict):
+                return str(option.get("label") or option.get("name") or option.get("id") or value)
+            return value
+    for item in items:
+        for key in ("strategy_label", "strategy_name", "strategy", "strategy_id"):
+            value = item.get(key)
+            if value and normalize_filter_value(value) == target:
+                return str(item.get("strategy_label") or item.get("strategy_name") or value)
+        if pick_matches_strategy(item, strategy, data):
+            return str(item.get("strategy_label") or item.get("strategy_name") or item.get("strategy") or item.get("strategy_id") or strategy)
+    return strategy
+
+
 def pick_matches_strategy(item: dict[str, Any], strategy: str | None, fallback_data: dict[str, Any]) -> bool:
     target = normalize_filter_value(strategy)
     if not target:
@@ -3266,11 +3343,9 @@ def filtered_strategy_picks(strategy: str | None = None, date: str | None = None
 
     data["items"] = strategy_filtered
     data["count"] = len(strategy_filtered)
-    if strategy and strategy_matches_data(data, strategy):
-        data["strategy"] = data.get("strategy") or strategy
-    elif strategy:
+    if strategy:
         data["strategy"] = strategy
-        data.setdefault("strategy_label", strategy)
+        data["strategy_label"] = strategy_label_for_filter(data, strategy_filtered, strategy)
     if trade_date:
         data["trade_date"] = trade_date
         payload["meta"]["trade_date"] = trade_date
@@ -3843,6 +3918,281 @@ def crypto_append_event_log(kind: str, rows: list[dict[str, Any]], received_at: 
             message = str(row.get("message") or row.get("event_type") or f"crypto {kind} event")
             stage = kind
         append_jsonl(CRYPTO_FUNDING_LOG_PATH, crypto_log_row(kind, message, received_at, "info", stage, strategy_id, strategy_name))
+
+
+def listing_now_run_id(prefix: str = "binance-listing") -> str:
+    return f"{prefix}-{now_hk().strftime('%Y%m%d-%H%M%S')}"
+
+
+def listing_trade_date(value: Any = None) -> str:
+    parsed = parse_hk_datetime(value)
+    return (parsed or now_hk()).strftime("%Y-%m-%d")
+
+
+def listing_public_row(row: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(row, dict):
+        return {}
+    public = redact_secret_fields(row)
+    public.setdefault("strategy_id", BINANCE_LISTING_STRATEGY_ID)
+    public.setdefault("strategy_name", BINANCE_LISTING_STRATEGY_NAME)
+    return public
+
+
+def listing_recent_rows(path: Path, limit: int) -> list[dict[str, Any]]:
+    return [listing_public_row(row) for row in read_jsonl_tail(path, limit)][-limit:]
+
+
+def listing_log_row(kind: str, message: str, received_at: str, level: str = "info", stage: str = "") -> dict[str, Any]:
+    return {
+        "received_at": received_at,
+        "time": received_at,
+        "level": level,
+        "stage": stage or kind,
+        "message": message,
+        "strategy_id": BINANCE_LISTING_STRATEGY_ID,
+        "strategy_name": BINANCE_LISTING_STRATEGY_NAME,
+        "trade_date": listing_trade_date(received_at),
+    }
+
+
+def listing_read_snapshot() -> dict[str, Any]:
+    if effective_path(BINANCE_LISTING_STRATEGY_PATH).exists():
+        try:
+            return load_json(BINANCE_LISTING_STRATEGY_PATH)
+        except HTTPException:
+            pass
+    now = now_hk()
+    return {
+        "meta": {
+            "version": "1.0",
+            "source": "listing-webhook",
+            "as_of": now.isoformat(),
+            "trade_date": now.strftime("%Y-%m-%d"),
+            "timezone": "Asia/Hong_Kong",
+            "market_session": "crypto-24x7",
+            "run_id": listing_now_run_id("binance-listing-init"),
+        },
+        "data": {
+            "strategy": {
+                "id": BINANCE_LISTING_STRATEGY_ID,
+                "name": BINANCE_LISTING_STRATEGY_NAME,
+                "status": "waiting",
+                "category": "crypto",
+                "provider": "binance-announcement",
+                "mode": "DRY_RUN",
+                "decision_title": "等待公告监控心跳",
+                "decision_detail": "jp_vps 启动后，这里会显示 Binance 上新公告监控、候选信号、模拟持仓和退出记录。",
+                "decision_tone": "warning",
+            },
+            "summary": {
+                "watched_catalog_id": 48,
+                "seen_article_count": 0,
+                "signal_count": 0,
+                "validated_count": 0,
+                "order_count": 0,
+                "open_position_count": 0,
+                "closed_position_count": 0,
+                "error_count": 0,
+                "stake_usd": 0,
+                "stop_loss_pct": 8,
+                "take_profit_1_pct": 10,
+                "take_profit_2_pct": 100,
+            },
+            "heartbeat": {},
+            "positions": [],
+            "signals": [],
+            "trades": [],
+            "events": [],
+            "logs": [],
+        },
+    }
+
+
+def listing_summary_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    data = snapshot.get("data") if isinstance(snapshot.get("data"), dict) else {}
+    summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+    signals = data.get("signals") if isinstance(data.get("signals"), list) else []
+    trades = data.get("trades") if isinstance(data.get("trades"), list) else []
+    positions = data.get("positions") if isinstance(data.get("positions"), list) else []
+    events = data.get("events") if isinstance(data.get("events"), list) else []
+    closed_trades = [row for row in trades if row.get("side") == "sell" or row.get("status") in {"closed", "dry_run_closed"}]
+    summary.update(
+        {
+            "signal_count": len(signals),
+            "trade_count": len(trades),
+            "open_position_count": len(positions),
+            "closed_position_count": len(closed_trades),
+            "event_count": len(events),
+        }
+    )
+    return summary
+
+
+def listing_normalize_signal(row: dict[str, Any]) -> dict[str, Any]:
+    symbol = str(row.get("symbol") or row.get("asset") or "").upper()
+    status = str(row.get("status") or row.get("live_signal_status") or "")
+    action = "buy" if status in {"valid", "ready_supported_contract", "dry_run_filled"} or row.get("should_trade") else "watch"
+    contract = row.get("contract") if isinstance(row.get("contract"), dict) else {}
+    market = row.get("chain") or contract.get("chain") or "on-chain"
+    return {
+        **listing_public_row(row),
+        "event_type": row.get("event_type") or "signal",
+        "received_at": row.get("received_at") or now_hk().isoformat(),
+        "symbol": symbol,
+        "name": str(row.get("project_name") or row.get("name") or symbol),
+        "market": str(market),
+        "action": action,
+        "action_label": "模拟买入" if action == "buy" else "观察",
+        "score": 100 if action == "buy" else 50,
+        "article_code": row.get("article_code"),
+        "title": row.get("title"),
+        "listing_time_utc": row.get("listing_time_utc"),
+        "binance_spot_pairs": row.get("binance_spot_pairs") or row.get("spot_pairs") or [],
+        "contract": row.get("contract") or {},
+        "reason": row.get("reason") or row.get("live_signal_status") or row.get("status") or "",
+    }
+
+
+def listing_normalize_trade(row: dict[str, Any]) -> dict[str, Any]:
+    symbol = str(row.get("symbol") or "").upper()
+    order = row.get("order") if isinstance(row.get("order"), dict) else {}
+    prepared = row.get("prepared_trade") if isinstance(row.get("prepared_trade"), dict) else row.get("buy_trade") if isinstance(row.get("buy_trade"), dict) else {}
+    side = str(row.get("side") or prepared.get("side") or "").lower()
+    amount_in_usd = to_float(order.get("amount_in_usd") or prepared.get("amount_in_usd"))
+    amount_out_usd = to_float(order.get("amount_out_usd") or prepared.get("amount_out_usd"))
+    contract = row.get("contract") if isinstance(row.get("contract"), dict) else {}
+    reason = row.get("reason") if isinstance(row.get("reason"), dict) else {}
+    market = row.get("chain") or prepared.get("chain") or contract.get("chain") or "on-chain"
+    exit_reason = row.get("exit_reason") or reason.get("type") or row.get("reason")
+    return {
+        **listing_public_row(row),
+        "event_type": row.get("event_type") or "trade",
+        "received_at": row.get("received_at") or row.get("created_at") or now_hk().isoformat(),
+        "symbol": symbol,
+        "name": str(row.get("project_name") or symbol),
+        "market": str(market),
+        "side": side,
+        "side_label": "买入" if side == "buy" else "卖出" if side == "sell" else "--",
+        "status": order.get("status") or row.get("status") or "recorded",
+        "article_code": row.get("article_code"),
+        "position_id": row.get("position_id"),
+        "title": row.get("title"),
+        "token_address": row.get("token_address") or prepared.get("token_out_address") or prepared.get("token_in_address"),
+        "chain": row.get("chain") or prepared.get("chain"),
+        "quote_token": row.get("quote_token") or prepared.get("quote_token"),
+        "amount_in_usd": amount_in_usd,
+        "amount_out_usd": amount_out_usd,
+        "pnl_pct": to_float(row.get("pnl_pct") or row.get("profit_pct")),
+        "pnl_usd": to_float(row.get("pnl_usd")),
+        "exit_reason": exit_reason,
+    }
+
+
+def listing_build_snapshot(incoming: dict[str, Any] | None = None, event_kind: str = "heartbeat") -> dict[str, Any]:
+    incoming = incoming or {}
+    existing = listing_read_snapshot()
+    existing_data = existing.get("data") if isinstance(existing.get("data"), dict) else {}
+    received_at = now_hk().isoformat()
+    heartbeat = incoming.get("heartbeat") if isinstance(incoming.get("heartbeat"), dict) else incoming.get("status") if isinstance(incoming.get("status"), dict) else incoming
+    heartbeat = heartbeat if isinstance(heartbeat, dict) and event_kind == "heartbeat" else {}
+    existing_heartbeat = existing_data.get("heartbeat") if isinstance(existing_data.get("heartbeat"), dict) else {}
+    active_heartbeat = heartbeat or existing_heartbeat
+    if active_heartbeat:
+        active_heartbeat = {**listing_public_row(active_heartbeat), "received_at": active_heartbeat.get("received_at") or received_at}
+        active_heartbeat["stale_seconds"] = seconds_since(active_heartbeat.get("received_at")) or 0
+
+    incoming_positions = incoming.get("positions") if isinstance(incoming.get("positions"), list) else incoming.get("open_positions") if isinstance(incoming.get("open_positions"), list) else None
+    if incoming_positions is not None:
+        positions = [listing_public_row(row) for row in incoming_positions if isinstance(row, dict)]
+    else:
+        positions = existing_data.get("positions") if isinstance(existing_data.get("positions"), list) else []
+
+    signals = listing_recent_rows(BINANCE_LISTING_SIGNAL_LOG_PATH, 160)
+    trades = listing_recent_rows(BINANCE_LISTING_TRADE_LOG_PATH, 240)
+    events = listing_recent_rows(BINANCE_LISTING_EVENT_LOG_PATH, 240)
+    logs = listing_recent_rows(BINANCE_LISTING_LOG_PATH, 200)
+    stats = active_heartbeat.get("stats") if isinstance(active_heartbeat.get("stats"), dict) else {}
+    risk = active_heartbeat.get("risk") if isinstance(active_heartbeat.get("risk"), dict) else {}
+    summary = {
+        **(existing_data.get("summary") if isinstance(existing_data.get("summary"), dict) else {}),
+        "watched_catalog_id": to_int(active_heartbeat.get("catalog_id"), 48),
+        "seen_article_count": to_int(active_heartbeat.get("seen_article_count") or active_heartbeat.get("seen_articles")),
+        "validated_count": to_int(stats.get("validated")),
+        "order_count": to_int(stats.get("orders")),
+        "error_count": to_int(stats.get("errors")),
+        "stake_usd": to_float(active_heartbeat.get("stake_usd"), to_float(risk.get("stake_usd"), 0) or 0),
+        "stop_loss_pct": to_float(risk.get("stop_loss_pct"), 0.08) * 100,
+        "take_profit_1_pct": to_float(risk.get("take_profit_1_pct"), 0.10) * 100,
+        "take_profit_2_pct": to_float(risk.get("take_profit_2_pct"), 1.0) * 100,
+    }
+    snapshot = {
+        "meta": {
+            "version": "1.0",
+            "source": "listing-webhook",
+            "as_of": received_at,
+            "trade_date": listing_trade_date(received_at),
+            "timezone": "Asia/Hong_Kong",
+            "market_session": "crypto-24x7",
+            "run_id": str(active_heartbeat.get("run_id") or existing.get("meta", {}).get("run_id") or listing_now_run_id()),
+        },
+        "data": {
+            "strategy": {
+                "id": BINANCE_LISTING_STRATEGY_ID,
+                "name": BINANCE_LISTING_STRATEGY_NAME,
+                "status": "running" if active_heartbeat else "waiting",
+                "category": "crypto",
+                "provider": "binance-announcement",
+                "mode": str(active_heartbeat.get("mode") or "DRY_RUN"),
+                "decision_title": "正在监控 Binance 上新公告" if active_heartbeat else "等待公告监控心跳",
+                "decision_detail": (
+                    f"已见公告 {to_int(summary.get('seen_article_count'))} 篇，开放持仓 {len(positions)}，最近心跳 {active_heartbeat.get('stale_seconds', 0)} 秒前。"
+                    if active_heartbeat
+                    else "jp_vps 尚未向网站上报实时状态。"
+                ),
+                "decision_tone": "blue" if active_heartbeat else "warning",
+                "description": "监控 Binance 公告板，解析官方合约，DRY_RUN 链上买入并按退出规则监督。",
+            },
+            "summary": summary,
+            "heartbeat": active_heartbeat or {},
+            "positions": positions,
+            "signals": signals,
+            "trades": trades,
+            "events": events,
+            "logs": logs,
+        },
+    }
+    snapshot["data"]["summary"] = listing_summary_from_snapshot(snapshot)
+    return snapshot
+
+
+def listing_persist_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    write_json_atomic(BINANCE_LISTING_STRATEGY_PATH, snapshot)
+    return normalize_payload(snapshot, ENDPOINTS["/api/v1/strategies/binance-listing-onchain"], "listing-webhook", BINANCE_LISTING_STRATEGY_PATH)
+
+
+def listing_event_rows_from_payload(payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    data = extract_raw_data(payload)
+    raw = data.get(key) or data.get("items") or data.get("events") or []
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    return [listing_public_row(row) for row in raw if isinstance(row, dict)]
+
+
+def listing_append_event_log(kind: str, rows: list[dict[str, Any]], received_at: str) -> None:
+    for row in rows:
+        symbol = str(row.get("symbol") or "").upper()
+        if kind == "signal":
+            message = f"公告信号 {symbol or '--'} {row.get('action_label') or row.get('status') or row.get('reason') or ''}"
+            stage = "signal"
+        elif kind == "trade":
+            message = f"模拟交易 {symbol or '--'} {row.get('side') or ''} {row.get('status') or ''}"
+            stage = "trade"
+        else:
+            message = str(row.get("message") or row.get("event_type") or f"binance listing {kind}")
+            stage = kind
+        append_jsonl(BINANCE_LISTING_LOG_PATH, listing_log_row(kind, message, received_at, "info", stage))
 
 
 @app.get("/api/v1/actions")
@@ -4605,11 +4955,11 @@ def persist_strategy_events(events: list[dict[str, Any]]) -> list[dict[str, Any]
 
 
 def load_strategy_events(strategy_id: str | None = None) -> list[dict[str, Any]]:
-    target = safe_strategy_id(strategy_id) if strategy_id else ""
+    target = canonical_strategy_id(strategy_id) if strategy_id else ""
     rows = [
         row
         for row in load_jsonl(PERFORMANCE_EVENTS_PATH)
-        if isinstance(row, dict) and row.get("strategy_id") and (not target or safe_strategy_id(row.get("strategy_id")) == target)
+        if isinstance(row, dict) and row.get("strategy_id") and (not target or canonical_strategy_id(row.get("strategy_id")) == target)
     ]
     rows.sort(key=lambda row: (str(row.get("strategy_id") or ""), str(row.get("trade_date") or ""), str(row.get("as_of") or ""), str(row.get("event_uid") or "")))
     return rows
@@ -5632,8 +5982,9 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
     query_to = parse_query_date(to, "to")
     now = now_hk()
     today = now.date()
-    selected_strategy = strategy or default_static_strategy or (strategies[0]["id"] if strategies else "")
-    if strategy and strategy not in {item["id"] for item in strategies}:
+    requested_strategy = canonical_strategy_id(strategy) if strategy else ""
+    selected_strategy = requested_strategy or default_static_strategy or (strategies[0]["id"] if strategies else "")
+    if requested_strategy and requested_strategy not in {item["id"] for item in strategies}:
         raise HTTPException(status_code=404, detail=f"策略净值不存在：{strategy}")
     selected_events = [row for row in all_strategy_events if row.get("strategy_id") == selected_strategy] if selected_strategy else []
     strategy_ledger = (
@@ -5937,6 +6288,14 @@ def quant_strategy_detail(strategy_id: str) -> dict[str, Any]:
     definition = strategy_definition_by_id(strategy_id)
     if not definition:
         raise HTTPException(status_code=404, detail="策略不存在")
+    if definition["id"] == BINANCE_LISTING_STRATEGY_ID:
+        payload = strategy_binance_listing()
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        data["registry"] = definition_public_row(definition, payload)
+        data["snapshot_endpoint"] = f"/api/v1/quant/strategies/{definition['id']}/snapshot"
+        data["events_endpoint"] = f"/api/v1/quant/strategies/{definition['id']}/events"
+        data["holdings_url"] = f"/holdings.html?type=quant&strategy_id={urllib.parse.quote(definition['id'])}"
+        return payload
     if definition["id"] == CRYPTO_FUNDING_DEFAULT_STRATEGY_ID:
         payload = strategy_crypto_funding()
         data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
@@ -6326,6 +6685,38 @@ def strategy_crypto_funding() -> dict[str, Any]:
     return validate_response_payload("/api/v1/strategies/crypto-funding", normalized, storage_path_text(CRYPTO_FUNDING_STRATEGY_PATH))
 
 
+@app.get("/api/v1/strategies/binance-listing-onchain")
+def strategy_binance_listing() -> dict[str, Any]:
+    snapshot = listing_build_snapshot({}, "refresh")
+    data = snapshot.get("data") if isinstance(snapshot.get("data"), dict) else {}
+    heartbeat = data.get("heartbeat") if isinstance(data.get("heartbeat"), dict) else {}
+    stale_seconds = seconds_since(heartbeat.get("received_at") or snapshot.get("meta", {}).get("as_of"))
+    if heartbeat:
+        heartbeat["stale_seconds"] = stale_seconds
+    strategy = data.get("strategy") if isinstance(data.get("strategy"), dict) else {}
+    if stale_seconds is None:
+        strategy["status"] = "waiting"
+        strategy["decision_tone"] = "warning"
+    elif stale_seconds > 180:
+        strategy["status"] = "stale"
+        strategy["decision_tone"] = "warning"
+        strategy["decision_title"] = "公告监控心跳延迟"
+        strategy["decision_detail"] = f"最近一次心跳在 {stale_seconds} 秒前，需检查 jp_vps dry-run 服务。"
+    else:
+        strategy["status"] = "running"
+        strategy["decision_tone"] = "blue"
+    data["heartbeat"] = heartbeat
+    data["strategy"] = strategy
+    data["summary"] = listing_summary_from_snapshot(snapshot)
+    data["signals"] = listing_recent_rows(BINANCE_LISTING_SIGNAL_LOG_PATH, 160)
+    data["trades"] = listing_recent_rows(BINANCE_LISTING_TRADE_LOG_PATH, 240)
+    data["events"] = listing_recent_rows(BINANCE_LISTING_EVENT_LOG_PATH, 240)
+    data["logs"] = listing_recent_rows(BINANCE_LISTING_LOG_PATH, 200)
+    snapshot["data"] = data
+    normalized = normalize_payload(snapshot, ENDPOINTS["/api/v1/strategies/binance-listing-onchain"], "listing-webhook", BINANCE_LISTING_STRATEGY_PATH)
+    return validate_response_payload("/api/v1/strategies/binance-listing-onchain", normalized, storage_path_text(BINANCE_LISTING_STRATEGY_PATH))
+
+
 @app.post("/api/v1/crypto/funding/heartbeat")
 def receive_crypto_funding_heartbeat(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     verify_crypto_token(request, payload)
@@ -6394,6 +6785,76 @@ def receive_crypto_funding_events(request: Request, payload: dict[str, Any] = Bo
     snapshot = crypto_build_snapshot(extract_raw_data(payload), "event")
     crypto_persist_snapshot(snapshot)
     return action_response("crypto_funding_event_ingest", {"strategy_id": crypto_strategy_id_from_value(extract_raw_data(payload)), "count": len(rows), "message": "资金费率事件已记录"})
+
+
+@app.post("/api/v1/crypto/binance-listing/heartbeat")
+def receive_binance_listing_heartbeat(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    verify_crypto_token(request, payload)
+    received_at = now_hk().isoformat()
+    data = extract_raw_data(payload)
+    heartbeat = data.get("heartbeat") if isinstance(data.get("heartbeat"), dict) else data.get("status") if isinstance(data.get("status"), dict) else data
+    append_jsonl(
+        BINANCE_LISTING_HEARTBEAT_LOG_PATH,
+        {
+            "received_at": received_at,
+            "source_ip": request.client.host if request.client else None,
+            "strategy_id": BINANCE_LISTING_STRATEGY_ID,
+            "heartbeat": listing_public_row(heartbeat if isinstance(heartbeat, dict) else {}),
+        },
+    )
+    snapshot = listing_build_snapshot(data, "heartbeat")
+    normalized = listing_persist_snapshot(snapshot)
+    return validate_response_payload("/api/v1/strategies/binance-listing-onchain", normalized, storage_path_text(BINANCE_LISTING_STRATEGY_PATH))
+
+
+@app.post("/api/v1/crypto/binance-listing/signals")
+def receive_binance_listing_signals(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    verify_crypto_token(request, payload)
+    received_at = now_hk().isoformat()
+    rows = [listing_normalize_signal(row) for row in listing_event_rows_from_payload(payload, "signals")]
+    if not rows:
+        raise HTTPException(status_code=422, detail="缺少 signals/items")
+    for row in rows:
+        row["received_at"] = received_at
+        append_jsonl(BINANCE_LISTING_SIGNAL_LOG_PATH, row)
+        append_jsonl(BINANCE_LISTING_EVENT_LOG_PATH, {**row, "event_type": "signal"})
+    listing_append_event_log("signal", rows, received_at)
+    snapshot = listing_build_snapshot(extract_raw_data(payload), "signal")
+    listing_persist_snapshot(snapshot)
+    return action_response("binance_listing_signal_ingest", {"strategy_id": BINANCE_LISTING_STRATEGY_ID, "count": len(rows), "message": "Binance 上新公告信号已记录"})
+
+
+@app.post("/api/v1/crypto/binance-listing/trades")
+def receive_binance_listing_trades(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    verify_crypto_token(request, payload)
+    received_at = now_hk().isoformat()
+    rows = [listing_normalize_trade(row) for row in listing_event_rows_from_payload(payload, "trades")]
+    if not rows:
+        raise HTTPException(status_code=422, detail="缺少 trades/items")
+    for row in rows:
+        row["received_at"] = received_at
+        append_jsonl(BINANCE_LISTING_TRADE_LOG_PATH, row)
+        append_jsonl(BINANCE_LISTING_EVENT_LOG_PATH, {**row, "event_type": row.get("event_type") or "trade"})
+    listing_append_event_log("trade", rows, received_at)
+    snapshot = listing_build_snapshot(extract_raw_data(payload), "trade")
+    listing_persist_snapshot(snapshot)
+    return action_response("binance_listing_trade_ingest", {"strategy_id": BINANCE_LISTING_STRATEGY_ID, "count": len(rows), "message": "Binance 上新模拟交易已记录"})
+
+
+@app.post("/api/v1/crypto/binance-listing/events")
+def receive_binance_listing_events(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    verify_crypto_token(request, payload)
+    received_at = now_hk().isoformat()
+    rows = [listing_public_row(row) for row in listing_event_rows_from_payload(payload, "events")]
+    if not rows:
+        raise HTTPException(status_code=422, detail="缺少 events/items")
+    for row in rows:
+        row["received_at"] = received_at
+        append_jsonl(BINANCE_LISTING_EVENT_LOG_PATH, row)
+    listing_append_event_log("event", rows, received_at)
+    snapshot = listing_build_snapshot(extract_raw_data(payload), "event")
+    listing_persist_snapshot(snapshot)
+    return action_response("binance_listing_event_ingest", {"strategy_id": BINANCE_LISTING_STRATEGY_ID, "count": len(rows), "message": "Binance 上新运行事件已记录"})
 
 
 @app.post("/api/v1/joinquant/signals")

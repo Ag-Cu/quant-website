@@ -235,6 +235,21 @@ class CryptoFundingStrategyPayload(ApiPayload):
     data: CryptoFundingStrategyData
 
 
+class BinanceListingStrategyData(ContractModel):
+    strategy: dict[str, Any]
+    summary: dict[str, Any]
+    heartbeat: dict[str, Any]
+    positions: list[Any] = Field(default_factory=list)
+    signals: list[Any] = Field(default_factory=list)
+    trades: list[Any] = Field(default_factory=list)
+    events: list[Any] = Field(default_factory=list)
+    logs: list[Any] = Field(default_factory=list)
+
+
+class BinanceListingStrategyPayload(ApiPayload):
+    data: BinanceListingStrategyData
+
+
 PayloadModel = TypeVar("PayloadModel", bound=BaseModel)
 
 
@@ -252,6 +267,7 @@ PAYLOAD_SCHEMAS: dict[str, type[BaseModel]] = {
     "/api/v1/strategies/etf": JoinQuantEtfStrategyPayload,
     "/api/v1/strategies/small-cap": SmallCapStrategyPayload,
     "/api/v1/strategies/crypto-funding": CryptoFundingStrategyPayload,
+    "/api/v1/strategies/binance-listing-onchain": BinanceListingStrategyPayload,
 }
 
 LIVE_PAYLOAD_SCHEMAS: dict[str, type[BaseModel]] = {
@@ -319,6 +335,7 @@ def json_schema_bundle() -> dict[str, Any]:
                 "JoinQuantEtfStrategyPayload": JoinQuantEtfStrategyPayload,
                 "SmallCapStrategyPayload": SmallCapStrategyPayload,
                 "CryptoFundingStrategyPayload": CryptoFundingStrategyPayload,
+                "BinanceListingStrategyPayload": BinanceListingStrategyPayload,
             }.items()
         },
     }

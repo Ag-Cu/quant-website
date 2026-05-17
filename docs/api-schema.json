@@ -1767,6 +1767,133 @@
       ],
       "title": "CryptoFundingStrategyPayload",
       "type": "object"
+    },
+    "BinanceListingStrategyPayload": {
+      "$defs": {
+        "BinanceListingStrategyData": {
+          "additionalProperties": true,
+          "properties": {
+            "strategy": {
+              "additionalProperties": true,
+              "title": "Strategy",
+              "type": "object"
+            },
+            "summary": {
+              "additionalProperties": true,
+              "title": "Summary",
+              "type": "object"
+            },
+            "heartbeat": {
+              "additionalProperties": true,
+              "title": "Heartbeat",
+              "type": "object"
+            },
+            "positions": {
+              "items": {},
+              "title": "Positions",
+              "type": "array"
+            },
+            "signals": {
+              "items": {},
+              "title": "Signals",
+              "type": "array"
+            },
+            "trades": {
+              "items": {},
+              "title": "Trades",
+              "type": "array"
+            },
+            "events": {
+              "items": {},
+              "title": "Events",
+              "type": "array"
+            },
+            "logs": {
+              "items": {},
+              "title": "Logs",
+              "type": "array"
+            }
+          },
+          "required": [
+            "strategy",
+            "summary",
+            "heartbeat"
+          ],
+          "title": "BinanceListingStrategyData",
+          "type": "object"
+        },
+        "Meta": {
+          "additionalProperties": true,
+          "properties": {
+            "version": {
+              "title": "Version",
+              "type": "string"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            },
+            "as_of": {
+              "title": "As Of",
+              "type": "string"
+            },
+            "trade_date": {
+              "title": "Trade Date",
+              "type": "string"
+            },
+            "timezone": {
+              "title": "Timezone",
+              "type": "string"
+            },
+            "market_session": {
+              "title": "Market Session",
+              "type": "string"
+            },
+            "run_id": {
+              "title": "Run Id",
+              "type": "string"
+            },
+            "storage_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Storage Path"
+            }
+          },
+          "required": [
+            "version",
+            "source",
+            "as_of",
+            "trade_date",
+            "timezone",
+            "market_session",
+            "run_id"
+          ],
+          "title": "Meta",
+          "type": "object"
+        }
+      },
+      "additionalProperties": true,
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/Meta"
+        },
+        "data": {
+          "$ref": "#/$defs/BinanceListingStrategyData"
+        }
+      },
+      "required": [
+        "meta",
+        "data"
+      ],
+      "title": "BinanceListingStrategyPayload",
+      "type": "object"
     }
   }
 }

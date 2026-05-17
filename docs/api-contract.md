@@ -89,6 +89,18 @@ GET  /api/v1/quant/strategies/{strategy_id}/logs
 
 当前环境有 `tushare` 包，但没有 `TUSHARE_TOKEN`。后续配置 token 后，可以把 A 股日线、指数、行业和财务字段切换到 Tushare；接口响应结构无需改变。
 
+### Tushare 量化选股任务
+
+`scripts/generate_khan_picks.py` 用 Tushare 日线、沪深300指数和申万一级行业成分复刻 `git@github.com:JustinWu00/khan-quant-data.git` 中 `src/backtest/stategy/macd.py::before_market_open` 的入池逻辑，并写入“今日选股”接口。
+
+运行环境必须通过 `TUSHARE_TOKEN` 注入 token，不要把 token 写入仓库：
+
+```bash
+TUSHARE_TOKEN=... python scripts/generate_khan_picks.py --user owner
+```
+
+输出策略 id 为 `khan-macd-volume`，展示名为 `Khan MA 量价选股`。公网部署建议用 systemd timer 在 A 股收盘后每日运行一次，写入 `data/backend/users/{username}/strategies/picks.json`，从而让用户登录后只看到自己名下的选股结果。
+
 ### `/api/v1/macro` 可复现派生指标
 
 - `equity_bond_spread_pct = 100 / 沪深300 PE(TTM) - 中国 10Y 国债收益率`。其中 PE(TTM) 来自东方财富行情中心，中国 10Y 来自财政部-中国国债收益率曲线/中债估值(CCDC)。

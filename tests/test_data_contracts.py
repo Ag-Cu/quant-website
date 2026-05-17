@@ -188,6 +188,10 @@ DATA_FIELD_TYPES: dict[str, dict[str, str]] = {
 def data_schema_for(path: Path) -> dict[str, Any]:
     rel = path.relative_to(ROOT).as_posix()
     key = rel.removeprefix("data/backend/").removeprefix("data/live/")
+    if key.startswith("users/"):
+        key = "/".join(key.split("/")[2:])
+    if key.startswith("live/"):
+        key = key.removeprefix("live/")
     field_types = DATA_FIELD_TYPES[key]
     return {
         "type": "object",

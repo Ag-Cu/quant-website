@@ -50,9 +50,11 @@ const PAGE_META = {
   macro: ["Macro Reference", "宏观指标"],
 };
 
+const initialQuery = new URLSearchParams(window.location.search);
+
 const pageState = {
-  picks: { strategy: null, date: null, latestDate: null },
-  strategy: { strategyId: new URLSearchParams(window.location.search).get("strategy_id") || "" },
+  picks: { strategy: initialQuery.get("strategy") || null, date: initialQuery.get("date") || null, latestDate: null },
+  strategy: { strategyId: initialQuery.get("strategy_id") || "" },
 };
 
 const dom = {
@@ -69,7 +71,7 @@ const dom = {
 const integerFormat = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 });
 const STRATEGY_LOG_DISPLAY_LIMIT = 1000;
 
-const performanceState = { strategy: new URLSearchParams(window.location.search).get("strategy") || "", benchmark: "CSI300", range: "1Y", from: "", to: "" };
+const performanceState = { strategy: initialQuery.get("strategy") || "", benchmark: "CSI300", range: "1Y", from: "", to: "" };
 let activePage = document.body.dataset.page || "overview";
 
 function formatDateParam(date) {
@@ -1324,15 +1326,18 @@ function bindPicksControls(payload) {
   document.querySelectorAll("[data-pick-strategy]").forEach((button) => {
     button.addEventListener("click", () => {
       pageState.picks.strategy = button.dataset.pickStrategy || null;
+      updateUrlQuery(picksQueryParams());
       dom.refreshButton?.click();
     });
   });
   document.querySelector("[data-pick-date='prev']")?.addEventListener("click", () => {
     pageState.picks.date = shiftDate(pageState.picks.date || data.trade_date || pageState.picks.latestDate, -1);
+    updateUrlQuery(picksQueryParams());
     dom.refreshButton?.click();
   });
   document.querySelector("[data-pick-date='today']")?.addEventListener("click", () => {
     pageState.picks.date = hkDateString();
+    updateUrlQuery(picksQueryParams());
     dom.refreshButton?.click();
   });
   document.querySelector("[data-pick-export]")?.addEventListener("click", () => {
@@ -1668,6 +1673,10 @@ function renderStrategyDetail(payload) {
   const data = payload.data || {};
   const registry = data.registry || {};
   const strategy = data.strategy || {};
+  if (strategy.id === "binance-listing-onchain" || registry.id === "binance-listing-onchain") {
+    renderBinanceListing(payload);
+    return;
+  }
   if (strategy.id === "crypto-funding-rate" || registry.id === "crypto-funding-rate" || Array.isArray(data.instances)) {
     renderCryptoFunding(payload);
     return;
@@ -2001,6 +2010,62 @@ function renderCryptoFunding(payload) {
       ]) })}
       ${panel({ title: "事件记录", kicker: "Events", span: "span-4", body: timeline((events || []).slice(-20).reverse().map((row) => ({ time: formatDateTime(row.received_at || row.created_at), label: row.symbol || row.event_type || "event", detail: row.exit_reason || row.reason || row.message || row.event_key || "", status: row.status || "done" }))) })}
       ${panel({ title: "运行日志", kicker: "Crypto Logs", span: "span-8", tools: pill(`${intText(Math.min(logs.length, STRATEGY_LOG_DISPLAY_LIMIT))} lines`, "blue"), body: strategyLogConsole(logs) })}
+    </section>
+  `;
+  bindStrategyHubControls(payload);
+}
+
+function renderBinanceListing(payload) {
+  const data = payload.data || {};
+  const { strategy = {}, summary = {}, heartbeat = {}, positions = [], signals = [], trades = [], events = [], logs = [] } = data;
+  const recentSignals = Array.isArray(signals) ? signals.slice(-30).reverse() : [];
+  const recentTrades = Array.isArray(trades) ? trades.slice(-40).reverse() : [];
+  const openPositions = Array.isArray(positions) ? positions : [];
+  const riskText = `${pctText(summary.stop_loss_pct, 0)} / ${pctText(summary.take_profit_1_pct, 0)} / ${pctText(summary.take_profit_2_pct, 0)}`;
+  const signalCards = recentSignals.slice(0, 8).map((row) => `<article class="signal-card ${actionTone(row.action)}">
+    <div class="signal-card-head">
+      <div><span>${escapeHtml(row.market || row.chain || "on-chain")}</span><strong>${escapeHtml(row.symbol || "--")}</strong></div>
+      ${tag(row.action_label || row.action || "观察", actionTone(row.action))}
+    </div>
+    <div class="signal-card-metrics">
+      <div><span>交易对</span><strong>${escapeHtml(Array.isArray(row.binance_spot_pairs) ? row.binance_spot_pairs.slice(0, 2).join(", ") : "--")}</strong></div>
+      <div><span>上线时间</span><strong>${formatDateTime(row.listing_time_utc)}</strong></div>
+      <div><span>合约</span><strong class="mono">${escapeHtml((row.contract?.address || row.token_address || "--").slice(0, 12))}</strong></div>
+    </div>
+    <p class="note">${escapeHtml(row.title || row.reason || "")}</p>
+  </article>`).join("");
+  dom.app.innerHTML = `
+    ${payload.data?.registry ? `<section class="strategy-toolbar"><button class="ghost-button icon-label" type="button" data-strategy-list>${icon("arrowLeft")}<span>策略列表</span></button><div class="toolbar">${statusPill(strategy.status)}${pill(strategy.mode || heartbeat.mode || "DRY_RUN", "blue")}</div></section>` : ""}
+    ${pageDecisionBrief({
+      kicker: strategy.name || "Binance Listing",
+      title: strategy.decision_title || "等待 Binance 上新公告",
+      detail: strategy.decision_detail || "策略正在监控 Binance 公告板，并只对正文中明确给出官方合约的标的做链上 DRY_RUN 验证。",
+      tone: strategy.decision_tone || "blue",
+      metrics: [
+        { label: "运行模式", value: strategy.mode || heartbeat.mode || "DRY_RUN" },
+        { label: "心跳延迟", value: secondsText(heartbeat.stale_seconds) },
+        { label: "已见公告", value: `${intText(summary.seen_article_count)} 篇` },
+        { label: "开放持仓", value: `${intText(summary.open_position_count)} 笔` },
+      ],
+    })}
+    ${summaryGrid([
+      metricCard("候选信号", `${intText(summary.signal_count)} 条`, `${intText(summary.validated_count)} 条通过验证`),
+      metricCard("模拟交易", `${intText(summary.trade_count || summary.order_count)} 笔`, `持仓 ${intText(summary.open_position_count)} / 已平 ${intText(summary.closed_position_count)}`),
+      metricCard("单笔预算", `$${valueText(summary.stake_usd, 0)}`, `退出 ${riskText}`),
+      metricCard("错误事件", `${intText(summary.error_count)} 条`, heartbeat.host || heartbeat.hostname || "jp_vps", toneByValue(-Number(summary.error_count || 0))),
+    ])}
+    <section class="main-grid">
+      ${panel({ title: "公告信号", kicker: "Announcement Signals", span: "span-5", body: signalCards ? `<div class="signal-card-grid compact">${signalCards}</div>` : `<div class="empty-state">暂无上新信号</div>` })}
+      ${panel({ title: "模拟持仓", kicker: "Open Positions", span: "span-7", body: table(["标的", "链", "合约", "交易对", "入场预算", "剩余数量", "上线时间", "状态"], openPositions.map((row) => `<tr><td class="mono">${escapeHtml(row.symbol || "--")}</td><td>${escapeHtml(row.chain || row.contract?.chain || "--")}</td><td class="mono">${escapeHtml(row.token_address || row.contract?.address || "--")}</td><td>${escapeHtml(Array.isArray(row.binance_spot_pairs) ? row.binance_spot_pairs.join(", ") : row.spot_pair || "--")}</td><td>$${valueText(row.entry_cost_usd || row.amount_in_usd, 2)}</td><td>${valueText(row.remaining_amount_raw, 4)}</td><td>${formatDateTime(row.listing_time_utc)}</td><td>${escapeHtml(row.status || "open")}</td></tr>`), 1180) })}
+      ${panel({ title: "模拟成交", kicker: "Dry-run Trades", span: "span-8", body: table(["时间", "标的", "方向", "状态", "链", "报价币", "投入", "产出", "盈亏", "原因"], recentTrades.map((row) => `<tr><td>${formatDateTime(row.received_at || row.created_at)}</td><td class="mono">${escapeHtml(row.symbol || "--")}</td><td>${escapeHtml(row.side_label || row.side || "--")}</td><td>${escapeHtml(row.status || "--")}</td><td>${escapeHtml(row.chain || row.market || "--")}</td><td>${escapeHtml(row.quote_token || "--")}</td><td>$${valueText(row.amount_in_usd, 2)}</td><td>$${valueText(row.amount_out_usd, 2)}</td><td class="${toneClassByValue(row.pnl_pct)}">${pctText(row.pnl_pct)}</td><td>${escapeHtml(row.exit_reason || row.reason || "--")}</td></tr>`), 1280) })}
+      ${panel({ title: "心跳详情", kicker: "Heartbeat", span: "span-4", body: detailGrid([
+        { label: "最近心跳", value: formatDateTime(heartbeat.received_at || payload.meta?.as_of), detail: `${secondsText(heartbeat.stale_seconds)} 前` },
+        { label: "运行机器", value: heartbeat.host || heartbeat.hostname || "jp_vps", detail: heartbeat.run_id || payload.meta?.run_id || "" },
+        { label: "公告栏目", value: `catalog ${summary.watched_catalog_id || heartbeat.catalog_id || 48}`, detail: heartbeat.list_url || "Binance announcements" },
+        { label: "状态文件", value: "JSONL", detail: heartbeat.output_dir || heartbeat.state_path || "" },
+      ]) })}
+      ${panel({ title: "事件记录", kicker: "Events", span: "span-4", body: timeline((events || []).slice(-20).reverse().map((row) => ({ time: formatDateTime(row.received_at || row.created_at), label: row.symbol || row.event_type || "event", detail: row.message || row.reason || row.title || "", status: row.status || row.event_type || "done" }))) })}
+      ${panel({ title: "运行日志", kicker: "Listing Logs", span: "span-8", tools: pill(`${intText(Math.min(logs.length, STRATEGY_LOG_DISPLAY_LIMIT))} lines`, "blue"), body: strategyLogConsole(logs) })}
     </section>
   `;
   bindStrategyHubControls(payload);
