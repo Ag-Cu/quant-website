@@ -2524,6 +2524,53 @@ def pending_small_cap_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def pending_etf_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    strategy = data.get("strategy") if isinstance(data.get("strategy"), dict) else {}
+    return {
+        **payload,
+        "data": {
+            "strategy": {
+                **strategy,
+                "id": str(strategy.get("id") or "joinquant-wufu-etf-v43"),
+                "name": str(strategy.get("name") or "五福 ETF 轮动"),
+                "status": "pending",
+                "decision_title": "等待聚宽 ETF 策略上报",
+                "decision_detail": "当前文件不是聚宽真实 webhook 快照，已隐藏本地联调信号，避免把测试输出当成实盘结果。",
+                "decision_tone": "warning",
+            },
+            "summary": {
+                "buy_count": 0,
+                "watch_count": 0,
+                "target_exposure_pct": 0,
+                "current_exposure_pct": 0,
+                "day_pnl_pct": None,
+                "week_pnl_pct": None,
+                "month_pnl_pct": None,
+                "max_drawdown_pct": None,
+            },
+            "recommendations": [],
+            "signals": [],
+            "holdings": [],
+            "regime": {},
+            "risk": {},
+            "events": [
+                {
+                    "time": now_hk().strftime("%H:%M"),
+                    "label": "等待上报",
+                    "detail": f"已忽略本地联调文件 {meta.get('storage_path') or 'etf.json'} 中的测试信号。",
+                    "status": "pending",
+                }
+            ],
+            "logs": [],
+            "source": "joinquant-pending",
+            "ignored_seed_signal_count": len(data.get("recommendations") if isinstance(data.get("recommendations"), list) else []),
+            "ignored_seed_holding_count": len(data.get("holdings") if isinstance(data.get("holdings"), list) else []),
+        },
+    }
+
+
 def text_has_sell_signal(value: Any) -> bool:
     text = str(value or "")
     lowered = text.lower()
@@ -6630,6 +6677,8 @@ def market_etf_rankings(period: str = Query(default="1D")) -> dict[str, Any]:
 @app.get("/api/v1/strategies/etf")
 def strategy_etf() -> dict[str, Any]:
     payload = get_payload("/api/v1/strategies/etf")
+    if not is_real_joinquant_snapshot(payload):
+        return pending_etf_payload(payload)
     data = payload.get("data", {})
     logs = data.get("logs") if isinstance(data.get("logs"), list) else []
     if len(logs) < ETF_INLINE_LOG_LINES:

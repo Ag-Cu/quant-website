@@ -2040,6 +2040,33 @@ def payload_as_of(payload: dict[str, Any]) -> str | None:
     return str(value) if value else None
 
 
+SYNTHETIC_STRATEGY_MARKERS = ("test", "smoke", "fixture", "demo", "联调", "示例", "样例")
+
+
+def synthetic_strategy_text(payload: dict[str, Any]) -> str:
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    return " ".join(
+        str(value or "")
+        for value in (
+            meta.get("run_id"),
+            data.get("source"),
+            json.dumps(data.get("strategy") or {}, ensure_ascii=False),
+            json.dumps(data.get("events") or [], ensure_ascii=False),
+            json.dumps(data.get("logs") or [], ensure_ascii=False),
+            json.dumps(data.get("recommendations") or data.get("signals") or [], ensure_ascii=False),
+        )
+    ).lower()
+
+
+def is_real_joinquant_strategy_payload(payload: dict[str, Any]) -> bool:
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    if str(meta.get("source") or "").strip().lower() != "joinquant":
+        return False
+    text = synthetic_strategy_text(payload)
+    return not any(marker in text for marker in SYNTHETIC_STRATEGY_MARKERS)
+
+
 def unavailable_account() -> dict[str, Any]:
     return {
         "net_exposure_pct": None,
@@ -2101,6 +2128,8 @@ def build_strategy_status_from_artifacts() -> tuple[list[dict[str, Any]], str]:
         payload = load_optional_json(path)
         if not payload or payload_source(payload) in {"mock", "sample", "unavailable"}:
             continue
+        if not is_real_joinquant_strategy_payload(payload):
+            continue
         data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
         strategy = data.get("strategy") if isinstance(data.get("strategy"), dict) else {}
         summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
@@ -2137,6 +2166,8 @@ def build_timeline_from_strategy_artifacts(limit: int = 6) -> tuple[list[dict[st
         source_path = path if path.exists() else (fallback_path(path) or path)
         payload = load_optional_json(path)
         if not payload or payload_source(payload) in {"mock", "sample", "unavailable"}:
+            continue
+        if not is_real_joinquant_strategy_payload(payload):
             continue
         data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
         source = str(source_path.relative_to(ROOT) if source_path.is_relative_to(ROOT) else source_path)

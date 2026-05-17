@@ -604,6 +604,66 @@ def test_macro_payload_does_not_keep_sample_rows_when_sources_are_missing(monkey
     assert payload["data"]["summary"]["risk_preference_score"] is None
 
 
+def test_live_overview_ignores_non_real_strategy_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    root_backend = tmp_path / "data/backend"
+    etf_path = root_backend / "strategies/etf.json"
+    small_cap_path = root_backend / "strategies/small-cap.json"
+    etf_path.parent.mkdir(parents=True)
+    synthetic_payload = {
+        "meta": {
+            "version": "1.0",
+            "source": "joinquant",
+            "as_of": "2026-05-14T13:10:00+08:00",
+            "trade_date": "2026-05-14",
+            "timezone": "Asia/Hong_Kong",
+            "market_session": "closed",
+            "run_id": "domain-log-test-20260514-1311",
+        },
+        "data": {
+            "strategy": {"id": "joinquant-wufu-etf-v43", "name": "五福闹新春 v4.3", "status": "running"},
+            "summary": {"buy_count": 1, "target_exposure_pct": 100},
+            "recommendations": [{"symbol": "159915", "reason": "日志联调测试"}],
+            "holdings": [{"symbol": "159915"}],
+            "events": [{"time": "13:10", "label": "日志联调", "detail": "完整日志同步测试"}],
+            "logs": [{"message": "示例风控日志：成交量过滤通过但需观察"}],
+        },
+    }
+    small_cap_seed = {
+        "meta": {
+            "version": "1.0",
+            "source": "live",
+            "as_of": "2026-05-12T14:56:00+08:00",
+            "trade_date": "2026-05-12",
+            "timezone": "Asia/Hong_Kong",
+            "market_session": "open",
+            "run_id": "backend-small-20260512-1456",
+        },
+        "data": {
+            "strategy": {"id": "small-cap-momentum", "name": "小盘股动量", "status": "running"},
+            "summary": {"buy_count": 2, "target_exposure_pct": 55},
+            "signals": [{"symbol": "300476", "name": "胜宏科技"}],
+            "holdings": [{"symbol": "002463"}],
+            "events": [],
+            "logs": [],
+        },
+    }
+    etf_path.write_text(json.dumps(synthetic_payload, ensure_ascii=False), encoding="utf-8")
+    small_cap_path.write_text(json.dumps(small_cap_seed, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(update_live_data, "ROOT", tmp_path)
+    monkeypatch.setattr(update_live_data, "ROOT_BACKEND_DIR", root_backend)
+    monkeypatch.setattr(update_live_data, "BACKEND_DIR", root_backend)
+    monkeypatch.setattr(update_live_data, "LIVE_DIR", tmp_path / "data/live")
+    monkeypatch.setattr(update_live_data, "CONFIG_DIR", tmp_path / "data/config")
+
+    status, status_source = update_live_data.build_strategy_status_from_artifacts()
+    timeline, timeline_source = update_live_data.build_timeline_from_strategy_artifacts()
+
+    assert status == []
+    assert status_source == "unavailable"
+    assert timeline == []
+    assert timeline_source == "unavailable"
+
+
 @pytest.mark.parametrize(
     ("method", "path", "json_body"),
     [
@@ -810,6 +870,47 @@ def test_small_cap_endpoint_hides_seed_signals_until_joinquant_snapshot(
     assert payload["data"]["signals"] == []
     assert payload["data"]["holdings"] == []
     assert payload["data"]["ignored_seed_signal_count"] == 4
+
+
+def test_etf_endpoint_hides_synthetic_joinquant_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    client: TestClient,
+) -> None:
+    etf_path = tmp_path / "data/backend/strategies/etf.json"
+    etf_path.parent.mkdir(parents=True)
+    etf_path.write_text(
+        """
+        {
+          "meta": {"version": "1.0", "source": "joinquant", "as_of": "2026-05-14T13:10:00+08:00", "trade_date": "2026-05-14", "timezone": "Asia/Hong_Kong", "market_session": "closed", "run_id": "domain-log-test-20260514-1311"},
+          "data": {
+            "strategy": {"id": "joinquant-wufu-etf-v43", "name": "五福闹新春 v4.3", "status": "running"},
+            "summary": {"buy_count": 1, "target_exposure_pct": 100},
+            "recommendations": [{"symbol": "159915", "name": "创业板ETF易方达", "action": "buy", "reason": "日志联调测试"}],
+            "holdings": [{"symbol": "159915", "name": "创业板ETF易方达"}],
+            "regime": {},
+            "events": [{"time": "13:10", "label": "日志联调", "detail": "完整日志同步测试"}],
+            "logs": [{"message": "示例风控日志：成交量过滤通过但需观察"}]
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    full_log_path = tmp_path / "data/backend/strategies/joinquant-full-logs.jsonl"
+    full_log_path.write_text("", encoding="utf-8")
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(backend_main, "ETF_STRATEGY_PATH", etf_path)
+    monkeypatch.setattr(backend_main, "JOINQUANT_FULL_LOG_PATH", full_log_path)
+
+    response = client.get("/api/v1/strategies/etf")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["source"] == "joinquant-pending"
+    assert payload["data"]["recommendations"] == []
+    assert payload["data"]["holdings"] == []
+    assert payload["data"]["ignored_seed_signal_count"] == 1
 
 
 def test_quant_strategy_can_be_created_and_receive_snapshot(
