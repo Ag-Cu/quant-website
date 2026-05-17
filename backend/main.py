@@ -2480,6 +2480,7 @@ def pending_small_cap_payload(payload: dict[str, Any]) -> dict[str, Any]:
     strategy_name = str(strategy.get("name") or "涨停基因小市值轮动")
     return {
         **payload,
+        "meta": {**meta, "source_quality": "pending"},
         "data": {
             "strategy": {
                 **strategy,
@@ -2530,6 +2531,7 @@ def pending_etf_payload(payload: dict[str, Any]) -> dict[str, Any]:
     strategy = data.get("strategy") if isinstance(data.get("strategy"), dict) else {}
     return {
         **payload,
+        "meta": {**meta, "source_quality": "pending"},
         "data": {
             "strategy": {
                 **strategy,

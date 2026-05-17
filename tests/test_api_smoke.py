@@ -902,6 +902,7 @@ def test_small_cap_endpoint_hides_seed_signals_until_joinquant_snapshot(
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["data"]["source"] == "joinquant-pending"
+    assert payload["meta"]["source_quality"] == "pending"
     assert payload["data"]["signals"] == []
     assert payload["data"]["holdings"] == []
     assert payload["data"]["ignored_seed_signal_count"] == 4
@@ -943,6 +944,7 @@ def test_etf_endpoint_hides_synthetic_joinquant_snapshot(
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["data"]["source"] == "joinquant-pending"
+    assert payload["meta"]["source_quality"] == "pending"
     assert payload["data"]["recommendations"] == []
     assert payload["data"]["holdings"] == []
     assert payload["data"]["ignored_seed_signal_count"] == 1
@@ -967,6 +969,7 @@ def test_etf_endpoint_returns_pending_when_snapshot_missing(
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["data"]["source"] == "joinquant-pending"
+    assert payload["meta"]["source_quality"] == "pending"
     assert payload["data"]["recommendations"] == []
     assert payload["data"]["holdings"] == []
 
