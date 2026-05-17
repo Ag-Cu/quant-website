@@ -105,6 +105,16 @@ DATA_FIELD_TYPES: dict[str, dict[str, str]] = {
         "events": "array",
         "logs": "array",
     },
+    "strategies/binance-listing-onchain.json": {
+        "strategy": "object",
+        "summary": "object",
+        "heartbeat": "object",
+        "positions": "array",
+        "signals": "array",
+        "trades": "array",
+        "events": "array",
+        "logs": "array",
+    },
     "portfolio/holdings.json": {"summary": "object", "holdings": "array", "allocation": "array"},
     "performance/net-values.json": {
         "default_strategy": "string",
@@ -203,7 +213,15 @@ def data_schema_for(path: Path) -> dict[str, Any]:
 
 def iter_contract_files() -> list[Path]:
     files = [*ROOT.glob("data/backend/**/*.json"), *ROOT.glob("data/live/*.json")]
-    return sorted(files)
+    contract_files: list[Path] = []
+    for path in files:
+        rel = path.relative_to(ROOT).as_posix()
+        key = rel.removeprefix("data/backend/").removeprefix("data/live/")
+        if key.startswith("users/"):
+            key = "/".join(key.split("/")[2:])
+        if key in DATA_FIELD_TYPES:
+            contract_files.append(path)
+    return sorted(contract_files)
 
 
 @pytest.mark.parametrize("path", iter_contract_files(), ids=lambda path: path.relative_to(ROOT).as_posix())

@@ -18,6 +18,11 @@ def clear_auth_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "QUANT_AUTH_USERS_JSON",
         "QUANT_AUTH_SECRET",
         "QUANT_AUTH_COOKIE_SECURE",
+        "QUANT_ACTION_TOKEN",
+        "QUANT_REQUIRE_ACTION_TOKEN",
+        "JOINQUANT_WEBHOOK_TOKEN",
+        "CRYPTO_WEBHOOK_TOKEN",
+        "QUANT_WEBHOOK_OWNER",
     ):
         monkeypatch.delenv(name, raising=False)
 
