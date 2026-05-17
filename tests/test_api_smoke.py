@@ -354,6 +354,79 @@ def test_authenticated_user_gets_user_scoped_live_market_payloads(monkeypatch: p
     assert payload["data"]["summary"]["industry_count"] == 31
 
 
+def test_authenticated_overview_sentiment_is_aligned_with_user_sentiment_live_cache(monkeypatch: pytest.MonkeyPatch, tmp_path, client: TestClient) -> None:
+    enable_auth(monkeypatch)
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    monkeypatch.setattr(backend_main, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(backend_main, "LIVE_DIR", tmp_path / "data/live")
+    live_dir = tmp_path / "data/backend/users/owner/live"
+    live_dir.mkdir(parents=True)
+    meta = {
+        "version": "1.0",
+        "source": "live",
+        "as_of": "2026-05-18T09:10:00+08:00",
+        "trade_date": "2026-05-18",
+        "timezone": "Asia/Hong_Kong",
+        "market_session": "preopen",
+        "run_id": "owner-live",
+        "source_quality": "real",
+    }
+    (live_dir / "overview.json").write_text(
+        json.dumps(
+            {
+                "meta": meta,
+                "data": {
+                    "account": {},
+                    "market": {"sentiment_score": 51},
+                    "decision": {},
+                    "sentiment_gauge": {"score": 50.99, "label": "低迷"},
+                    "heatmap": {},
+                    "top_etfs": [],
+                    "sectors": [],
+                    "strategy_status": [],
+                    "alerts": [],
+                    "watchlist": {"groups": [{"name": "old", "items": []}]},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (live_dir / "sentiment.json").write_text(
+        json.dumps(
+            {
+                "meta": meta,
+                "data": {
+                    "summary": {"score": 92, "label": "活跃"},
+                    "latest_snapshot": {},
+                    "brilliant_volatility": {},
+                    "sentiment_trend": [],
+                    "brilliant_series": [],
+                    "surge_events": [],
+                    "gauges": [],
+                    "topics": [],
+                    "flows": [],
+                    "warnings": [],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    login(client)
+
+    response = client.get("/api/v1/dashboard/overview")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["meta"]["storage_path"] == "data/backend/users/owner/live/overview.json"
+    assert payload["data"]["market"]["sentiment_score"] == 92
+    assert payload["data"]["sentiment_gauge"]["score"] == 92
+    assert payload["data"]["sentiment_gauge"]["label"] == "活跃"
+    assert "watchlist" not in payload["data"]
+
+
 def test_auth_keeps_joinquant_webhook_token_path_available(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
     enable_auth(monkeypatch)
     monkeypatch.setenv("JOINQUANT_WEBHOOK_TOKEN", "test-joinquant-token")

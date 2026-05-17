@@ -3201,7 +3201,33 @@ def get_payload(path: str) -> dict[str, Any]:
     data_path, source = available_path(spec)
     payload = load_json(data_path)
     normalized = normalize_payload(payload, spec, source, data_path)
+    if path in {"/api/v1/dashboard/overview", "/api/v1/overview"}:
+        normalized = normalize_overview_sentiment(normalized)
     return validate_response_payload(path, normalized, storage_path_text(data_path))
+
+
+def normalize_overview_sentiment(payload: dict[str, Any]) -> dict[str, Any]:
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    sentiment_path = ENDPOINTS["/api/v1/market/sentiment"].live_path
+    if sentiment_path and sentiment_path.exists():
+        try:
+            sentiment_payload = load_json(sentiment_path)
+        except HTTPException:
+            sentiment_payload = {}
+        sentiment_data = sentiment_payload.get("data") if isinstance(sentiment_payload.get("data"), dict) else {}
+        summary = sentiment_data.get("summary") if isinstance(sentiment_data.get("summary"), dict) else {}
+        score = summary.get("score")
+        if score is not None:
+            market = data.get("market") if isinstance(data.get("market"), dict) else {}
+            gauge = data.get("sentiment_gauge") if isinstance(data.get("sentiment_gauge"), dict) else {}
+            data["market"] = {**market, "sentiment_score": score}
+            data["sentiment_gauge"] = {
+                **gauge,
+                "score": score,
+                "label": summary.get("label") or gauge.get("label"),
+            }
+    data.pop("watchlist", None)
+    return {**payload, "data": data}
 
 
 def verify_action_permission(request: Request) -> None:
