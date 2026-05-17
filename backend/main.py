@@ -2487,7 +2487,7 @@ def pending_small_cap_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 "name": strategy_name,
                 "status": "pending",
                 "decision_title": "等待聚宽小市值策略上报",
-                "decision_detail": "当前文件不是聚宽真实 webhook 快照，已隐藏本地种子信号，避免把样例股票当成实盘输出。",
+                "decision_detail": "当前文件不是聚宽真实 webhook 快照，已隐藏本地种子信号，避免把非真实股票当成实盘输出。",
                 "decision_tone": "warning",
             },
             "summary": {
@@ -2512,7 +2512,7 @@ def pending_small_cap_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 {
                     "time": now_hk().strftime("%H:%M"),
                     "label": "等待上报",
-                    "detail": f"已忽略本地种子文件 {meta.get('storage_path') or 'small-cap.json'} 中的样例信号。",
+                    "detail": f"已忽略本地种子文件 {meta.get('storage_path') or 'small-cap.json'} 中的非真实信号。",
                     "status": "pending",
                 }
             ],
@@ -2537,7 +2537,7 @@ def pending_etf_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 "name": str(strategy.get("name") or "五福 ETF 轮动"),
                 "status": "pending",
                 "decision_title": "等待聚宽 ETF 策略上报",
-                "decision_detail": "当前文件不是聚宽真实 webhook 快照，已隐藏本地联调信号，避免把测试输出当成实盘结果。",
+                "decision_detail": "当前文件不是聚宽真实 webhook 快照，已隐藏非真实信号，避免把非实盘输出当成实盘结果。",
                 "decision_tone": "warning",
             },
             "summary": {
@@ -2559,7 +2559,7 @@ def pending_etf_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 {
                     "time": now_hk().strftime("%H:%M"),
                     "label": "等待上报",
-                    "detail": f"已忽略本地联调文件 {meta.get('storage_path') or 'etf.json'} 中的测试信号。",
+                    "detail": f"已忽略 {meta.get('storage_path') or 'etf.json'} 中的非真实信号。",
                     "status": "pending",
                 }
             ],
