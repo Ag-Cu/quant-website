@@ -1,0 +1,45 @@
+{
+  "meta": {
+    "version": "1.0",
+    "source": "seed",
+    "as_of": "2026-05-17T00:44:20+08:00",
+    "trade_date": "2026-05-17",
+    "timezone": "Asia/Hong_Kong",
+    "market_session": "crypto-24x7",
+    "run_id": "crypto-funding-seed-20260517-004420"
+  },
+  "data": {
+    "strategy": {
+      "id": "crypto-funding-rate",
+      "name": "Binance 资金费率",
+      "status": "waiting",
+      "category": "crypto",
+      "provider": "binance-usdm",
+      "mode": "DRY_RUN",
+      "decision_title": "等待交易机心跳",
+      "decision_detail": "jp_vps 启动推送后，这里会显示实时扫描状态、开仓和平仓盈亏。",
+      "decision_tone": "warning"
+    },
+    "summary": {
+      "equity_usd": 1000,
+      "symbol_count": 0,
+      "open_position_count": 0,
+      "pending_event_count": 0,
+      "signal_count": 0,
+      "trade_count": 0,
+      "realized_pnl_usd": 0,
+      "realized_return_pct": 0,
+      "win_rate_pct": 0,
+      "funding_threshold_pct": 1.3,
+      "capacity_participation_pct": 1,
+      "max_leverage": 2
+    },
+    "heartbeat": {},
+    "positions": [],
+    "pending_events": [],
+    "signals": [],
+    "trades": [],
+    "events": [],
+    "logs": []
+  }
+}

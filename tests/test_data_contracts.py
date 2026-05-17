@@ -94,6 +94,17 @@ DATA_FIELD_TYPES: dict[str, dict[str, str]] = {
         "events": "array",
         "logs": "array",
     },
+    "strategies/crypto-funding.json": {
+        "strategy": "object",
+        "summary": "object",
+        "heartbeat": "object",
+        "positions": "array",
+        "pending_events": "array",
+        "signals": "array",
+        "trades": "array",
+        "events": "array",
+        "logs": "array",
+    },
     "portfolio/holdings.json": {"summary": "object", "holdings": "array", "allocation": "array"},
     "performance/net-values.json": {
         "default_strategy": "string",

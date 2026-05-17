@@ -9,6 +9,7 @@ const PAGE_CONFIG = {
   holdings: { endpoint: "/api/v1/portfolio/holdings", refreshMs: 30_000, render: renderHoldings },
   performance: { endpoint: buildPerformanceEndpoint, refreshMs: 30_000, render: renderPerformance },
   strategy: { endpoint: buildStrategyEndpoint, refreshMs: 300_000, render: renderStrategyHub },
+  crypto: { endpoint: "/api/v1/strategies/crypto-funding", refreshMs: 30_000, render: renderCryptoFunding },
   etf: { endpoint: "/api/v1/strategies/etf", refreshMs: 300_000, render: renderEtf },
   "small-cap": { endpoint: "/api/v1/strategies/small-cap", refreshMs: 300_000, render: renderSmallCap },
   breadth: { endpoint: "/api/v1/market/breadth", refreshMs: 60_000, render: renderBreadth },
@@ -23,6 +24,7 @@ const PAGE_LOADERS = {
   holdings: () => import("./pages/holdings.js"),
   performance: () => import("./pages/performance.js"),
   strategy: () => import("./pages/strategy.js"),
+  crypto: () => import("./pages/crypto.js"),
   breadth: () => import("./pages/breadth.js"),
   sentiment: () => import("./pages/sentiment.js"),
   macro: () => import("./pages/macro.js"),
@@ -40,6 +42,7 @@ const PAGE_META = {
   holdings: ["Portfolio", "当前持仓"],
   performance: ["Performance", "历史收益"],
   strategy: ["Quant Strategy", "量化策略"],
+  crypto: ["Crypto Funding", "加密货币策略"],
   etf: ["ETF Strategy", "ETF 策略"],
   "small-cap": ["Small Cap Strategy", "小盘股策略"],
   breadth: ["Market Breadth", "市场宽度"],
@@ -1380,11 +1383,73 @@ function currentStrategyLabel(strategies = [], activeStrategy = "") {
   return found?.label || activeStrategy || "策略";
 }
 
+function compactSignalList(rows = []) {
+  if (!rows.length) return `<div class="empty-state small">暂无策略信号</div>`;
+  return `<div class="compact-action-list dense">${rows.slice(0, 5).map((row) => `
+    <div class="compact-action-item">
+      <div class="inline-between"><div><strong>${escapeHtml(row.symbol || "--")}</strong><span>${escapeHtml(row.name || row.reason || "")}</span></div>${tag(row.action_label || row.side_label || "--", actionTone(row.action || row.side))}</div>
+      <div class="compact-action-meta"><span>${escapeHtml(strategyOutputReason(row))}</span><span>${formatDateTime(row.updated_at || row.received_at)}</span></div>
+    </div>
+  `).join("")}</div>`;
+}
+
+function strategyHoldingGroups(groups = [], fallbackRows = [], holdingTable) {
+  const rows = groups.length
+    ? groups
+    : fallbackRows.length
+      ? [{ strategy_id: "quant", strategy_name: "量化持仓", holdings: fallbackRows, signals: [], positions: [], sell_alerts: [], summary: {}, allocation: [] }]
+      : [];
+  if (!rows.length) return `<div class="empty-state">暂无量化持仓。策略上报成交或目标仓位后会出现在这里。</div>`;
+  return `<div class="strategy-holding-groups">${rows.map((group) => {
+    const holdings = Array.isArray(group.holdings) ? group.holdings : [];
+    const actualCount = holdings.filter((row) => row.portfolio_state !== "target").length;
+    const targetCount = holdings.filter((row) => row.portfolio_state === "target").length;
+    const signals = Array.isArray(group.signals) ? group.signals : [];
+    const alerts = Array.isArray(group.sell_alerts) ? group.sell_alerts : [];
+    const summary = group.summary || {};
+    return `
+      <article class="strategy-holding-group">
+        <div class="strategy-group-head">
+          <div>
+            <p class="panel-kicker">${escapeHtml(group.strategy_id || "strategy")}</p>
+            <h3>${escapeHtml(group.strategy_name || group.strategy_id || "量化策略")}</h3>
+            <small>${formatDateTime(group.updated_at) || "等待更新"} · ${escapeHtml(group.trade_date || "--")}</small>
+          </div>
+          <div class="strategy-group-actions">
+            ${tag(`${intText(actualCount)} 持仓`, "blue")}
+            ${targetCount ? tag(`${intText(targetCount)} 目标`, "warning") : ""}
+            ${alerts.length ? tag(`${intText(alerts.length)} 风控`, "warning") : ""}
+            <a class="panel-link" href="${escapeHtml(group.strategy_page || `strategy.html?strategy_id=${encodeURIComponent(group.strategy_id || "")}`)}">策略详情</a>
+            <a class="panel-link" href="performance.html?strategy=${encodeURIComponent(group.strategy_id || "")}">收益曲线</a>
+          </div>
+        </div>
+        <div class="strategy-group-metrics">
+          <div><span>市值</span><strong>${summary.total_market_value === null || summary.total_market_value === undefined ? "--" : `¥${intText(summary.total_market_value)}`}</strong></div>
+          <div><span>累计收益</span><strong class="${toneClassByValue(summary.total_return_pct)}">${pctText(summary.total_return_pct)}</strong></div>
+          <div><span>仓位</span><strong>${valueWithUnit(summary.exposure_pct, "%", 1)}</strong></div>
+          <div><span>信号</span><strong>${intText(signals.length)}</strong></div>
+        </div>
+        <div class="strategy-group-split">
+          <div>
+            <div class="subsection-label">策略持仓</div>
+            ${holdingTable(holdings)}
+          </div>
+          <div>
+            <div class="subsection-label">最新信号</div>
+            ${compactSignalList(signals)}
+          </div>
+        </div>
+      </article>
+    `;
+  }).join("")}</div>`;
+}
+
 function renderHoldings(payload) {
   const summary = payload.data?.summary || {};
   const source = payload.data?.holdings || [];
   const quantHoldings = payload.data?.quant_holdings || source.filter((row) => row.portfolio_type === "quant");
   const personalHoldings = payload.data?.personal_holdings || source.filter((row) => row.portfolio_type === "personal");
+  const quantByStrategy = payload.data?.quant_by_strategy || [];
   const quantSummary = payload.data?.quant_summary || {};
   const personalSummary = payload.data?.personal_summary || {};
   const allocation = payload.data?.quant_allocation || payload.data?.allocation || [];
@@ -1427,8 +1492,8 @@ function renderHoldings(payload) {
       title: "量化持仓",
       kicker: "Quant Positions",
       span: "span-12",
-      tools: pill(`${intText(quantSummary.position_count ?? quantHoldings.length)} 只`, "blue"),
-      body: holdingTable(quantHoldings),
+      tools: `${pill(`${intText(quantSummary.position_count ?? quantHoldings.length)} 只`, "blue")}${quantByStrategy.length ? pill(`${intText(quantByStrategy.length)} 个策略`, "neutral") : ""}`,
+      body: strategyHoldingGroups(quantByStrategy, quantHoldings, holdingTable),
     })}
     ${panel({
       title: "个人持仓",
@@ -1564,6 +1629,10 @@ function renderStrategyDetail(payload) {
   const data = payload.data || {};
   const registry = data.registry || {};
   const strategy = data.strategy || {};
+  if (strategy.id === "crypto-funding-rate" || registry.id === "crypto-funding-rate" || Array.isArray(data.instances)) {
+    renderCryptoFunding(payload);
+    return;
+  }
   const summary = data.summary || {};
   const signals = strategySignals(data);
   const holdings = Array.isArray(data.holdings) ? data.holdings : [];
@@ -1801,6 +1870,101 @@ function renderEtf(payload) {
     </section>
   `;
   bindSignalActions();
+}
+
+function renderCryptoFunding(payload) {
+  const data = payload.data || {};
+  const { strategy = {}, summary = {}, heartbeat = {}, positions = [], signals = [], trades = [], events = [], logs = [] } = data;
+  const rawInstances = Array.isArray(data.instances) && data.instances.length
+    ? data.instances
+    : [{ strategy, summary, heartbeat, positions, pending_events: data.pending_events || [], signals, trades, events, logs }];
+  const instances = rawInstances.map((item) => ({
+    strategy: item.strategy || {},
+    summary: item.summary || {},
+    heartbeat: item.heartbeat || {},
+    positions: Array.isArray(item.positions) ? item.positions : [],
+    pending_events: Array.isArray(item.pending_events) ? item.pending_events : [],
+    signals: Array.isArray(item.signals) ? item.signals : [],
+    trades: Array.isArray(item.trades) ? item.trades : [],
+    events: Array.isArray(item.events) ? item.events : [],
+    logs: Array.isArray(item.logs) ? item.logs : [],
+  }));
+  const recentSignals = Array.isArray(signals) ? signals.slice(-30).reverse() : instances.flatMap((item) => item.signals).slice(-30).reverse();
+  const recentTrades = Array.isArray(trades) ? trades.slice(-40).reverse() : instances.flatMap((item) => item.trades).slice(-40).reverse();
+  const openPositions = Array.isArray(positions) ? positions : instances.flatMap((item) => item.positions);
+  const runningInstances = instances.filter((item) => item.strategy?.status === "running").length;
+  const cryptoPositionTable = (rows = []) => rows.length
+    ? table(["标的", "方向", "资金费率", "入场", "名义本金", "杠杆", "止盈", "止损"], rows.map((row) => `<tr><td class="mono">${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.side_label || row.side)}</td><td class="${toneClassByValue(row.funding_rate_pct)}">${pctText(row.funding_rate_pct)}</td><td>${valueText(row.entry_price, 6)}</td><td>$${valueText(row.order_notional_usd, 2)}</td><td>${valueWithUnit(row.leverage, "x", 1)}</td><td>${pctText(Number(row.take_profit || row.take_profit_pct || 0) * (Math.abs(Number(row.take_profit || row.take_profit_pct || 0)) < 1 ? 100 : 1))}</td><td>${pctText(Number(row.stop_loss || row.stop_loss_pct || 0) * (Math.abs(Number(row.stop_loss || row.stop_loss_pct || 0)) < 1 ? 100 : 1))}</td></tr>`), 980)
+    : `<div class="empty-state">暂无实例持仓</div>`;
+  const cryptoSignalList = (rows = []) => rows.length
+    ? `<div class="signal-card-grid compact">${rows.slice(-8).reverse().map((row) => `<article class="signal-card ${row.action === "sell" ? "negative" : row.action === "buy" ? "positive" : "warning"}"><div class="signal-card-head"><div><span>${escapeHtml(row.market || "USDT-PERP")}</span><strong>${escapeHtml(row.symbol)}</strong></div>${tag(row.action_label || row.side_label || "观察", row.action === "sell" ? "negative" : row.action === "buy" ? "positive" : "warning")}</div><div class="signal-card-metrics"><div><span>费率</span><strong class="${toneClassByValue(row.funding_rate_pct)}">${pctText(row.funding_rate_pct)}</strong></div><div><span>入场</span><strong>${valueText(row.entry_price, 6)}</strong></div><div><span>本金</span><strong>$${valueText(row.order_notional_usd, 0)}</strong></div></div><p class="note">${escapeHtml(row.reason || row.event_key || "")}</p></article>`).join("")}</div>`
+    : `<div class="empty-state">暂无实例信号</div>`;
+  const instanceCards = instances.map((item) => {
+    const itemStrategy = item.strategy || {};
+    const itemSummary = item.summary || {};
+    const itemHeartbeat = item.heartbeat || {};
+    return `<article class="strategy-instance-panel ${escapeHtml(itemStrategy.status || "waiting")}">
+      <div class="strategy-group-head">
+        <div>
+          <span class="panel-kicker">${escapeHtml(itemStrategy.profile || itemHeartbeat.strategy_profile || "funding")}</span>
+          <h3>${escapeHtml(itemStrategy.name || itemHeartbeat.strategy_name || itemStrategy.id)}</h3>
+          <small class="mono">${escapeHtml(itemStrategy.id || itemHeartbeat.strategy_id || "--")}</small>
+        </div>
+        ${statusPill(itemStrategy.status)}
+      </div>
+      <p class="instance-detail">${escapeHtml(itemStrategy.decision_detail || itemStrategy.description || "")}</p>
+      <div class="strategy-card-metrics">
+        <div><span>阈值</span><strong>${valueWithUnit(itemSummary.funding_threshold_pct, "%", 2)}</strong></div>
+        <div><span>信号</span><strong>${intText(itemSummary.signal_count)}</strong></div>
+        <div><span>持仓</span><strong>${intText(itemSummary.open_position_count)}</strong></div>
+        <div><span>盈亏</span><strong class="${toneClassByValue(itemSummary.realized_pnl_usd)}">$${valueText(itemSummary.realized_pnl_usd, 2)}</strong></div>
+        <div><span>本金</span><strong>$${valueText(itemSummary.equity_usd, 0)}</strong></div>
+        <div><span>容量</span><strong>${valueWithUnit(itemSummary.capacity_participation_pct, "%", 2)}</strong></div>
+        <div><span>杠杆</span><strong>${valueWithUnit(itemSummary.max_leverage, "x", 1)}</strong></div>
+        <div><span>心跳</span><strong>${secondsText(itemHeartbeat.stale_seconds)}</strong></div>
+      </div>
+      <div class="strategy-group-split">
+        <div><div class="subsection-label">实例持仓</div>${cryptoPositionTable(item.positions)}</div>
+        <div><div class="subsection-label">实例信号</div>${cryptoSignalList(item.signals)}</div>
+      </div>
+    </article>`;
+  }).join("");
+  dom.app.innerHTML = `
+    ${payload.data?.registry ? `<section class="strategy-toolbar"><button class="ghost-button icon-label" type="button" data-strategy-list>${icon("arrowLeft")}<span>策略列表</span></button><div class="toolbar">${statusPill(strategy.status)}</div></section>` : ""}
+    ${pageDecisionBrief({
+      kicker: strategy.name || "Crypto Funding",
+      title: strategy.decision_title || "等待资金费率信号",
+      detail: strategy.decision_detail || "策略正在监听 Binance USD-M Futures 资金费率事件。",
+      tone: strategy.decision_tone || "blue",
+      metrics: [
+        { label: "模式", value: strategy.mode || heartbeat.mode || "DRY_RUN" },
+        { label: "实例", value: `${intText(runningInstances)} / ${intText(instances.length)}` },
+        { label: "扫描标的", value: `${intText(summary.symbol_count)} 个` },
+        { label: "开仓数", value: `${intText(summary.open_position_count)} 笔` },
+      ],
+    })}
+    ${summaryGrid([
+      metricCard("权益", `$${valueText(summary.equity_usd, 0)}`, `可用模拟本金`),
+      metricCard("已实现盈亏", `$${valueText(summary.realized_pnl_usd, 2)}`, pctText(summary.realized_return_pct), toneByValue(summary.realized_pnl_usd)),
+      metricCard("交易笔数", `${intText(summary.trade_count)} 笔`, `胜率 ${valueWithUnit(summary.win_rate_pct, "%", 1)}`),
+      metricCard("阈值/容量", `${valueWithUnit(summary.funding_threshold_pct, "%", 2)}`, `容量 ${valueWithUnit(summary.capacity_participation_pct, "%", 2)} / ${valueWithUnit(summary.max_leverage, "x", 1)}`),
+    ])}
+    <section class="main-grid">
+      ${panel({ title: "策略实例", kicker: "Instances · Positions and Signals", span: "span-12", body: `<div class="strategy-instance-list">${instanceCards}</div>` })}
+      ${panel({ title: "全部模拟持仓", kicker: "Open Positions", span: "span-7", body: table(["实例", "标的", "方向", "资金费率", "入场", "名义本金", "杠杆", "止盈", "止损"], openPositions.map((row) => `<tr><td>${escapeHtml(row.strategy_name || row.strategy_id || "--")}</td><td class="mono">${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.side_label || row.side)}</td><td class="${toneClassByValue(row.funding_rate_pct)}">${pctText(row.funding_rate_pct)}</td><td>${valueText(row.entry_price, 6)}</td><td>$${valueText(row.order_notional_usd, 2)}</td><td>${valueWithUnit(row.leverage, "x", 1)}</td><td>${pctText(Number(row.take_profit || row.take_profit_pct || 0) * (Math.abs(Number(row.take_profit || row.take_profit_pct || 0)) < 1 ? 100 : 1))}</td><td>${pctText(Number(row.stop_loss || row.stop_loss_pct || 0) * (Math.abs(Number(row.stop_loss || row.stop_loss_pct || 0)) < 1 ? 100 : 1))}</td></tr>`), 1120) })}
+      ${panel({ title: "全部信号", kicker: "Funding Signals", span: "span-5", body: recentSignals.length ? `<div class="signal-card-grid compact">${recentSignals.map((row) => `<article class="signal-card ${row.action === "sell" ? "negative" : row.action === "buy" ? "positive" : "warning"}"><div class="signal-card-head"><div><span>${escapeHtml(row.strategy_name || row.market || "USDT-PERP")}</span><strong>${escapeHtml(row.symbol)}</strong></div>${tag(row.action_label || row.side_label || "观察", row.action === "sell" ? "negative" : row.action === "buy" ? "positive" : "warning")}</div><div class="signal-card-metrics"><div><span>费率</span><strong class="${toneClassByValue(row.funding_rate_pct)}">${pctText(row.funding_rate_pct)}</strong></div><div><span>入场</span><strong>${valueText(row.entry_price, 6)}</strong></div><div><span>本金</span><strong>$${valueText(row.order_notional_usd, 0)}</strong></div></div><p class="note">${escapeHtml(row.reason || row.event_key || "")}</p></article>`).join("")}</div>` : `<div class="empty-state">暂无资金费率信号</div>` })}
+      ${panel({ title: "交易盈亏", kicker: "Trades", span: "span-8", body: table(["时间", "实例", "标的", "方向", "状态", "入场", "出场", "名义本金", "盈亏", "原因"], recentTrades.map((row) => `<tr><td>${formatDateTime(row.received_at || row.closed_at || row.opened_at)}</td><td>${escapeHtml(row.strategy_name || row.strategy_id || "--")}</td><td class="mono">${escapeHtml(row.symbol)}</td><td>${escapeHtml(row.side_label || row.side)}</td><td>${escapeHtml(row.status || row.event_type)}</td><td>${valueText(row.entry_price, 6)}</td><td>${valueText(row.exit_price, 6)}</td><td>$${valueText(row.order_notional_usd, 2)}</td><td class="${toneClassByValue(row.pnl_usd)}">$${valueText(row.pnl_usd, 2)} / ${pctText(row.pnl_pct)}</td><td>${escapeHtml(row.exit_reason || row.rule || "--")}</td></tr>`), 1260) })}
+      ${panel({ title: "心跳详情", kicker: "Heartbeat", span: "span-4", body: detailGrid([
+        { label: "最近心跳", value: formatDateTime(heartbeat.received_at || payload.meta?.as_of), detail: `${secondsText(heartbeat.stale_seconds)} 前` },
+        { label: "运行机器", value: heartbeat.host || heartbeat.hostname || "jp_vps", detail: heartbeat.mode || "DRY_RUN" },
+        { label: "保证金", value: heartbeat.margin_type || "ISOLATED", detail: heartbeat.position_mode || "ONE_WAY" },
+        { label: "文件", value: "JSONL", detail: heartbeat.files?.trades || "trades.jsonl" },
+      ]) })}
+      ${panel({ title: "事件记录", kicker: "Events", span: "span-4", body: timeline((events || []).slice(-20).reverse().map((row) => ({ time: formatDateTime(row.received_at || row.created_at), label: row.symbol || row.event_type || "event", detail: row.exit_reason || row.reason || row.message || row.event_key || "", status: row.status || "done" }))) })}
+      ${panel({ title: "运行日志", kicker: "Crypto Logs", span: "span-8", tools: pill(`${intText(Math.min(logs.length, STRATEGY_LOG_DISPLAY_LIMIT))} lines`, "blue"), body: strategyLogConsole(logs) })}
+    </section>
+  `;
+  bindStrategyHubControls(payload);
 }
 
 function renderSmallCap(payload) {

@@ -96,6 +96,10 @@ class PortfolioHoldingsData(ContractModel):
     summary: dict[str, Any]
     holdings: list[dict[str, Any]]
     allocation: list[dict[str, Any]]
+    quant_holdings: list[dict[str, Any]] = Field(default_factory=list)
+    personal_holdings: list[dict[str, Any]] = Field(default_factory=list)
+    quant_by_strategy: list[dict[str, Any]] = Field(default_factory=list)
+    strategy_outputs: dict[str, Any] = Field(default_factory=dict)
 
 
 class PortfolioHoldingsPayload(ApiPayload):
@@ -215,6 +219,22 @@ class SmallCapStrategyPayload(ApiPayload):
     data: SmallCapStrategyData
 
 
+class CryptoFundingStrategyData(ContractModel):
+    strategy: dict[str, Any]
+    summary: dict[str, Any]
+    heartbeat: dict[str, Any]
+    positions: list[Any] = Field(default_factory=list)
+    pending_events: list[Any] = Field(default_factory=list)
+    signals: list[Any] = Field(default_factory=list)
+    trades: list[Any] = Field(default_factory=list)
+    events: list[Any] = Field(default_factory=list)
+    logs: list[Any] = Field(default_factory=list)
+
+
+class CryptoFundingStrategyPayload(ApiPayload):
+    data: CryptoFundingStrategyData
+
+
 PayloadModel = TypeVar("PayloadModel", bound=BaseModel)
 
 
@@ -231,6 +251,7 @@ PAYLOAD_SCHEMAS: dict[str, type[BaseModel]] = {
     "/api/v1/macro": MacroPayload,
     "/api/v1/strategies/etf": JoinQuantEtfStrategyPayload,
     "/api/v1/strategies/small-cap": SmallCapStrategyPayload,
+    "/api/v1/strategies/crypto-funding": CryptoFundingStrategyPayload,
 }
 
 LIVE_PAYLOAD_SCHEMAS: dict[str, type[BaseModel]] = {
@@ -297,6 +318,7 @@ def json_schema_bundle() -> dict[str, Any]:
                 "MacroPayload": MacroPayload,
                 "JoinQuantEtfStrategyPayload": JoinQuantEtfStrategyPayload,
                 "SmallCapStrategyPayload": SmallCapStrategyPayload,
+                "CryptoFundingStrategyPayload": CryptoFundingStrategyPayload,
             }.items()
         },
     }

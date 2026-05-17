@@ -1877,6 +1877,104 @@ body.sidebar-collapsed .sidebar-toggle::before {
   font-size: 15px;
 }
 
+.strategy-holding-groups,
+.strategy-instance-list {
+  display: grid;
+  gap: 12px;
+}
+
+.strategy-holding-group,
+.strategy-instance-panel {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 254, 250, 0.72);
+  padding: 12px;
+}
+
+.strategy-group-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.strategy-group-head h3 {
+  margin: 2px 0;
+  font-size: 16px;
+}
+
+.strategy-group-head small,
+.instance-detail {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.strategy-group-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.strategy-group-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.strategy-group-metrics div {
+  min-width: 0;
+  border: 1px solid rgba(31, 33, 31, 0.08);
+  border-radius: 8px;
+  background: rgba(243, 240, 232, 0.62);
+  padding: 8px;
+}
+
+.strategy-group-metrics span,
+.subsection-label {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.strategy-group-metrics strong {
+  display: block;
+  margin-top: 3px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+
+.strategy-group-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.75fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.subsection-label {
+  margin-bottom: 7px;
+}
+
+.compact-action-list.dense {
+  gap: 7px;
+}
+
+.compact-action-list.dense .compact-action-item {
+  border-radius: 8px;
+  padding: 9px;
+}
+
+.empty-state.small {
+  min-height: 64px;
+  padding: 14px;
+}
+
 .strategy-create-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3442,6 +3540,21 @@ button.is-loading {
 }
 
 @media (max-width: 760px) {
+  .strategy-group-head,
+  .strategy-group-actions {
+    display: grid;
+    justify-content: stretch;
+  }
+
+  .strategy-group-metrics,
+  .strategy-card-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .strategy-group-split {
+    grid-template-columns: 1fr;
+  }
+
   body[data-page="holdings"] .holding-card-list {
     display: grid;
     gap: 12px;

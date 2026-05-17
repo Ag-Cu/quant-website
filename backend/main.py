@@ -16,6 +16,7 @@ import hashlib
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from secrets import token_urlsafe
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
@@ -38,9 +39,29 @@ ACTION_LOG_PATH = BACKEND_DIR / "actions" / "action-log.jsonl"
 EXPORT_DIR = BACKEND_DIR / "exports"
 ETF_STRATEGY_PATH = BACKEND_DIR / "strategies" / "etf.json"
 SMALL_CAP_STRATEGY_PATH = BACKEND_DIR / "strategies" / "small-cap.json"
+CRYPTO_FUNDING_STRATEGY_PATH = BACKEND_DIR / "strategies" / "crypto-funding.json"
 CUSTOM_STRATEGY_DIR = BACKEND_DIR / "strategies" / "custom"
 JOINQUANT_SIGNAL_LOG_PATH = BACKEND_DIR / "strategies" / "joinquant-signals.jsonl"
 JOINQUANT_FULL_LOG_PATH = BACKEND_DIR / "strategies" / "joinquant-full-logs.jsonl"
+CRYPTO_FUNDING_HEARTBEAT_LOG_PATH = BACKEND_DIR / "strategies" / "crypto-funding-heartbeats.jsonl"
+CRYPTO_FUNDING_SIGNAL_LOG_PATH = BACKEND_DIR / "strategies" / "crypto-funding-signals.jsonl"
+CRYPTO_FUNDING_TRADE_LOG_PATH = BACKEND_DIR / "strategies" / "crypto-funding-trades.jsonl"
+CRYPTO_FUNDING_EVENT_LOG_PATH = BACKEND_DIR / "strategies" / "crypto-funding-events.jsonl"
+CRYPTO_FUNDING_LOG_PATH = BACKEND_DIR / "strategies" / "crypto-funding-logs.jsonl"
+CRYPTO_FUNDING_DEFAULT_STRATEGY_ID = "crypto-funding-rate"
+CRYPTO_FUNDING_AGGREGATE_NAME = "Binance 资金费率"
+CRYPTO_FUNDING_INSTANCE_PROFILES = {
+    "crypto-funding-rate": {
+        "name": "1.3% 基线 DRY_RUN",
+        "profile": "final_013_regime_overlay",
+        "description": "实盘候选基线：资金费率绝对值 >= 1.3%，动态 TP/SL，1% 成交额容量，最大 2x 杠杆。",
+    },
+    "crypto-funding-rate-010-shadow": {
+        "name": "1.0% Shadow DRY_RUN",
+        "profile": "capacity_aware_010_strict",
+        "description": "并行观察版本：资金费率绝对值 >= 1.0%，验证组动态 TP/SL，1% 成交额容量，最大 2x 杠杆。",
+    },
+}
 PERFORMANCE_NAV_PATH = BACKEND_DIR / "performance" / "net-values.json"
 PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH = BACKEND_DIR / "performance" / "joinquant-snapshots.jsonl"
 PERFORMANCE_JOINQUANT_NAV_PATH = BACKEND_DIR / "performance" / "joinquant-nav.jsonl"
@@ -70,6 +91,7 @@ STATIC_PAGES = {
     "/performance.html": "performance.html",
     "/strategy.html": "strategy.html",
     "/etf.html": "etf.html",
+    "/crypto.html": "crypto.html",
     "/small-cap.html": "small-cap.html",
     "/breadth.html": "breadth.html",
     "/sentiment.html": "sentiment.html",
@@ -175,6 +197,13 @@ ENDPOINTS: dict[str, EndpointSpec] = {
         "strategy",
         300,
         "小盘股策略运行状态和信号，策略任务刷新。",
+    ),
+    "/api/v1/strategies/crypto-funding": EndpointSpec(
+        "/api/v1/strategies/crypto-funding",
+        "strategies/crypto-funding",
+        "strategy",
+        30,
+        "Binance USD-M 资金费率策略实时心跳、信号和模拟交易记录。",
     ),
     "/api/v1/market/breadth": EndpointSpec(
         "/api/v1/market/breadth",
@@ -456,6 +485,27 @@ def verify_joinquant_token(request: Request, payload: dict[str, Any]) -> None:
     ).strip()
     if not provided or not hmac.compare_digest(provided, expected):
         raise HTTPException(status_code=401, detail="JoinQuant webhook token 不正确")
+
+
+def get_crypto_webhook_token() -> str:
+    token = os.getenv("CRYPTO_WEBHOOK_TOKEN", "").strip()
+    if not token:
+        raise HTTPException(status_code=503, detail="服务端未配置 CRYPTO_WEBHOOK_TOKEN")
+    return token
+
+
+def verify_crypto_token(request: Request, payload: dict[str, Any]) -> None:
+    expected = get_crypto_webhook_token()
+    provided = (
+        request.headers.get("x-crypto-webhook-token")
+        or request.headers.get("x-webhook-token")
+        or request.headers.get("authorization")
+        or str(payload.get("token") or "")
+    ).strip()
+    if provided.lower().startswith("bearer "):
+        provided = provided[7:].strip()
+    if not provided or not hmac.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="Crypto webhook token 不正确")
 
 
 def to_float(value: Any, default: float | None = None) -> float | None:
@@ -1003,6 +1053,23 @@ BUILTIN_STRATEGY_DEFINITIONS = [
         "label_key": "signal_label",
         "builtin": True,
     },
+    {
+        "id": "crypto-funding-rate",
+        "name": "Binance 资金费率",
+        "category": "crypto",
+        "status": "running",
+        "provider": "binance-usdm",
+        "endpoint": "/api/v1/strategies/crypto-funding",
+        "path_name": "CRYPTO_FUNDING_STRATEGY_PATH",
+        "storage_key": "strategies/crypto-funding",
+        "page": "strategy.html",
+        "legacy_page": "crypto.html",
+        "signal_key": "signals",
+        "action_key": "side",
+        "label_key": "side_label",
+        "description": "Binance USD-M Futures 资金费率 DRY_RUN 策略，含心跳、入场信号和每笔模拟交易盈亏。",
+        "builtin": True,
+    },
 ]
 
 
@@ -1078,6 +1145,20 @@ def definition_public_row(definition: dict[str, Any], payload: dict[str, Any] | 
     stale_seconds = seconds_since(meta.get("as_of")) if meta.get("as_of") else None
     if stale_seconds is not None and stale_seconds > 86_400 and status == "running":
         status = "stale"
+    if definition.get("id") == CRYPTO_FUNDING_DEFAULT_STRATEGY_ID:
+        instances = data.get("instances") if isinstance(data.get("instances"), list) else []
+        signals = data.get("signals") if isinstance(data.get("signals"), list) else []
+        holdings = data.get("positions") if isinstance(data.get("positions"), list) else []
+        instance_count = len(instances)
+        running_count = sum(1 for item in instances if isinstance(item, dict) and item.get("strategy", {}).get("status") == "running")
+        summary_signal_count = sum(to_int(item.get("summary", {}).get("signal_count")) for item in instances if isinstance(item, dict))
+        summary_holding_count = sum(to_int(item.get("summary", {}).get("open_position_count")) for item in instances if isinstance(item, dict))
+        if instance_count:
+            status = "running" if running_count else status
+            strategy_id = CRYPTO_FUNDING_DEFAULT_STRATEGY_ID
+            summary["open_position_count"] = summary_holding_count
+            summary["signal_count"] = max(to_int(summary.get("signal_count")), summary_signal_count, len(signals))
+            strategy["decision_title"] = strategy.get("decision_title") or f"{running_count}/{instance_count} 个实例运行中"
     return {
         "id": strategy_id,
         "name": str(strategy.get("name") or definition["name"]),
@@ -1135,7 +1216,11 @@ def strategy_path_from_definition(definition: dict[str, Any]) -> Path:
     path_name = str(definition.get("path_name") or "")
     path = globals().get(path_name)
     if isinstance(path, Path):
-        return path
+        try:
+            path.relative_to(ROOT)
+            return path
+        except ValueError:
+            pass
     return BACKEND_DIR / f"{definition.get('storage_key') or f'strategies/custom/{strategy_slug_from_id(definition['id'])}'}.json"
 
 
@@ -1524,9 +1609,29 @@ def filter_holdings_payload(payload: dict[str, Any], portfolio_type: str | None 
     summary_strategies = []
     if target_type == "quant":
         summary_strategies = data.get("strategy_outputs", {}).get("strategies", []) if isinstance(data.get("strategy_outputs"), dict) else []
+        if target_strategy:
+            summary_strategies = [row for row in summary_strategies if safe_strategy_id(row.get("strategy_id") or row.get("id")) == target_strategy]
     next_payload["data"]["holdings"] = rows
     next_payload["data"]["summary"] = strategy_portfolio_summary(rows, summary_strategies)
     next_payload["data"]["allocation"] = strategy_portfolio_allocation(rows)
+    next_payload["data"]["quant_holdings"] = [row for row in rows if str(row.get("portfolio_type") or "").lower() == "quant"]
+    next_payload["data"]["personal_holdings"] = [row for row in rows if str(row.get("portfolio_type") or "").lower() == "personal"]
+    if target_type == "quant" or target_strategy:
+        strategy_outputs = data.get("strategy_outputs") if isinstance(data.get("strategy_outputs"), dict) else {}
+        filtered_signals = strategy_outputs.get("signals") if isinstance(strategy_outputs.get("signals"), list) else []
+        filtered_positions = strategy_outputs.get("positions") if isinstance(strategy_outputs.get("positions"), list) else []
+        filtered_alerts = strategy_outputs.get("sell_alerts") if isinstance(strategy_outputs.get("sell_alerts"), list) else []
+        if target_strategy:
+            filtered_signals = [row for row in filtered_signals if safe_strategy_id(row.get("strategy_id")) == target_strategy]
+            filtered_positions = [row for row in filtered_positions if safe_strategy_id(row.get("strategy_id")) == target_strategy]
+            filtered_alerts = [row for row in filtered_alerts if safe_strategy_id(row.get("strategy_id")) == target_strategy]
+        next_payload["data"]["quant_by_strategy"] = strategy_groups_for_holdings(
+            [row for row in rows if str(row.get("portfolio_type") or "").lower() == "quant"],
+            summary_strategies,
+            filtered_signals,
+            filtered_positions,
+            filtered_alerts,
+        )
     next_payload["meta"] = {
         **(payload.get("meta") if isinstance(payload.get("meta"), dict) else {}),
         "query": {"type": portfolio_type or "all", "strategy_id": strategy_id or ""},
@@ -1579,6 +1684,88 @@ def strategy_portfolio_allocation(rows: list[dict[str, Any]]) -> list[dict[str, 
         }
         for sector, values in sorted(grouped.items(), key=lambda item: item[1]["market_value"] or item[1]["weight_pct"], reverse=True)
     ]
+
+
+def strategy_rows_by_strategy(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        strategy_id = str(row.get("strategy_id") or "").strip()
+        if not strategy_id:
+            continue
+        grouped.setdefault(strategy_id, []).append(row)
+    return grouped
+
+
+def strategy_groups_for_holdings(
+    holdings: list[dict[str, Any]],
+    strategies: list[dict[str, Any]],
+    signals: list[dict[str, Any]] | None = None,
+    positions: list[dict[str, Any]] | None = None,
+    sell_alerts: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+
+    def ensure_group(strategy_id: str, row: dict[str, Any] | None = None) -> dict[str, Any]:
+        row = row or {}
+        strategy_id = str(strategy_id or row.get("strategy_id") or "").strip()
+        if not strategy_id:
+            strategy_id = "unknown"
+        group = groups.setdefault(
+            strategy_id,
+            {
+                "strategy_id": strategy_id,
+                "strategy_name": str(row.get("strategy_name") or row.get("name") or strategy_id),
+                "strategy_page": str(row.get("strategy_page") or f"strategy.html?strategy_id={urllib.parse.quote(strategy_id)}"),
+                "updated_at": str(row.get("updated_at") or row.get("strategy_updated_at") or row.get("time") or ""),
+                "trade_date": str(row.get("trade_date") or ""),
+                "run_id": str(row.get("run_id") or ""),
+                "holdings": [],
+                "signals": [],
+                "positions": [],
+                "sell_alerts": [],
+            },
+        )
+        if row:
+            if not group.get("strategy_name") or group["strategy_name"] == strategy_id:
+                group["strategy_name"] = str(row.get("strategy_name") or row.get("name") or group["strategy_name"])
+            if row.get("strategy_page"):
+                group["strategy_page"] = str(row["strategy_page"])
+            for key in ("updated_at", "trade_date", "run_id"):
+                if row.get(key) and str(row.get(key)) > str(group.get(key) or ""):
+                    group[key] = str(row.get(key))
+        return group
+
+    for strategy in strategies:
+        strategy_id = str(strategy.get("strategy_id") or strategy.get("id") or "").strip()
+        if not strategy_id:
+            continue
+        ensure_group(strategy_id, strategy)
+    for row in holdings:
+        ensure_group(str(row.get("strategy_id") or ""), row)["holdings"].append(row)
+    for row in signals or []:
+        ensure_group(str(row.get("strategy_id") or ""), row)["signals"].append(row)
+    for row in positions or []:
+        ensure_group(str(row.get("strategy_id") or ""), row)["positions"].append(row)
+    for row in sell_alerts or []:
+        ensure_group(str(row.get("strategy_id") or ""), row)["sell_alerts"].append(row)
+
+    result: list[dict[str, Any]] = []
+    for group in groups.values():
+        group_holdings = group["holdings"]
+        strategy_meta = {
+            "strategy_id": group["strategy_id"],
+            "strategy_name": group["strategy_name"],
+            "strategy_page": group["strategy_page"],
+        }
+        group["summary"] = strategy_portfolio_summary(group_holdings, [strategy_meta])
+        group["allocation"] = strategy_portfolio_allocation(group_holdings)
+        group["holding_count"] = len(group_holdings)
+        group["signal_count"] = len(group["signals"])
+        group["position_output_count"] = len(group["positions"])
+        group["sell_alert_count"] = len(group["sell_alerts"])
+        result.append(group)
+    result.sort(key=lambda row: (-to_int(row.get("holding_count")), str(row.get("strategy_name") or row.get("strategy_id") or "")))
+    return result
 
 
 def normalize_personal_holding(item: dict[str, Any], total_value: float | None = None) -> dict[str, Any] | None:
@@ -2130,6 +2317,13 @@ def enrich_portfolio_holdings_with_strategy_outputs(payload: dict[str, Any]) -> 
     data["allocation"] = strategy_portfolio_allocation(all_holdings)
     data["quant_allocation"] = strategy_portfolio_allocation(enriched_holdings)
     data["personal_allocation"] = strategy_portfolio_allocation(personal_holdings)
+    data["quant_by_strategy"] = strategy_groups_for_holdings(
+        enriched_holdings,
+        outputs["strategies"],
+        outputs["signals"],
+        outputs["positions"],
+        outputs["sell_alerts"],
+    )
     data["strategy_outputs"] = {
         "updated_at": now_hk().isoformat(),
         "strategies": outputs["strategies"],
@@ -2642,6 +2836,547 @@ def strategy_picks_csv(payload: dict[str, Any]) -> str:
             item.get("invalidation") or "",
         ])
     return buffer.getvalue()
+
+
+def crypto_now_run_id(prefix: str = "crypto-funding") -> str:
+    return f"{prefix}-{now_hk().strftime('%Y%m%d-%H%M%S')}"
+
+
+def crypto_trade_date(value: Any = None) -> str:
+    parsed = parse_hk_datetime(value)
+    return (parsed or now_hk()).strftime("%Y-%m-%d")
+
+
+def crypto_read_snapshot() -> dict[str, Any]:
+    if CRYPTO_FUNDING_STRATEGY_PATH.exists():
+        try:
+            return load_json(CRYPTO_FUNDING_STRATEGY_PATH)
+        except HTTPException:
+            pass
+    now = now_hk()
+    return {
+        "meta": {
+            "version": "1.0",
+            "source": "crypto-webhook",
+            "as_of": now.isoformat(),
+            "trade_date": now.strftime("%Y-%m-%d"),
+            "timezone": "Asia/Hong_Kong",
+            "market_session": "crypto-24x7",
+            "run_id": crypto_now_run_id("crypto-funding-init"),
+        },
+        "data": {
+            "strategy": {
+                "id": "crypto-funding-rate",
+                "name": "Binance 资金费率",
+                "status": "waiting",
+                "category": "crypto",
+                "provider": "binance-usdm",
+                "mode": "DRY_RUN",
+                "decision_title": "等待交易机心跳",
+                "decision_detail": "jp_vps 尚未向网站上报实时状态。",
+                "decision_tone": "warning",
+            },
+            "summary": {
+                "equity_usd": 0,
+                "symbol_count": 0,
+                "open_position_count": 0,
+                "pending_event_count": 0,
+                "signal_count": 0,
+                "trade_count": 0,
+                "realized_pnl_usd": 0,
+                "realized_return_pct": 0,
+                "win_rate_pct": 0,
+                "funding_threshold_pct": 1.3,
+                "capacity_participation_pct": 1,
+                "max_leverage": 2,
+            },
+            "heartbeat": {},
+            "positions": [],
+            "pending_events": [],
+            "signals": [],
+            "trades": [],
+            "events": [],
+            "logs": [],
+        },
+    }
+
+
+def crypto_public_row(row: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(row, dict):
+        return {}
+    public = redact_secret_fields(row)
+    public.setdefault("strategy_id", crypto_strategy_id_from_value(row))
+    public.setdefault("strategy_name", crypto_strategy_name_from_value(row, str(public["strategy_id"])))
+    return public
+
+
+def crypto_strategy_id_from_value(value: Any) -> str:
+    if not isinstance(value, dict):
+        return CRYPTO_FUNDING_DEFAULT_STRATEGY_ID
+    for key in ("strategy_id", "id"):
+        text = str(value.get(key) or "").strip()
+        if text:
+            return text
+    for key in ("strategy", "heartbeat", "status"):
+        nested = value.get(key)
+        if isinstance(nested, dict):
+            nested_id = str(nested.get("strategy_id") or nested.get("id") or "").strip()
+            if nested_id:
+                return nested_id
+    for key in ("signals", "trades", "events", "positions", "pending_events", "items"):
+        rows = value.get(key)
+        if isinstance(rows, list):
+            for row in rows:
+                if isinstance(row, dict):
+                    nested_id = crypto_strategy_id_from_value(row)
+                    if nested_id:
+                        return nested_id
+    return CRYPTO_FUNDING_DEFAULT_STRATEGY_ID
+
+
+def crypto_strategy_name_from_value(value: Any, strategy_id: str | None = None) -> str:
+    strategy_id = strategy_id or crypto_strategy_id_from_value(value)
+    if isinstance(value, dict):
+        for key in ("strategy_name", "name"):
+            text = str(value.get(key) or "").strip()
+            if text:
+                return text
+        for key in ("strategy", "heartbeat", "status"):
+            nested = value.get(key)
+            if isinstance(nested, dict):
+                text = str(nested.get("strategy_name") or nested.get("name") or "").strip()
+                if text:
+                    return text
+    return str(CRYPTO_FUNDING_INSTANCE_PROFILES.get(strategy_id, {}).get("name") or strategy_id)
+
+
+def crypto_strategy_profile_from_value(value: Any, strategy_id: str | None = None) -> str:
+    strategy_id = strategy_id or crypto_strategy_id_from_value(value)
+    if isinstance(value, dict):
+        for key in ("strategy_profile", "profile"):
+            text = str(value.get(key) or "").strip()
+            if text:
+                return text
+        for key in ("strategy", "heartbeat", "status"):
+            nested = value.get(key)
+            if isinstance(nested, dict):
+                text = str(nested.get("strategy_profile") or nested.get("profile") or "").strip()
+                if text:
+                    return text
+    return str(CRYPTO_FUNDING_INSTANCE_PROFILES.get(strategy_id, {}).get("profile") or "")
+
+
+def crypto_recent_rows(path: Path, limit: int, strategy_id: str | None = None) -> list[dict[str, Any]]:
+    read_limit = max(limit, min(5000, limit * 8)) if strategy_id else limit
+    rows = [crypto_public_row(row) for row in read_jsonl_tail(path, read_limit)]
+    if strategy_id:
+        rows = [row for row in rows if crypto_strategy_id_from_value(row) == strategy_id]
+    return rows[-limit:]
+
+
+def crypto_summary_from_snapshot(snapshot: dict[str, Any], strategy_id: str | None = None) -> dict[str, Any]:
+    data = snapshot.get("data") if isinstance(snapshot.get("data"), dict) else {}
+    summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+    trades = data.get("trades") if isinstance(data.get("trades"), list) else []
+    positions = data.get("positions") if isinstance(data.get("positions"), list) else []
+    pending = data.get("pending_events") if isinstance(data.get("pending_events"), list) else []
+    signals = data.get("signals") if isinstance(data.get("signals"), list) else []
+    closed_trades = [row for row in crypto_recent_rows(CRYPTO_FUNDING_TRADE_LOG_PATH, 5000, strategy_id=strategy_id) if row.get("status") == "closed" or row.get("event_type") == "trade_close"]
+    realized_pnl = sum(float(row.get("final_pnl_usd") or row.get("pnl_usd") or 0) for row in closed_trades)
+    wins = sum(1 for row in closed_trades if float(row.get("final_pnl_usd") or row.get("pnl_usd") or 0) > 0)
+    equity = to_float(summary.get("equity_usd"), 0) or 0
+    summary.update(
+        {
+            "open_position_count": len(positions),
+            "pending_event_count": len(pending),
+            "signal_count": len(signals),
+            "trade_count": len(closed_trades),
+            "realized_pnl_usd": realized_pnl,
+            "realized_return_pct": (realized_pnl / equity * 100) if equity else 0,
+            "win_rate_pct": (wins / len(closed_trades) * 100) if closed_trades else 0,
+        }
+    )
+    return summary
+
+
+def crypto_normalize_signal(row: dict[str, Any]) -> dict[str, Any]:
+    decision = row.get("decision") if isinstance(row.get("decision"), dict) else {}
+    order = row.get("order_plan") if isinstance(row.get("order_plan"), dict) else {}
+    side = str(row.get("side") or decision.get("side") or "").lower()
+    should_trade = bool(decision.get("should_trade") if "should_trade" in decision else order)
+    action = "buy" if should_trade and side == "long" else "sell" if should_trade and side == "short" else "watch"
+    strategy_id = crypto_strategy_id_from_value(row)
+    return {
+        **crypto_public_row(row),
+        "strategy_id": strategy_id,
+        "strategy_name": crypto_strategy_name_from_value(row, strategy_id),
+        "strategy_profile": crypto_strategy_profile_from_value(row, strategy_id),
+        "event_type": row.get("event_type") or "signal",
+        "received_at": row.get("received_at") or now_hk().isoformat(),
+        "symbol": str(row.get("symbol") or "").upper(),
+        "name": str(row.get("symbol") or "").upper(),
+        "market": "USDT-PERP",
+        "action": action,
+        "action_label": "做多" if side == "long" else "做空" if side == "short" else "观察",
+        "side": side,
+        "side_label": "做多" if side == "long" else "做空" if side == "short" else "--",
+        "score": round(abs(float(row.get("funding_rate") or 0)) * 10_000, 2),
+        "funding_rate_pct": float(row.get("funding_rate") or 0) * 100,
+        "entry_price": row.get("entry_price"),
+        "order_notional_usd": order.get("order_notional_usd"),
+        "quantity": order.get("quantity"),
+        "leverage": decision.get("leverage") or order.get("exchange_leverage"),
+        "take_profit_pct": to_float(decision.get("take_profit")),
+        "stop_loss_pct": to_float(decision.get("stop_loss")),
+        "reason": decision.get("reason") or decision.get("rule") or row.get("event_key") or "",
+    }
+
+
+def crypto_normalize_trade(row: dict[str, Any], event_type: str | None = None) -> dict[str, Any]:
+    side = str(row.get("side") or "").lower()
+    final_return = to_float(row.get("final_return"))
+    net_pnl = to_float(row.get("net_pnl"))
+    strategy_id = crypto_strategy_id_from_value(row)
+    return {
+        **crypto_public_row(row),
+        "strategy_id": strategy_id,
+        "strategy_name": crypto_strategy_name_from_value(row, strategy_id),
+        "strategy_profile": crypto_strategy_profile_from_value(row, strategy_id),
+        "event_type": event_type or row.get("event_type") or "trade",
+        "received_at": row.get("received_at") or now_hk().isoformat(),
+        "symbol": str(row.get("symbol") or "").upper(),
+        "name": str(row.get("symbol") or "").upper(),
+        "market": "USDT-PERP",
+        "side": side,
+        "side_label": "做多" if side == "long" else "做空" if side == "short" else "--",
+        "entry_price": row.get("entry_price"),
+        "exit_price": row.get("exit_price"),
+        "order_notional_usd": row.get("order_notional_usd"),
+        "quantity": row.get("quantity"),
+        "leverage": row.get("leverage") or row.get("exchange_leverage"),
+        "funding_rate_pct": float(row.get("funding_rate") or 0) * 100,
+        "pnl_pct": final_return * 100 if final_return is not None else net_pnl * 100 if net_pnl is not None else None,
+        "pnl_usd": row.get("final_pnl_usd"),
+        "exit_reason": row.get("exit_reason"),
+        "status": row.get("status") or ("closed" if row.get("exit_time") else "open"),
+    }
+
+
+def crypto_log_row(kind: str, message: str, received_at: str, level: str = "info", stage: str = "", strategy_id: str | None = None, strategy_name: str | None = None) -> dict[str, Any]:
+    strategy_id = strategy_id or CRYPTO_FUNDING_DEFAULT_STRATEGY_ID
+    return {
+        "received_at": received_at,
+        "time": received_at,
+        "level": level,
+        "stage": stage or kind,
+        "message": message,
+        "strategy_id": strategy_id,
+        "strategy_name": strategy_name or crypto_strategy_name_from_value({}, strategy_id),
+        "trade_date": crypto_trade_date(received_at),
+    }
+
+
+def crypto_instance_strategy(strategy_id: str, heartbeat: dict[str, Any] | None = None) -> dict[str, Any]:
+    heartbeat = heartbeat if isinstance(heartbeat, dict) else {}
+    profile = crypto_strategy_profile_from_value(heartbeat, strategy_id)
+    name = crypto_strategy_name_from_value(heartbeat, strategy_id)
+    stale_seconds = seconds_since(heartbeat.get("received_at"))
+    status = "running" if heartbeat else "waiting"
+    tone = "blue" if heartbeat else "warning"
+    title = f"{name} 正在扫描 {to_int(heartbeat.get('symbol_count'))} 个 USDT 永续" if heartbeat else f"{name} 等待心跳"
+    detail = (
+        f"阈值 {to_float(heartbeat.get('funding_threshold'), 0) * 100:.2f}%，容量 {to_float(heartbeat.get('capacity_participation'), 0) * 100:.2f}%，最大杠杆 {to_float(heartbeat.get('max_leverage'), 0):.1f}x。"
+        if heartbeat
+        else str(CRYPTO_FUNDING_INSTANCE_PROFILES.get(strategy_id, {}).get("description") or "")
+    )
+    if stale_seconds is not None and stale_seconds > 180:
+        status = "stale"
+        tone = "warning"
+        title = f"{name} 心跳延迟"
+        detail = f"最近一次心跳在 {stale_seconds} 秒前，需检查对应 dry-run 服务。"
+    return {
+        "id": strategy_id,
+        "name": name,
+        "status": status,
+        "category": "crypto",
+        "provider": "binance-usdm",
+        "mode": str(heartbeat.get("mode") or "DRY_RUN"),
+        "profile": profile,
+        "decision_title": title,
+        "decision_detail": detail,
+        "decision_tone": tone,
+        "description": str(CRYPTO_FUNDING_INSTANCE_PROFILES.get(strategy_id, {}).get("description") or ""),
+    }
+
+
+def crypto_instance_snapshot(strategy_id: str, existing_instance: dict[str, Any] | None, incoming: dict[str, Any], heartbeat: dict[str, Any], received_at: str) -> dict[str, Any]:
+    existing_instance = existing_instance if isinstance(existing_instance, dict) else {}
+    has_new_heartbeat = bool(heartbeat)
+    heartbeat_public = crypto_public_row(heartbeat) if has_new_heartbeat else existing_instance.get("heartbeat", {})
+    if heartbeat_public:
+        heartbeat_received_at = received_at if has_new_heartbeat else heartbeat_public.get("received_at") or received_at
+        heartbeat_public = {**heartbeat_public, "received_at": heartbeat_received_at, "stale_seconds": seconds_since(heartbeat_received_at) or 0}
+    incoming_positions = incoming.get("positions") if isinstance(incoming.get("positions"), list) else None
+    incoming_pending = incoming.get("pending_events") if isinstance(incoming.get("pending_events"), list) else None
+    positions = [crypto_normalize_trade({**row, "strategy_id": strategy_id}, "trade_open") for row in incoming_positions if isinstance(row, dict)] if incoming_positions is not None else existing_instance.get("positions", [])
+    pending = [crypto_public_row({**row, "strategy_id": strategy_id}) for row in incoming_pending if isinstance(row, dict)] if incoming_pending is not None else existing_instance.get("pending_events", [])
+    signals = crypto_recent_rows(CRYPTO_FUNDING_SIGNAL_LOG_PATH, 80, strategy_id=strategy_id)
+    trades = crypto_recent_rows(CRYPTO_FUNDING_TRADE_LOG_PATH, 120, strategy_id=strategy_id)
+    events = crypto_recent_rows(CRYPTO_FUNDING_EVENT_LOG_PATH, 120, strategy_id=strategy_id)
+    logs = crypto_recent_rows(CRYPTO_FUNDING_LOG_PATH, 80, strategy_id=strategy_id)
+    summary = existing_instance.get("summary") if isinstance(existing_instance.get("summary"), dict) else {}
+    if heartbeat_public:
+        summary.update(
+            {
+                "equity_usd": to_float(heartbeat_public.get("equity_usd"), summary.get("equity_usd") or 0),
+                "symbol_count": to_int(heartbeat_public.get("symbol_count"), to_int(summary.get("symbol_count"))),
+                "funding_threshold_pct": to_float(heartbeat_public.get("funding_threshold"), 0.013) * 100,
+                "capacity_participation_pct": to_float(heartbeat_public.get("capacity_participation"), 0.01) * 100,
+                "max_leverage": to_float(heartbeat_public.get("max_leverage"), 2),
+            }
+        )
+    instance = {
+        "strategy": crypto_instance_strategy(strategy_id, heartbeat_public),
+        "summary": summary,
+        "heartbeat": heartbeat_public or {},
+        "positions": positions or [],
+        "pending_events": pending or [],
+        "signals": signals[-80:],
+        "trades": trades[-120:],
+        "events": events[-120:],
+        "logs": logs[-80:],
+    }
+    instance["summary"] = crypto_summary_from_snapshot({"data": instance}, strategy_id=strategy_id)
+    return instance
+
+
+def crypto_aggregate_summary(instances: list[dict[str, Any]]) -> dict[str, Any]:
+    summaries = [item.get("summary") for item in instances if isinstance(item, dict) and isinstance(item.get("summary"), dict)]
+    equity = sum(to_float(item.get("equity_usd"), 0) or 0 for item in summaries)
+    realized_pnl = sum(to_float(item.get("realized_pnl_usd"), 0) or 0 for item in summaries)
+    trade_count = sum(to_int(item.get("trade_count")) for item in summaries)
+    winning_trades = sum(to_int(item.get("winning_trade_count")) for item in summaries)
+    if not winning_trades and trade_count:
+        winning_trades = round(sum((to_float(item.get("win_rate_pct"), 0) or 0) / 100 * to_int(item.get("trade_count")) for item in summaries))
+    return {
+        "equity_usd": equity,
+        "symbol_count": max([to_int(item.get("symbol_count")) for item in summaries] or [0]),
+        "open_position_count": sum(to_int(item.get("open_position_count")) for item in summaries),
+        "pending_event_count": sum(to_int(item.get("pending_event_count")) for item in summaries),
+        "signal_count": sum(to_int(item.get("signal_count")) for item in summaries),
+        "trade_count": trade_count,
+        "realized_pnl_usd": realized_pnl,
+        "realized_return_pct": (realized_pnl / equity * 100) if equity else 0,
+        "win_rate_pct": (winning_trades / trade_count * 100) if trade_count else 0,
+        "funding_threshold_pct": min([to_float(item.get("funding_threshold_pct"), 0) for item in summaries if to_float(item.get("funding_threshold_pct")) is not None] or [0]),
+        "capacity_participation_pct": max([to_float(item.get("capacity_participation_pct"), 0) for item in summaries] or [0]),
+        "max_leverage": max([to_float(item.get("max_leverage"), 0) for item in summaries] or [0]),
+        "instance_count": len(instances),
+        "running_instance_count": sum(1 for item in instances if item.get("strategy", {}).get("status") == "running"),
+    }
+
+
+def crypto_build_multi_instance_snapshot(incoming: dict[str, Any] | None = None, event_kind: str = "heartbeat") -> dict[str, Any]:
+    incoming = incoming or {}
+    existing = crypto_read_snapshot()
+    data = existing.get("data") if isinstance(existing.get("data"), dict) else {}
+    received_at = now_hk().isoformat()
+    heartbeat = incoming.get("heartbeat") if isinstance(incoming.get("heartbeat"), dict) else incoming.get("status") if isinstance(incoming.get("status"), dict) else incoming
+    heartbeat = heartbeat if isinstance(heartbeat, dict) else {}
+    if event_kind != "heartbeat":
+        heartbeat = {}
+    strategy_id = crypto_strategy_id_from_value(incoming)
+    existing_instances = data.get("instances") if isinstance(data.get("instances"), list) else []
+    instance_map: dict[str, dict[str, Any]] = {}
+    for item in existing_instances:
+        if not isinstance(item, dict):
+            continue
+        item_strategy = item.get("strategy") if isinstance(item.get("strategy"), dict) else {}
+        item_id = str(item_strategy.get("id") or item.get("strategy_id") or "").strip()
+        if item_id:
+            instance_map[item_id] = item
+    if not instance_map and data:
+        instance_map[CRYPTO_FUNDING_DEFAULT_STRATEGY_ID] = {
+            "strategy": data.get("strategy", {}),
+            "summary": data.get("summary", {}),
+            "heartbeat": data.get("heartbeat", {}),
+            "positions": data.get("positions", []),
+            "pending_events": data.get("pending_events", []),
+            "signals": data.get("signals", []),
+            "trades": data.get("trades", []),
+            "events": data.get("events", []),
+            "logs": data.get("logs", []),
+        }
+    if event_kind == "heartbeat" or heartbeat:
+        instance_map[strategy_id] = crypto_instance_snapshot(strategy_id, instance_map.get(strategy_id), incoming, heartbeat, received_at)
+    elif strategy_id in instance_map:
+        instance_map[strategy_id] = crypto_instance_snapshot(strategy_id, instance_map.get(strategy_id), {}, {}, received_at)
+
+    instances = sorted(
+        instance_map.values(),
+        key=lambda item: (0 if item.get("strategy", {}).get("id") == CRYPTO_FUNDING_DEFAULT_STRATEGY_ID else 1, item.get("strategy", {}).get("name") or ""),
+    )
+    summary = crypto_aggregate_summary(instances)
+    signals = crypto_recent_rows(CRYPTO_FUNDING_SIGNAL_LOG_PATH, 160)
+    trades = crypto_recent_rows(CRYPTO_FUNDING_TRADE_LOG_PATH, 240)
+    events = crypto_recent_rows(CRYPTO_FUNDING_EVENT_LOG_PATH, 240)
+    logs = crypto_recent_rows(CRYPTO_FUNDING_LOG_PATH, 160)
+    positions: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    for instance in instances:
+        if isinstance(instance.get("positions"), list):
+            positions.extend(instance["positions"])
+        if isinstance(instance.get("pending_events"), list):
+            pending.extend(instance["pending_events"])
+    latest_heartbeat = heartbeat or next((item.get("heartbeat") for item in instances if isinstance(item.get("heartbeat"), dict) and item.get("heartbeat")), {})
+    running_count = summary.get("running_instance_count", 0)
+    instance_count = summary.get("instance_count", len(instances))
+    return {
+        "meta": {
+            "version": "1.0",
+            "source": "crypto-webhook",
+            "as_of": received_at,
+            "trade_date": crypto_trade_date(received_at),
+            "timezone": "Asia/Hong_Kong",
+            "market_session": "crypto-24x7",
+            "run_id": str(latest_heartbeat.get("run_id") or existing.get("meta", {}).get("run_id") or crypto_now_run_id()),
+        },
+        "data": {
+            "strategy": {
+                "id": CRYPTO_FUNDING_DEFAULT_STRATEGY_ID,
+                "name": CRYPTO_FUNDING_AGGREGATE_NAME,
+                "status": "running" if running_count else "waiting",
+                "category": "crypto",
+                "provider": "binance-usdm",
+                "mode": str(latest_heartbeat.get("mode") or "DRY_RUN"),
+                "decision_title": f"{running_count}/{instance_count} 个资金费率实例运行中",
+                "decision_detail": f"最低阈值 {to_float(summary.get('funding_threshold_pct'), 0):.2f}%，容量 {to_float(summary.get('capacity_participation_pct'), 0):.2f}%，最大杠杆 {to_float(summary.get('max_leverage'), 0):.1f}x。",
+                "decision_tone": "blue" if running_count else "warning",
+            },
+            "summary": summary,
+            "heartbeat": {**crypto_public_row(latest_heartbeat), "received_at": received_at, "stale_seconds": 0} if latest_heartbeat else {},
+            "instances": instances,
+            "positions": positions or [],
+            "pending_events": pending or [],
+            "signals": signals[-160:],
+            "trades": trades[-240:],
+            "events": events[-240:],
+            "logs": logs[-160:],
+        },
+    }
+
+
+def crypto_build_snapshot(incoming: dict[str, Any] | None = None, event_kind: str = "heartbeat") -> dict[str, Any]:
+    return crypto_build_multi_instance_snapshot(incoming, event_kind)
+    incoming = incoming or {}
+    existing = crypto_read_snapshot()
+    data = existing.get("data") if isinstance(existing.get("data"), dict) else {}
+    received_at = now_hk().isoformat()
+    heartbeat = incoming.get("heartbeat") if isinstance(incoming.get("heartbeat"), dict) else incoming.get("status") if isinstance(incoming.get("status"), dict) else incoming
+    heartbeat = heartbeat if isinstance(heartbeat, dict) else {}
+    summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+    summary.update(
+        {
+            "equity_usd": to_float(heartbeat.get("equity_usd"), summary.get("equity_usd") or 0),
+            "symbol_count": to_int(heartbeat.get("symbol_count"), to_int(summary.get("symbol_count"))),
+            "open_position_count": to_int(heartbeat.get("open_positions"), to_int(summary.get("open_position_count"))),
+            "pending_event_count": to_int(heartbeat.get("pending_state_updates"), to_int(summary.get("pending_event_count"))),
+            "funding_threshold_pct": to_float(heartbeat.get("funding_threshold"), 0.013) * 100,
+            "capacity_participation_pct": to_float(heartbeat.get("capacity_participation"), 0.01) * 100,
+            "max_leverage": to_float(heartbeat.get("max_leverage"), 2),
+        }
+    )
+    positions = [crypto_normalize_trade(row, "trade_open") for row in incoming.get("positions", []) if isinstance(row, dict)] if isinstance(incoming.get("positions"), list) else data.get("positions", [])
+    pending = [crypto_public_row(row) for row in incoming.get("pending_events", []) if isinstance(row, dict)] if isinstance(incoming.get("pending_events"), list) else data.get("pending_events", [])
+    signals = crypto_recent_rows(CRYPTO_FUNDING_SIGNAL_LOG_PATH, 80)
+    trades = crypto_recent_rows(CRYPTO_FUNDING_TRADE_LOG_PATH, 120)
+    events = crypto_recent_rows(CRYPTO_FUNDING_EVENT_LOG_PATH, 120)
+    logs = crypto_recent_rows(CRYPTO_FUNDING_LOG_PATH, 80)
+    snapshot = {
+        "meta": {
+            "version": "1.0",
+            "source": "crypto-webhook",
+            "as_of": received_at,
+            "trade_date": crypto_trade_date(received_at),
+            "timezone": "Asia/Hong_Kong",
+            "market_session": "crypto-24x7",
+            "run_id": str(heartbeat.get("run_id") or existing.get("meta", {}).get("run_id") or crypto_now_run_id()),
+        },
+        "data": {
+            "strategy": {
+                "id": "crypto-funding-rate",
+                "name": "Binance 资金费率",
+                "status": "running" if heartbeat else "waiting",
+                "category": "crypto",
+                "provider": "binance-usdm",
+                "mode": str(heartbeat.get("mode") or "DRY_RUN"),
+                "decision_title": f"DRY_RUN 正在扫描 {to_int(summary.get('symbol_count'))} 个 USDT 永续",
+                "decision_detail": f"阈值 {to_float(summary.get('funding_threshold_pct'), 0):.2f}%，容量 {to_float(summary.get('capacity_participation_pct'), 0):.2f}%，最大杠杆 {to_float(summary.get('max_leverage'), 0):.1f}x。",
+                "decision_tone": "blue" if heartbeat else "warning",
+            },
+            "summary": summary,
+            "heartbeat": {**crypto_public_row(heartbeat), "received_at": received_at, "stale_seconds": 0},
+            "positions": positions or [],
+            "pending_events": pending or [],
+            "signals": signals[-80:],
+            "trades": trades[-120:],
+            "events": events[-120:],
+            "logs": logs[-40:],
+        },
+    }
+    snapshot["data"]["summary"] = crypto_summary_from_snapshot(snapshot)
+    return snapshot
+
+
+def crypto_persist_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    write_json_atomic(CRYPTO_FUNDING_STRATEGY_PATH, snapshot)
+    return normalize_payload(snapshot, ENDPOINTS["/api/v1/strategies/crypto-funding"], "crypto-webhook", CRYPTO_FUNDING_STRATEGY_PATH)
+
+
+def crypto_event_rows_from_payload(payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    data = extract_raw_data(payload)
+    strategy_id = crypto_strategy_id_from_value(data)
+    strategy_name = crypto_strategy_name_from_value(data, strategy_id)
+    strategy_profile = crypto_strategy_profile_from_value(data, strategy_id)
+    raw = data.get(key) or data.get("items") or data.get("events") or []
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    return [
+        {
+            "strategy_id": strategy_id,
+            "strategy_name": strategy_name,
+            "strategy_profile": strategy_profile,
+            **row,
+        }
+        for row in raw
+        if isinstance(row, dict)
+    ]
+
+
+def crypto_append_event_log(kind: str, rows: list[dict[str, Any]], received_at: str) -> None:
+    for row in rows:
+        strategy_id = crypto_strategy_id_from_value(row)
+        strategy_name = crypto_strategy_name_from_value(row, strategy_id)
+        symbol = str(row.get("symbol") or "").upper()
+        if kind == "trade":
+            status = str(row.get("status") or "")
+            pnl = to_float(row.get("final_pnl_usd") or row.get("pnl_usd"))
+            if status == "open" or not row.get("exit_time"):
+                message = f"模拟开仓 {symbol} {row.get('side') or ''} notional={to_float(row.get('order_notional_usd'), 0):.2f}"
+                stage = "open"
+            else:
+                message = f"模拟平仓 {symbol} {row.get('exit_reason') or ''} pnl={pnl if pnl is not None else 0:.2f} USD"
+                stage = "close"
+        elif kind == "signal":
+            decision = row.get("decision") if isinstance(row.get("decision"), dict) else {}
+            message = f"资金费率信号 {symbol} rate={to_float(row.get('funding_rate'), 0) * 100:.2f}% decision={decision.get('reason') or decision.get('rule') or '--'}"
+            stage = "signal"
+        else:
+            message = str(row.get("message") or row.get("event_type") or f"crypto {kind} event")
+            stage = kind
+        append_jsonl(CRYPTO_FUNDING_LOG_PATH, crypto_log_row(kind, message, received_at, "info", stage, strategy_id, strategy_name))
 
 
 @app.get("/api/v1/actions")
@@ -4199,6 +4934,29 @@ def strategy_rows_from_ledger(ledger: list[dict[str, Any]]) -> list[dict[str, An
     ]
 
 
+def strategy_rows_from_definitions() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for definition in strategy_definitions():
+        strategy_id = str(definition.get("id") or "")
+        if not strategy_id:
+            continue
+        rows.append(
+            {
+                "id": strategy_id,
+                "label": definition.get("name") or strategy_id,
+                "last_seen": definition.get("updated_at") or definition.get("created_at"),
+                "stale_seconds": seconds_since(definition.get("updated_at") or definition.get("created_at")),
+                "source": "registered",
+                "status": definition.get("status") or "idle",
+                "category": definition.get("category") or "custom",
+                "provider": definition.get("provider") or "",
+                "performance_state": "waiting",
+                "performance_url": f"/performance.html?strategy={urllib.parse.quote(strategy_id)}",
+            }
+        )
+    return rows
+
+
 def load_static_performance_strategies() -> tuple[list[dict[str, Any]], dict[str, Any], str]:
     if not PERFORMANCE_NAV_PATH.exists():
         return [], {}, ""
@@ -4393,9 +5151,11 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
     ledger = [*joinquant_ledger, *personal_ledger]
     all_strategy_events = load_strategy_events()
     static_strategies, static_strategy_config, default_static_strategy = load_static_performance_strategies()
+    registered_strategies = strategy_rows_from_definitions()
     ledger_strategies = strategy_rows_from_ledger(ledger)
     event_strategies = strategy_rows_from_events(all_strategy_events)
-    strategy_map = {item["id"]: item for item in static_strategies}
+    strategy_map = {item["id"]: item for item in registered_strategies}
+    strategy_map.update({item["id"]: item for item in static_strategies})
     strategy_map.update({item["id"]: item for item in ledger_strategies})
     strategy_map.update({item["id"]: item for item in event_strategies})
     strategies = list(strategy_map.values())
@@ -4458,6 +5218,7 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
     strategy_ledger = crop_nav_ledger(strategy_ledger, query_start, end_date)
     latest_source = str(latest.get("source") or "")
     latest_stale_seconds = seconds_since(latest.get("as_of"), now)
+    selected_strategy_row = strategy_map.get(selected_strategy, {})
     source_state = (
         "manual"
         if latest_source == "manual"
@@ -4465,6 +5226,8 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
         if latest_source == "local-ledger"
         else "static"
         if latest_source and latest_source != "joinquant"
+        else "registered-pending"
+        if selected_strategy_row.get("source") == "registered"
         else "joinquant-pending"
         if not latest
         else "joinquant-stale"
@@ -4533,7 +5296,13 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
         },
         "data": {
             "strategy": selected_strategy,
-            "strategy_label": latest.get("strategy_label") or strategy_label_from_payload(selected_strategy) if selected_strategy else "等待聚宽上报",
+            "strategy_label": (
+                latest.get("strategy_label")
+                or selected_strategy_row.get("label")
+                or strategy_label_from_payload(selected_strategy)
+                if selected_strategy
+                else "等待聚宽上报"
+            ),
             "benchmark": benchmark_data.get("label") or (REAL_BENCHMARKS.get(benchmark_id, {}).get("label") if benchmark_id else None),
             "benchmark_id": benchmark_id or None,
             "strategies": strategies,
@@ -4702,6 +5471,14 @@ def quant_strategy_detail(strategy_id: str) -> dict[str, Any]:
     definition = strategy_definition_by_id(strategy_id)
     if not definition:
         raise HTTPException(status_code=404, detail="策略不存在")
+    if definition["id"] == CRYPTO_FUNDING_DEFAULT_STRATEGY_ID:
+        payload = strategy_crypto_funding()
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        data["registry"] = definition_public_row(definition, payload)
+        data["snapshot_endpoint"] = f"/api/v1/quant/strategies/{definition['id']}/snapshot"
+        data["events_endpoint"] = f"/api/v1/quant/strategies/{definition['id']}/events"
+        data["holdings_url"] = f"/holdings.html?type=quant&strategy_id={urllib.parse.quote(definition['id'])}"
+        return payload
     payload = load_quant_strategy_payload(definition)
     if definition["id"] == "small-cap-momentum" and not is_real_joinquant_snapshot(payload):
         payload = pending_small_cap_payload(payload)
@@ -5028,6 +5805,129 @@ def strategy_etf() -> dict[str, Any]:
             logs = archive_logs
     data["logs"] = logs[-ETF_INLINE_LOG_LINES:]
     return payload
+
+
+@app.get("/api/v1/strategies/crypto-funding")
+def strategy_crypto_funding() -> dict[str, Any]:
+    snapshot = crypto_build_snapshot({}, "refresh")
+    data = snapshot.get("data") if isinstance(snapshot.get("data"), dict) else {}
+    heartbeat = data.get("heartbeat") if isinstance(data.get("heartbeat"), dict) else {}
+    stale_seconds = seconds_since(heartbeat.get("received_at") or snapshot.get("meta", {}).get("as_of"))
+    heartbeat["stale_seconds"] = stale_seconds
+    instances = data.get("instances") if isinstance(data.get("instances"), list) else []
+    running_count = 0
+    for instance in instances:
+        if not isinstance(instance, dict):
+            continue
+        instance_heartbeat = instance.get("heartbeat") if isinstance(instance.get("heartbeat"), dict) else {}
+        instance_stale = seconds_since(instance_heartbeat.get("received_at"))
+        instance_heartbeat["stale_seconds"] = instance_stale
+        instance_strategy = instance.get("strategy") if isinstance(instance.get("strategy"), dict) else {}
+        if instance_stale is None:
+            instance_strategy["status"] = "waiting"
+            instance_strategy["decision_tone"] = "warning"
+        elif instance_stale > 180:
+            instance_strategy["status"] = "stale"
+            instance_strategy["decision_tone"] = "warning"
+            instance_strategy["decision_title"] = f"{instance_strategy.get('name') or '资金费率实例'} 心跳延迟"
+            instance_strategy["decision_detail"] = f"最近一次心跳在 {instance_stale} 秒前，需检查对应 dry-run 服务。"
+        else:
+            instance_strategy["status"] = "running"
+            running_count += 1
+        instance["heartbeat"] = instance_heartbeat
+        instance["strategy"] = instance_strategy
+    strategy = data.get("strategy") if isinstance(data.get("strategy"), dict) else {}
+    if stale_seconds is None:
+        strategy["status"] = "waiting"
+        strategy["decision_tone"] = "warning"
+    elif stale_seconds > 180:
+        strategy["status"] = "stale" if running_count == 0 else "running"
+        strategy["decision_tone"] = "warning"
+        strategy["decision_title"] = "交易机心跳延迟"
+        strategy["decision_detail"] = f"最近一次心跳在 {stale_seconds} 秒前，需检查 jp_vps 服务。"
+    else:
+        strategy["status"] = "running" if running_count else strategy.get("status", "waiting")
+    data["heartbeat"] = heartbeat
+    data["instances"] = instances
+    data["strategy"] = strategy
+    data["summary"] = crypto_aggregate_summary(instances) if instances else crypto_summary_from_snapshot(snapshot)
+    data["signals"] = crypto_recent_rows(CRYPTO_FUNDING_SIGNAL_LOG_PATH, 160)
+    data["trades"] = crypto_recent_rows(CRYPTO_FUNDING_TRADE_LOG_PATH, 240)
+    data["events"] = crypto_recent_rows(CRYPTO_FUNDING_EVENT_LOG_PATH, 240)
+    data["logs"] = crypto_recent_rows(CRYPTO_FUNDING_LOG_PATH, 160)
+    snapshot["data"] = data
+    normalized = normalize_payload(snapshot, ENDPOINTS["/api/v1/strategies/crypto-funding"], "crypto-webhook", CRYPTO_FUNDING_STRATEGY_PATH)
+    return validate_response_payload("/api/v1/strategies/crypto-funding", normalized, str(CRYPTO_FUNDING_STRATEGY_PATH.relative_to(ROOT)))
+
+
+@app.post("/api/v1/crypto/funding/heartbeat")
+def receive_crypto_funding_heartbeat(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    verify_crypto_token(request, payload)
+    received_at = now_hk().isoformat()
+    data = extract_raw_data(payload)
+    heartbeat = data.get("heartbeat") if isinstance(data.get("heartbeat"), dict) else data.get("status") if isinstance(data.get("status"), dict) else data
+    append_jsonl(
+        CRYPTO_FUNDING_HEARTBEAT_LOG_PATH,
+        {
+            "received_at": received_at,
+            "source_ip": request.client.host if request.client else None,
+            "strategy_id": crypto_strategy_id_from_value(data),
+            "heartbeat": crypto_public_row(heartbeat if isinstance(heartbeat, dict) else {}),
+        },
+    )
+    snapshot = crypto_build_snapshot(data, "heartbeat")
+    normalized = crypto_persist_snapshot(snapshot)
+    return validate_response_payload("/api/v1/strategies/crypto-funding", normalized, str(CRYPTO_FUNDING_STRATEGY_PATH.relative_to(ROOT)))
+
+
+@app.post("/api/v1/crypto/funding/signals")
+def receive_crypto_funding_signals(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    verify_crypto_token(request, payload)
+    received_at = now_hk().isoformat()
+    rows = [crypto_normalize_signal(row) for row in crypto_event_rows_from_payload(payload, "signals")]
+    if not rows:
+        raise HTTPException(status_code=422, detail="缺少 signals/items")
+    for row in rows:
+        row["received_at"] = received_at
+        append_jsonl(CRYPTO_FUNDING_SIGNAL_LOG_PATH, row)
+        append_jsonl(CRYPTO_FUNDING_EVENT_LOG_PATH, {**row, "event_type": "signal"})
+    crypto_append_event_log("signal", rows, received_at)
+    snapshot = crypto_build_snapshot(extract_raw_data(payload), "signal")
+    crypto_persist_snapshot(snapshot)
+    return action_response("crypto_funding_signal_ingest", {"strategy_id": crypto_strategy_id_from_value(extract_raw_data(payload)), "count": len(rows), "message": "资金费率信号已记录"})
+
+
+@app.post("/api/v1/crypto/funding/trades")
+def receive_crypto_funding_trades(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    verify_crypto_token(request, payload)
+    received_at = now_hk().isoformat()
+    rows = [crypto_normalize_trade(row) for row in crypto_event_rows_from_payload(payload, "trades")]
+    if not rows:
+        raise HTTPException(status_code=422, detail="缺少 trades/items")
+    for row in rows:
+        row["received_at"] = received_at
+        append_jsonl(CRYPTO_FUNDING_TRADE_LOG_PATH, row)
+        append_jsonl(CRYPTO_FUNDING_EVENT_LOG_PATH, {**row, "event_type": row.get("event_type") or "trade"})
+    crypto_append_event_log("trade", rows, received_at)
+    snapshot = crypto_build_snapshot(extract_raw_data(payload), "trade")
+    crypto_persist_snapshot(snapshot)
+    return action_response("crypto_funding_trade_ingest", {"strategy_id": crypto_strategy_id_from_value(extract_raw_data(payload)), "count": len(rows), "message": "资金费率交易已记录"})
+
+
+@app.post("/api/v1/crypto/funding/events")
+def receive_crypto_funding_events(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    verify_crypto_token(request, payload)
+    received_at = now_hk().isoformat()
+    rows = [crypto_public_row(row) for row in crypto_event_rows_from_payload(payload, "events")]
+    if not rows:
+        raise HTTPException(status_code=422, detail="缺少 events/items")
+    for row in rows:
+        row["received_at"] = received_at
+        append_jsonl(CRYPTO_FUNDING_EVENT_LOG_PATH, row)
+    crypto_append_event_log("event", rows, received_at)
+    snapshot = crypto_build_snapshot(extract_raw_data(payload), "event")
+    crypto_persist_snapshot(snapshot)
+    return action_response("crypto_funding_event_ingest", {"strategy_id": crypto_strategy_id_from_value(extract_raw_data(payload)), "count": len(rows), "message": "资金费率事件已记录"})
 
 
 @app.post("/api/v1/joinquant/signals")

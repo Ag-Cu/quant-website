@@ -559,6 +559,35 @@
               },
               "title": "Allocation",
               "type": "array"
+            },
+            "quant_holdings": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "title": "Quant Holdings",
+              "type": "array"
+            },
+            "personal_holdings": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "title": "Personal Holdings",
+              "type": "array"
+            },
+            "quant_by_strategy": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "title": "Quant By Strategy",
+              "type": "array"
+            },
+            "strategy_outputs": {
+              "additionalProperties": true,
+              "title": "Strategy Outputs",
+              "type": "object"
             }
           },
           "required": [
@@ -1475,6 +1504,268 @@
         "data"
       ],
       "title": "JoinQuantEtfStrategyPayload",
+      "type": "object"
+    },
+    "SmallCapStrategyPayload": {
+      "$defs": {
+        "Meta": {
+          "additionalProperties": true,
+          "properties": {
+            "version": {
+              "title": "Version",
+              "type": "string"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            },
+            "as_of": {
+              "title": "As Of",
+              "type": "string"
+            },
+            "trade_date": {
+              "title": "Trade Date",
+              "type": "string"
+            },
+            "timezone": {
+              "title": "Timezone",
+              "type": "string"
+            },
+            "market_session": {
+              "title": "Market Session",
+              "type": "string"
+            },
+            "run_id": {
+              "title": "Run Id",
+              "type": "string"
+            },
+            "storage_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Storage Path"
+            }
+          },
+          "required": [
+            "version",
+            "source",
+            "as_of",
+            "trade_date",
+            "timezone",
+            "market_session",
+            "run_id"
+          ],
+          "title": "Meta",
+          "type": "object"
+        },
+        "SmallCapStrategyData": {
+          "additionalProperties": true,
+          "properties": {
+            "strategy": {
+              "additionalProperties": true,
+              "title": "Strategy",
+              "type": "object"
+            },
+            "summary": {
+              "additionalProperties": true,
+              "title": "Summary",
+              "type": "object"
+            },
+            "signals": {
+              "items": {},
+              "title": "Signals",
+              "type": "array"
+            },
+            "holdings": {
+              "items": {},
+              "title": "Holdings",
+              "type": "array"
+            },
+            "themes": {
+              "items": {},
+              "title": "Themes",
+              "type": "array"
+            },
+            "risk": {
+              "additionalProperties": true,
+              "title": "Risk",
+              "type": "object"
+            },
+            "events": {
+              "items": {},
+              "title": "Events",
+              "type": "array"
+            },
+            "logs": {
+              "items": {},
+              "title": "Logs",
+              "type": "array"
+            }
+          },
+          "required": [
+            "strategy",
+            "summary",
+            "signals",
+            "holdings",
+            "themes",
+            "risk"
+          ],
+          "title": "SmallCapStrategyData",
+          "type": "object"
+        }
+      },
+      "additionalProperties": true,
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/Meta"
+        },
+        "data": {
+          "$ref": "#/$defs/SmallCapStrategyData"
+        }
+      },
+      "required": [
+        "meta",
+        "data"
+      ],
+      "title": "SmallCapStrategyPayload",
+      "type": "object"
+    },
+    "CryptoFundingStrategyPayload": {
+      "$defs": {
+        "CryptoFundingStrategyData": {
+          "additionalProperties": true,
+          "properties": {
+            "strategy": {
+              "additionalProperties": true,
+              "title": "Strategy",
+              "type": "object"
+            },
+            "summary": {
+              "additionalProperties": true,
+              "title": "Summary",
+              "type": "object"
+            },
+            "heartbeat": {
+              "additionalProperties": true,
+              "title": "Heartbeat",
+              "type": "object"
+            },
+            "positions": {
+              "items": {},
+              "title": "Positions",
+              "type": "array"
+            },
+            "pending_events": {
+              "items": {},
+              "title": "Pending Events",
+              "type": "array"
+            },
+            "signals": {
+              "items": {},
+              "title": "Signals",
+              "type": "array"
+            },
+            "trades": {
+              "items": {},
+              "title": "Trades",
+              "type": "array"
+            },
+            "events": {
+              "items": {},
+              "title": "Events",
+              "type": "array"
+            },
+            "logs": {
+              "items": {},
+              "title": "Logs",
+              "type": "array"
+            }
+          },
+          "required": [
+            "strategy",
+            "summary",
+            "heartbeat"
+          ],
+          "title": "CryptoFundingStrategyData",
+          "type": "object"
+        },
+        "Meta": {
+          "additionalProperties": true,
+          "properties": {
+            "version": {
+              "title": "Version",
+              "type": "string"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            },
+            "as_of": {
+              "title": "As Of",
+              "type": "string"
+            },
+            "trade_date": {
+              "title": "Trade Date",
+              "type": "string"
+            },
+            "timezone": {
+              "title": "Timezone",
+              "type": "string"
+            },
+            "market_session": {
+              "title": "Market Session",
+              "type": "string"
+            },
+            "run_id": {
+              "title": "Run Id",
+              "type": "string"
+            },
+            "storage_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Storage Path"
+            }
+          },
+          "required": [
+            "version",
+            "source",
+            "as_of",
+            "trade_date",
+            "timezone",
+            "market_session",
+            "run_id"
+          ],
+          "title": "Meta",
+          "type": "object"
+        }
+      },
+      "additionalProperties": true,
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/Meta"
+        },
+        "data": {
+          "$ref": "#/$defs/CryptoFundingStrategyData"
+        }
+      },
+      "required": [
+        "meta",
+        "data"
+      ],
+      "title": "CryptoFundingStrategyPayload",
       "type": "object"
     }
   }

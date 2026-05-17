@@ -37,6 +37,7 @@ def test_health_endpoint(client: TestClient) -> None:
         "/",
         "/index.html",
         "/etf.html",
+        "/crypto.html",
         "/small-cap.html",
         "/breadth.html",
         "/sentiment.html",
@@ -232,6 +233,14 @@ def test_quant_strategy_can_be_created_and_receive_snapshot(
     assert detail["data"]["registry"]["holding_count"] == 1
     assert detail["data"]["holdings_url"].endswith("strategy_id=new-alpha")
 
+    response = client.get("/api/v1/performance?strategy=new-alpha&benchmark=none")
+    assert response.status_code == 200, response.text
+    performance_payload = response.json()
+    performance_ids = {item["id"] for item in performance_payload["data"]["strategies"]}
+    assert "new-alpha" in performance_ids
+    assert performance_payload["data"]["strategy"] == "new-alpha"
+    assert performance_payload["data"]["strategy_label"] == "新策略 Alpha"
+
     response = client.post(
         "/api/v1/joinquant/signals",
         headers={"X-Action-Token": "test-action-token", "X-Webhook-Token": "test-joinquant-token"},
@@ -336,6 +345,11 @@ def test_portfolio_holdings_include_joinquant_strategy_outputs(
     assert payload["data"]["source"] == "joinquant"
     assert payload["data"]["quant_summary"]["position_count"] == 2
     assert payload["data"]["quant_summary"]["total_market_value"] == 43000
+    grouped = {item["strategy_id"]: item for item in payload["data"]["quant_by_strategy"]}
+    assert set(grouped) == {"small-cap-momentum", "joinquant-wufu-etf-v43"}
+    assert grouped["small-cap-momentum"]["holding_count"] == 1
+    assert grouped["small-cap-momentum"]["signal_count"] == 1
+    assert grouped["joinquant-wufu-etf-v43"]["holding_count"] == 1
     assert holding["strategy_signals"][0]["strategy_id"] == "small-cap-momentum"
     assert holding["strategy_signals"][0]["action"] == "sell"
     assert holding["quantity"] == 1000
@@ -346,6 +360,13 @@ def test_portfolio_holdings_include_joinquant_strategy_outputs(
     assert etf_target["target_weight_pct"] == 0
     assert payload["data"]["strategy_outputs"]["signals"][0]["symbol"] in {"300476", "159915"}
     assert any(alert["symbol"] == "300476" for alert in payload["data"]["strategy_outputs"]["sell_alerts"])
+
+    response = client.get("/api/v1/portfolio/holdings?type=quant&strategy_id=small-cap-momentum")
+
+    assert response.status_code == 200, response.text
+    filtered = response.json()["data"]
+    assert [item["strategy_id"] for item in filtered["quant_by_strategy"]] == ["small-cap-momentum"]
+    assert {item["symbol"] for item in filtered["quant_holdings"]} == {"300476"}
 
 
 def test_watchlist_can_create_personal_holding(
