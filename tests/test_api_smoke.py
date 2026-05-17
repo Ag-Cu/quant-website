@@ -154,7 +154,7 @@ def test_authenticated_user_can_delete_own_watchlist_without_action_token(monkey
     monkeypatch.setattr(backend_main, "LIVE_DIR", tmp_path / "data/live")
     monkeypatch.setattr(backend_main, "CONFIG_DIR", tmp_path / "data/config")
     monkeypatch.setattr(backend_main, "WATCHLIST_CONFIG_PATH", tmp_path / "data/config/watchlist.json")
-    monkeypatch.setattr(backend_main, "run_live_data_refresh", lambda: (False, "offline in test"))
+    monkeypatch.setattr(backend_main, "run_live_data_refresh", lambda *args, **kwargs: (False, "offline in test"))
     user_config = tmp_path / "data/backend/users/owner/config/watchlist.json"
     user_config.parent.mkdir(parents=True)
     user_config.write_text(
@@ -191,6 +191,41 @@ def test_authenticated_user_can_delete_own_watchlist_without_action_token(monkey
     assert [item["symbol"] for item in saved["items"]] == ["NVDA"]
 
 
+def test_watchlist_add_returns_config_before_live_refresh(monkeypatch: pytest.MonkeyPatch, tmp_path, client: TestClient) -> None:
+    enable_auth(monkeypatch)
+    monkeypatch.setenv("QUANT_ACTION_TOKEN", "test-action-token")
+    monkeypatch.setenv("QUANT_REQUIRE_ACTION_TOKEN", "true")
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    monkeypatch.setattr(backend_main, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(backend_main, "LIVE_DIR", tmp_path / "data/live")
+    monkeypatch.setattr(backend_main, "CONFIG_DIR", tmp_path / "data/config")
+    monkeypatch.setattr(backend_main, "WATCHLIST_CONFIG_PATH", tmp_path / "data/config/watchlist.json")
+    calls: list[tuple[int, str]] = []
+
+    def fake_refresh(timeout: int = 120, user_id: str = "") -> tuple[bool, str]:
+        calls.append((timeout, user_id))
+        return False, "offline in test"
+
+    monkeypatch.setattr(backend_main, "run_live_data_refresh", fake_refresh)
+    user_config = tmp_path / "data/backend/users/owner/config/watchlist.json"
+    user_config.parent.mkdir(parents=True)
+    user_config.write_text(json.dumps({"items": []}, ensure_ascii=False), encoding="utf-8")
+    login(client)
+
+    response = client.post(
+        "/api/v1/watchlist",
+        json={"symbol": "510050", "name": "上证50ETF", "sector": "ETF", "market_region": "cn"},
+    )
+
+    assert response.status_code == 202, response.text
+    payload = response.json()
+    assert payload["meta"]["config_status"] == "saved"
+    assert payload["meta"]["refresh_status"] == "scheduled"
+    assert [item["symbol"] for item in payload["data"]["items"]] == ["510050"]
+    assert calls == [(120, "owner")]
+
+
 def test_watchlist_refresh_failure_keeps_existing_user_live_cache(monkeypatch: pytest.MonkeyPatch, tmp_path, client: TestClient) -> None:
     enable_auth(monkeypatch)
     monkeypatch.setenv("QUANT_ACTION_TOKEN", "test-action-token")
@@ -201,7 +236,7 @@ def test_watchlist_refresh_failure_keeps_existing_user_live_cache(monkeypatch: p
     monkeypatch.setattr(backend_main, "LIVE_DIR", tmp_path / "data/live")
     monkeypatch.setattr(backend_main, "CONFIG_DIR", tmp_path / "data/config")
     monkeypatch.setattr(backend_main, "WATCHLIST_CONFIG_PATH", tmp_path / "data/config/watchlist.json")
-    monkeypatch.setattr(backend_main, "run_live_data_refresh", lambda: (False, "offline in test"))
+    monkeypatch.setattr(backend_main, "run_live_data_refresh", lambda *args, **kwargs: (False, "offline in test"))
     user_config = tmp_path / "data/backend/users/owner/config/watchlist.json"
     user_config.parent.mkdir(parents=True)
     user_config.write_text(
@@ -1140,7 +1175,7 @@ def test_watchlist_can_create_personal_holding(
     monkeypatch.setattr(backend_main, "WATCHLIST_CONFIG_PATH", tmp_path / "data/config/watchlist.json")
     monkeypatch.setattr(backend_main, "LIVE_DIR", tmp_path / "data/live")
     monkeypatch.setattr(backend_main, "ACTION_LOG_PATH", tmp_path / "data/backend/actions/action-log.jsonl")
-    monkeypatch.setattr(backend_main, "run_live_data_refresh", lambda: (False, "offline in test"))
+    monkeypatch.setattr(backend_main, "run_live_data_refresh", lambda *args, **kwargs: (False, "offline in test"))
 
     response = client.post(
         "/api/v1/watchlist",

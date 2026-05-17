@@ -1243,6 +1243,7 @@ function setWatchlistStatus(message, tone = "") {
 
 function watchlistRefreshMessage(payload, fallback = "已保存，行情稍后刷新") {
   const refreshError = payload?.data?.refresh_error || payload?.meta?.warning;
+  if (payload?.meta?.refresh_status === "scheduled") return fallback;
   if (payload?.data?.personal_holding) return payload.data.refresh_error ? fallback : "已保存到自选和个人持仓";
   return refreshError ? fallback : "";
 }

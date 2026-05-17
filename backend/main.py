@@ -23,7 +23,7 @@ from secrets import token_urlsafe
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
+from fastapi import BackgroundTasks, Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -3009,8 +3009,17 @@ def watchlist_mutation_payload(
     *,
     config_status: str,
     response: Response,
+    background_tasks: BackgroundTasks | None = None,
 ) -> dict[str, Any]:
     invalidate_watchlist_live_data()
+    if background_tasks is not None:
+        background_tasks.add_task(run_live_data_refresh, 120, current_user_id() if auth_required() and current_user() else "")
+        response.status_code = 202
+        return build_watchlist_config_payload(
+            items,
+            config_status=config_status,
+            refresh_status="scheduled",
+        )
     refreshed, detail = run_live_data_refresh()
     if not refreshed:
         response.status_code = 202
@@ -3037,10 +3046,11 @@ def watchlist_mutation_payload(
     return payload
 
 
-def run_live_data_refresh(timeout: int = 120) -> tuple[bool, str]:
+def run_live_data_refresh(timeout: int = 120, user_id: str = "") -> tuple[bool, str]:
     command = [sys.executable, str(ROOT / "scripts" / "update_live_data.py"), "--root", str(ROOT)]
-    if auth_required() and current_user():
-        command.extend(["--user", current_user_id()])
+    refresh_user = user_id or (current_user_id() if auth_required() and current_user() else "")
+    if refresh_user:
+        command.extend(["--user", refresh_user])
     try:
         result = subprocess.run(
             command,
@@ -4402,7 +4412,12 @@ def watchlist_config() -> dict[str, Any]:
 
 
 @app.post("/api/v1/watchlist")
-def add_watchlist_item(request: Request, response: Response, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+def add_watchlist_item(
+    request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
+    payload: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
     verify_action_permission(request)
     item = normalize_watchlist_item(payload)
     config = load_watchlist_config()
@@ -4411,7 +4426,7 @@ def add_watchlist_item(request: Request, response: Response, payload: dict[str, 
     merged = [row for row in items if (row.get("market_region"), row.get("symbol")) != item_key]
     merged.append(item)
     save_watchlist_items(merged)
-    mutation_payload = watchlist_mutation_payload(merged, config_status="saved", response=response)
+    mutation_payload = watchlist_mutation_payload(merged, config_status="saved", response=response, background_tasks=background_tasks)
     if payload.get("is_personal_holding") or payload.get("portfolio_type") == "personal":
         personal_row = upsert_personal_holding(watchlist_item_to_personal_holding(item, payload))
         mutation_payload.setdefault("data", {})["personal_holding"] = personal_row
@@ -4431,6 +4446,7 @@ def delete_watchlist_item(
     symbol: str,
     request: Request,
     response: Response,
+    background_tasks: BackgroundTasks,
     market_region: str | None = Query(default=None, alias="market"),
 ) -> dict[str, Any]:
     verify_action_permission(request)
@@ -4450,7 +4466,7 @@ def delete_watchlist_item(
     if len(kept) == len(items):
         raise HTTPException(status_code=404, detail=f"自选股不存在: {raw_symbol}")
     save_watchlist_items(kept)
-    return watchlist_mutation_payload(kept, config_status="deleted", response=response)
+    return watchlist_mutation_payload(kept, config_status="deleted", response=response, background_tasks=background_tasks)
 
 
 @app.get("/api/v1/strategies/picks")
