@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 import backend.main as backend_main
 import scripts.generate_khan_picks as generate_khan_picks
+import scripts.update_live_data as update_live_data
 from backend.main import ENDPOINTS, app
 
 
@@ -141,6 +142,53 @@ def test_auth_uses_user_scoped_data(monkeypatch: pytest.MonkeyPatch, tmp_path, c
     payload = response.json()
     assert payload["meta"]["storage_path"] == "data/backend/users/owner/portfolio/holdings.json"
     assert [row["symbol"] for row in payload["data"]["personal_holdings"]] == ["600519"]
+
+
+def test_authenticated_user_can_delete_own_watchlist_without_action_token(monkeypatch: pytest.MonkeyPatch, tmp_path, client: TestClient) -> None:
+    enable_auth(monkeypatch)
+    monkeypatch.setenv("QUANT_ACTION_TOKEN", "test-action-token")
+    monkeypatch.setenv("QUANT_REQUIRE_ACTION_TOKEN", "true")
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    monkeypatch.setattr(backend_main, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(backend_main, "LIVE_DIR", tmp_path / "data/live")
+    monkeypatch.setattr(backend_main, "CONFIG_DIR", tmp_path / "data/config")
+    monkeypatch.setattr(backend_main, "WATCHLIST_CONFIG_PATH", tmp_path / "data/config/watchlist.json")
+    monkeypatch.setattr(backend_main, "run_live_data_refresh", lambda: (False, "offline in test"))
+    user_config = tmp_path / "data/backend/users/owner/config/watchlist.json"
+    user_config.parent.mkdir(parents=True)
+    user_config.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {"symbol": "600519", "name": "贵州茅台", "sector": "消费", "market_region": "cn", "market": "SH"},
+                    {"symbol": "NVDA", "name": "NVIDIA", "sector": "科技", "market_region": "us", "provider_symbol": "NVDA"},
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    login(client)
+
+    response = client.delete("/api/v1/watchlist/600519?market=cn")
+
+    assert response.status_code == 202, response.text
+    payload = response.json()
+    assert payload["meta"]["config_status"] == "deleted"
+    assert payload["data"]["items"] == [
+        {
+            "symbol": "NVDA",
+            "name": "NVIDIA",
+            "logo": "N",
+            "sector": "科技",
+            "provider": "yahoo",
+            "market_region": "us",
+            "provider_symbol": "NVDA",
+        }
+    ]
+    saved = json.loads(user_config.read_text(encoding="utf-8"))
+    assert [item["symbol"] for item in saved["items"]] == ["NVDA"]
 
 
 def test_auth_keeps_joinquant_webhook_token_path_available(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
@@ -335,6 +383,102 @@ def test_khan_pick_generator_overwrites_old_pick_strategies(tmp_path) -> None:
     assert [item["symbol"] for item in saved["data"]["items"]] == ["002889"]
     assert all(item.get("strategy_id") == "khan-macd-volume" for item in saved["data"]["items"])
     assert all("tags" not in item for item in saved["data"]["items"])
+
+
+def test_retail_sentiment_uses_real_minute_volume_diff(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    rows = []
+    base_volume = 1_000
+    for index in range(12):
+        minute = 32 + index
+        rows.append(
+            {
+                "time": f"2026-05-15 09:{minute:02d}:00",
+                "close": 10 + index * 0.03,
+                "volume": base_volume + index * 100 + (3_000 if index == 5 else 0),
+            }
+        )
+    path = tmp_path / "minutes.json"
+    path.write_text(json.dumps({"symbol": "159915.XSHE", "name": "创业板ETF", "rows": rows}), encoding="utf-8")
+    monkeypatch.setattr(update_live_data, "ROOT", tmp_path)
+    monkeypatch.setattr(update_live_data, "CONFIG_DIR", tmp_path)
+    monkeypatch.setenv("RETAIL_SENTIMENT_MINUTE_PATH", str(path))
+
+    signal = update_live_data.build_real_sentiment_signal()
+
+    assert signal is not None
+    assert signal.source_quality == "real"
+    assert signal.data_source == "configured retail sentiment minute file"
+    assert "volume.diff()" in signal.surge_rule
+    assert signal.surge_count >= 1
+    assert signal.surge_events
+    assert signal.surge_events[0]["volume_increase"] > 100
+
+
+def test_user_live_generation_templates_fallback_to_root(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    root_backend = tmp_path / "data/backend"
+    for rel, data in {
+        "watchlist/list.json": {"groups": [{"name": "root", "items": []}]},
+        "market/heatmap.json": {"timeframe": "1D", "group_by": "sector", "updated_at": "old", "cells": []},
+        "market/etf-rankings.json": {"period": "1D", "items": []},
+        "market/sectors.json": {"period": "1D", "updated_at": "old", "sectors": []},
+    }.items():
+        path = root_backend / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"meta": {"version": "1.0", "source": "seed", "as_of": "2026-05-15T00:00:00+08:00", "trade_date": "2026-05-15", "timezone": "Asia/Hong_Kong", "market_session": "closed", "run_id": rel}, "data": data}), encoding="utf-8")
+    monkeypatch.setattr(update_live_data, "ROOT", tmp_path)
+    monkeypatch.setattr(update_live_data, "ROOT_BACKEND_DIR", root_backend)
+    monkeypatch.setattr(update_live_data, "BACKEND_DIR", root_backend / "users/owner")
+    monkeypatch.setattr(update_live_data, "LIVE_DIR", root_backend / "users/owner/live")
+    monkeypatch.setattr(update_live_data, "CONFIG_DIR", root_backend / "users/owner/config")
+
+    watchlist = update_live_data.build_watchlist_payload({}, [])
+    heatmap = update_live_data.build_heatmap_payload({})
+    etfs = update_live_data.build_etf_rankings_payload({})
+    sectors = update_live_data.build_sectors_payload([])
+
+    assert watchlist["data"]["groups"] == []
+    assert heatmap["data"]["cells"] == []
+    assert etfs["data"]["items"] == []
+    assert sectors["data"]["sectors"] == []
+
+
+def test_macro_payload_does_not_keep_sample_rows_when_sources_are_missing(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    macro_path = tmp_path / "data/backend/macro.json"
+    macro_path.parent.mkdir(parents=True)
+    macro_path.write_text(
+        json.dumps(
+            {
+                "meta": {"version": "1.0", "source": "seed", "as_of": "2026-05-12T00:00:00+08:00", "trade_date": "2026-05-12", "timezone": "Asia/Hong_Kong", "market_session": "closed", "run_id": "macro-seed"},
+                "data": {
+                    "summary": {"risk_preference_score": 66, "equity_bond_spread_pct": 3.84},
+                    "rates": [],
+                    "fx": [{"name": "美元指数", "value": 104.3, "data_source": "macro sample"}],
+                    "risk_assets": [{"name": "旧指数", "value": 1, "data_source": "macro sample"}],
+                    "calendar": [],
+                    "observations": [],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(update_live_data, "ROOT", tmp_path)
+    monkeypatch.setattr(update_live_data, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(update_live_data, "LIVE_DIR", tmp_path / "data/live")
+    monkeypatch.setattr(update_live_data, "CONFIG_DIR", tmp_path / "data/config")
+    monkeypatch.setattr(update_live_data, "fetch_wscn_realtime", lambda code: (_ for _ in ()).throw(RuntimeError("offline")))
+    monkeypatch.setattr(update_live_data, "fetch_sina_fx_usdcnh", lambda: (_ for _ in ()).throw(RuntimeError("offline")))
+    monkeypatch.setattr(update_live_data, "fetch_chinabond_treasury_curve", lambda: {})
+    monkeypatch.setattr(update_live_data, "fetch_eastmoney_index_metrics", lambda: (_ for _ in ()).throw(RuntimeError("offline")))
+    monkeypatch.setattr(update_live_data, "fetch_sina_index_metrics", lambda: {})
+
+    payload = update_live_data.build_macro_payload()
+    text = json.dumps(payload, ensure_ascii=False)
+
+    assert "macro sample" not in text
+    assert payload["data"]["fx"] == [{"name": "USD/CNH", "value": None, "change_pct": None, "data_source": "unavailable", "as_of": payload["data"]["fx"][0]["as_of"]}]
+    assert payload["data"]["risk_assets"] == []
+    assert payload["data"]["summary"]["risk_preference_score"] is None
 
 
 @pytest.mark.parametrize(

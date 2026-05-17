@@ -3130,6 +3130,8 @@ def get_payload(path: str) -> dict[str, Any]:
 
 
 def verify_action_permission(request: Request) -> None:
+    if auth_required() and current_user():
+        return
     expected = os.getenv("QUANT_ACTION_TOKEN", "").strip()
     if not expected and env_flag("QUANT_REQUIRE_ACTION_TOKEN"):
         raise HTTPException(status_code=403, detail="权限不足：服务端未配置操作令牌")

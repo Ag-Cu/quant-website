@@ -201,6 +201,7 @@ class SentimentSignal:
     volatility_formula: str
     surge_rule: str
     trend_value: float
+    surge_events: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -416,6 +417,13 @@ def eastmoney_market_id(symbol: str, market: str | None = None) -> str:
 
 
 def sina_symbol(symbol: str, market: str | None = None) -> str:
+    symbol = str(symbol or "").strip().upper()
+    if "." in symbol:
+        left, right = symbol.split(".", 1)
+        if right in {"XSHE", "SZ", "SZSE"}:
+            return f"sz{left}"
+        if right in {"XSHG", "SH", "SSE"}:
+            return f"sh{left}"
     if market:
         prefix = "sh" if market.upper() in {"SH", "SSE", "XSHG"} else "sz"
     else:
@@ -845,7 +853,7 @@ def fetch_market_width_source_from_zip(end_date: str | None = None, count: int =
 
 
 def build_watchlist_payload(quotes: dict[str, QuoteRecord], watchlist_config: list[dict[str, Any]]) -> dict[str, Any]:
-    payload = load_json(BACKEND_DIR / "watchlist/list.json")
+    payload = load_json_with_fallback(BACKEND_DIR / "watchlist/list.json")
     grouped: dict[str, list[dict[str, Any]]] = {}
     for item in watchlist_config:
         quote = quotes.get(item["symbol"])
@@ -894,7 +902,7 @@ def heatmap_weight(quote: QuoteRecord) -> int:
 
 
 def build_heatmap_payload(quotes: dict[str, QuoteRecord]) -> dict[str, Any]:
-    payload = load_json(BACKEND_DIR / "market/heatmap.json")
+    payload = load_json_with_fallback(BACKEND_DIR / "market/heatmap.json")
     cells = []
     for item in HEATMAP_CONFIG:
         quote = quotes.get(item["symbol"])
@@ -939,7 +947,7 @@ def build_heatmap_payload(quotes: dict[str, QuoteRecord]) -> dict[str, Any]:
 
 
 def build_etf_rankings_payload(quotes: dict[str, QuoteRecord]) -> dict[str, Any]:
-    payload = load_json(BACKEND_DIR / "market/etf-rankings.json")
+    payload = load_json_with_fallback(BACKEND_DIR / "market/etf-rankings.json")
     rows_by_period: dict[str, list[dict[str, Any]]] = {period: [] for period in ["1D", "5D", "1M", "YTD"]}
     for config in ETF_CONFIG:
         quote = quotes.get(config["symbol"])
@@ -974,7 +982,7 @@ def build_etf_rankings_payload(quotes: dict[str, QuoteRecord]) -> dict[str, Any]
 
 
 def build_sectors_payload(records: list[BoardRecord]) -> dict[str, Any]:
-    payload = load_json(BACKEND_DIR / "market/sectors.json")
+    payload = load_json_with_fallback(BACKEND_DIR / "market/sectors.json")
     sorted_records = sorted(records, key=lambda record: record.change_pct, reverse=True)[:10]
     sectors = []
     for index, record in enumerate(sorted_records, 1):
@@ -1294,8 +1302,8 @@ def build_breadth_payload(source: BreadthSource | list[BoardRecord] | None = Non
         "above_ma20_pct": overall,
     }
     data["metrics"] = [
-        {"name": "总体行业热度", "value": overall, "unit": "%", "detail": "行业上涨家数比例均值"},
-        {"name": "上涨家数占比", "value": up_ratio, "unit": "%", "detail": "全部行业成分汇总"},
+        {"name": "总体行业热度", "value": overall, "unit": "%", "detail": "行业宽度均值"},
+        {"name": "MA20 上方占比", "value": up_ratio, "unit": "%", "detail": "全部行业成分汇总"},
         {"name": "强势行业数量", "value": sum(1 for value in widths if value >= 70), "unit": "个", "detail": "宽度 >= 70"},
         {"name": "弱势行业数量", "value": sum(1 for value in widths if value < 40), "unit": "个", "detail": "宽度 < 40"},
     ]
@@ -1506,6 +1514,41 @@ def normalize_sentiment_minute_row(row: dict[str, Any], default_symbol: str, def
     )
 
 
+def fetch_sina_sentiment_minutes(symbol: str, name: str, limit: int = 320) -> tuple[list[SentimentMinuteRecord], str, str, str]:
+    sina_code = sina_symbol(symbol)
+    params = {
+        "symbol": sina_code,
+        "scale": "1",
+        "ma": "no",
+        "datalen": str(limit),
+    }
+    url = f"{SINA_KLINE_URL}?{urllib.parse.urlencode(params)}"
+    data = http_json(url, timeout=18)
+    rows = data.get("result", {}).get("data", [])
+    records: list[SentimentMinuteRecord] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        record = normalize_sentiment_minute_row(
+            {
+                "time": row.get("day"),
+                "close": row.get("close"),
+                "volume": row.get("volume"),
+                "symbol": symbol,
+                "name": name,
+            },
+            symbol,
+            name,
+        )
+        if record:
+            records.append(record)
+    if not records:
+        raise RuntimeError(f"新浪 1 分钟 K 线无有效记录: {sina_code}")
+    latest_day = max(row.timestamp.date() for row in records)
+    same_day = [row for row in records if row.timestamp.date() == latest_day]
+    return same_day, url, "sina cn 1m kline", symbol
+
+
 def parse_sentiment_minute_text(text: str, default_symbol: str, default_name: str) -> list[SentimentMinuteRecord]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
@@ -1551,7 +1594,7 @@ def load_sentiment_minute_records() -> tuple[list[SentimentMinuteRecord], str, s
         if not path.is_absolute():
             path = ROOT / path
         if not path.exists():
-            return [], str(path.relative_to(ROOT) if path.is_relative_to(ROOT) else path), "未配置真实分钟源", default_symbol
+            return fetch_sina_sentiment_minutes(default_symbol, default_name)
         source_text = path.read_text(encoding="utf-8")
         source_file = str(path.relative_to(ROOT) if path.is_relative_to(ROOT) else path)
         data_source = "configured retail sentiment minute file"
@@ -1581,31 +1624,40 @@ def build_real_sentiment_signal() -> SentimentSignal | None:
     records = sorted((row for row in records if not is_excluded_sentiment_minute(row.timestamp)), key=lambda row: row.timestamp)
     if len(records) < BRILLIANT_WINDOW_MINUTES + 3:
         return None
-    volumes = [row.volume for row in records]
-    mean_volume = sum(volumes) / len(volumes)
-    variance = sum((value - mean_volume) ** 2 for value in volumes) / max(1, len(volumes) - 1)
-    std_volume = math.sqrt(variance)
-    surge_threshold = mean_volume + std_volume
-    surge_indexes = [index for index, row in enumerate(records) if row.volume > surge_threshold and index + BRILLIANT_WINDOW_MINUTES <= len(records)]
+    volume_increases = [None, *[right.volume - left.volume for left, right in zip(records, records[1:])]]
+    valid_increases = [value for value in volume_increases if value is not None]
+    if len(valid_increases) < BRILLIANT_WINDOW_MINUTES:
+        return None
+    mean_increase = sum(valid_increases) / len(valid_increases)
+    variance = sum((value - mean_increase) ** 2 for value in valid_increases) / max(1, len(valid_increases) - 1)
+    std_increase = math.sqrt(variance)
+    surge_threshold = mean_increase + std_increase
+    returns_by_index = [0.0]
+    for left, right in zip(records, records[1:]):
+        returns_by_index.append((right.close - left.close) * 100.0 / left.close if left.close else 0.0)
+    surge_indexes = [
+        index
+        for index, increase in enumerate(volume_increases)
+        if increase is not None and increase > surge_threshold and index + BRILLIANT_WINDOW_MINUTES <= len(records)
+    ]
     vols: list[float] = []
     surge_events: list[dict[str, Any]] = []
     for index in surge_indexes:
         window = records[index:index + BRILLIANT_WINDOW_MINUTES]
-        returns: list[float] = []
-        for left, right in zip(window, window[1:]):
-            if left.close:
-                returns.append((right.close - left.close) * 100.0 / left.close)
+        returns = returns_by_index[index:index + BRILLIANT_WINDOW_MINUTES]
         if not returns:
             continue
         mean_return = sum(returns) / len(returns)
         return_std = math.sqrt(sum((value - mean_return) ** 2 for value in returns) / max(1, len(returns) - 1))
         vols.append(return_std)
         first = records[index]
-        previous_volume = records[index - 1].volume if index else mean_volume
+        previous_volume = records[index - 1].volume if index else first.volume
+        volume_increase = volume_increases[index] or 0
         surge_events.append(
             {
                 "time": first.timestamp.strftime("%H:%M"),
                 "volume_increase_ratio": round(first.volume / max(previous_volume, 1), 2),
+                "volume_increase": round(volume_increase, 2),
                 "return_std": round(return_std, 4),
                 "price_change_pct": round((window[-1].close - first.close) * 100.0 / first.close, 4) if first.close else 0,
             }
@@ -1634,41 +1686,36 @@ def build_real_sentiment_signal() -> SentimentSignal | None:
         time_window=f"{first.timestamp.strftime('%H:%M')} - {latest.timestamp.strftime('%H:%M')}",
         excluded_minutes=list(SENTIMENT_EXCLUDED_MINUTES),
         brilliant_window_minutes=BRILLIANT_WINDOW_MINUTES,
-        volatility_formula="成交量激增分钟及后续 4 分钟的 1 分钟收益率标准差均值",
-        surge_rule="volume > mean(volume) + std(volume)，并排除开盘/午后首分钟/尾盘集合竞价分钟",
+        volatility_formula="成交量增量激增分钟及后续 4 分钟的 1 分钟收益率标准差均值",
+        surge_rule="volume.diff() > mean(volume.diff()) + std(volume.diff())，并排除开盘/午后首分钟/尾盘集合竞价分钟",
         trend_value=daily_brilliant_vol,
+        surge_events=tuple(surge_events[-80:]),
     )
 
 
 def build_proxy_sentiment_signal(summary: dict[str, Any], industry_width: list[dict[str, Any]]) -> SentimentSignal:
-    overall = normalize_number(summary.get("market_width_pct"), 50)
-    strong_count = sum(1 for row in industry_width if normalize_number(row.get("width_pct")) >= 70)
-    avg_change = sum(normalize_number(row.get("change_pct")) for row in industry_width) / max(1, len(industry_width))
-    temperature = round(max(0, min(100, overall * 0.72 + strong_count * 1.5 + max(-5, min(5, avg_change)) * 2 + 18)))
-    sentiment_value = round(max(0.02, min(1.1, temperature / 650)), 4)
     warning_line = SENTIMENT_WARNING_LINE
-    status = "预警" if sentiment_value >= warning_line else "淡定"
     return SentimentSignal(
-        source_quality="proxy",
-        source_name="行业/指数宽度散户情绪代理指标",
-        data_source="market breadth proxy from data/live/breadth.json",
+        source_quality="unavailable",
+        source_name="真实 1 分钟耀眼波动率暂不可用",
+        data_source="unavailable",
         source_file="scripts/update_live_data.py",
-        symbol="BREADTH_PROXY",
-        name="代理指标：全市场宽度热度",
-        close=overall,
-        sentiment_value=sentiment_value,
-        temperature=temperature,
-        surge_count=strong_count,
-        last_surge_time=now_hk().strftime("%H:%M"),
-        status=status,
+        symbol=os.getenv("RETAIL_SENTIMENT_SYMBOL", "159915.XSHE"),
+        name=os.getenv("RETAIL_SENTIMENT_NAME", "创业板ETF"),
+        close=None,
+        sentiment_value=0,
+        temperature=0,
+        surge_count=0,
+        last_surge_time=None,
+        status="不可用",
         warning_line=warning_line,
-        signal_detail="真实散户情绪/耀眼波动率分钟源不可用，当前为全市场宽度代理指标。",
-        time_window="daily snapshot",
+        signal_detail="真实分钟 K 线源不可用，页面停止使用市场宽度代理散户情绪。",
+        time_window="--",
         excluded_minutes=[],
         brilliant_window_minutes=None,
-        volatility_formula="sentiment_value = clipped((market_width * 0.72 + strong_industries * 1.5 + avg_industry_change * 2 + 18) / 650)",
-        surge_rule="强势行业/指数桶数量（宽度 >= 70）替代分钟成交激增次数",
-        trend_value=sentiment_value,
+        volatility_formula="unavailable",
+        surge_rule="需要真实 1 分钟 close/volume 后才能计算 volume.diff() 激增。",
+        trend_value=0,
     )
 
 
@@ -1676,12 +1723,10 @@ def build_sentiment_payload(breadth: dict[str, Any] | None = None) -> dict[str, 
     payload = base_payload("sentiment")
     if breadth is None:
         breadth = build_breadth_payload()
-    summary = breadth.get("data", {}).get("summary", {})
     industry_width = breadth.get("data", {}).get("industry_width", [])
-
     signal = build_real_sentiment_signal()
     if signal is None:
-        signal = build_proxy_sentiment_signal(summary, industry_width)
+        signal = build_proxy_sentiment_signal({}, [])
     today = trade_date()
 
     data = payload.setdefault("data", {})
@@ -1714,7 +1759,7 @@ def build_sentiment_payload(breadth: dict[str, Any] | None = None) -> dict[str, 
     }
     data["latest_snapshot"] = {
         "updated_at": iso_now(),
-        "update_frequency": "分钟源自动更新" if signal.source_quality == "real" else "真实源不可用时降级更新",
+        "update_frequency": "分钟源自动更新" if signal.source_quality == "real" else "真实源不可用",
         "symbol": signal.symbol,
         "name": signal.name,
         "sentiment_value": signal.sentiment_value,
@@ -1737,6 +1782,7 @@ def build_sentiment_payload(breadth: dict[str, Any] | None = None) -> dict[str, 
         "source_quality": signal.source_quality,
     }
     data["sentiment_trend"] = trend
+    data["surge_events"] = list(signal.surge_events)
     if signal.source_quality == "real":
         data["gauges"] = [
             {"name": "耀眼波动率", "value": min(100, signal.sentiment_value * 650), "detail": f"预警线 {signal.warning_line:.2f}"},
@@ -1745,13 +1791,11 @@ def build_sentiment_payload(breadth: dict[str, Any] | None = None) -> dict[str, 
             {"name": "数据质量", "value": 100, "detail": "真实分钟源"},
         ]
     else:
-        overall = normalize_number(summary.get("market_width_pct"), 50)
-        avg_change = sum(normalize_number(row.get("change_pct")) for row in industry_width) / max(1, len(industry_width))
         data["gauges"] = [
-            {"name": "总体行业/指数热度", "value": overall, "detail": "来自市场宽度 live 数据"},
-            {"name": "强势行业/指数数量", "value": min(100, signal.surge_count * 4), "detail": f"{signal.surge_count} 个宽度 >= 70"},
-            {"name": "平均涨跌", "value": round(max(0, min(100, 50 + avg_change * 10))), "detail": f"{avg_change:.2f}%"},
-            {"name": "数据质量", "value": 35, "detail": "代理指标"},
+            {"name": "真实分钟源", "value": 0, "detail": "不可用"},
+            {"name": "成交激增次数", "value": 0, "detail": "未计算"},
+            {"name": "耀眼波动率", "value": 0, "detail": "未计算"},
+            {"name": "数据质量", "value": 0, "detail": "无代理替代"},
         ]
     top_topics = sorted(industry_width, key=lambda row: normalize_number(row.get("width_pct")), reverse=True)[:8]
     data["topics"] = [
@@ -1766,7 +1810,7 @@ def build_sentiment_payload(breadth: dict[str, Any] | None = None) -> dict[str, 
     data["warnings"] = [
         {
             "level": "warning" if signal.sentiment_value >= signal.warning_line else "info",
-            "title": "情绪指标已自动更新" if signal.source_quality == "real" else "当前为代理指标",
+            "title": "情绪指标已自动更新" if signal.source_quality == "real" else "真实分钟源不可用",
             "detail": f"当前情绪值 {signal.sentiment_value:.4f}，预警线 {signal.warning_line:.2f}。{signal.signal_detail}",
         }
     ]
@@ -1796,6 +1840,46 @@ def yahoo_latest_detail(symbol: str) -> dict[str, Any]:
         "change_pct": change_pct,
         "data_source": "Yahoo Finance chart",
         "as_of": parse_hk_datetime(meta.get("regularMarketTime")),
+    }
+
+
+def fetch_wscn_realtime(prod_code: str) -> dict[str, Any]:
+    params = {
+        "fields": "prod_name,last_px,px_change,px_change_rate,update_time",
+        "prod_code": prod_code,
+    }
+    data = http_json(f"https://api-ddc-wscn.awtmt.com/market/real?{urllib.parse.urlencode(params)}", timeout=18)
+    snapshot = data.get("data", {}).get("snapshot", {}).get(prod_code)
+    fields = data.get("data", {}).get("fields", [])
+    if not isinstance(snapshot, list) or not isinstance(fields, list):
+        raise RuntimeError(f"WallstreetCN realtime quote missing snapshot for {prod_code}")
+    row = {str(field): snapshot[index] for index, field in enumerate(fields) if index < len(snapshot)}
+    return {
+        "name": row.get("prod_name") or prod_code,
+        "value": optional_number(row.get("last_px")),
+        "change": optional_number(row.get("px_change")),
+        "change_pct": optional_number(row.get("px_change_rate")),
+        "data_source": "华尔街见闻实时行情",
+        "as_of": parse_hk_datetime(row.get("update_time")),
+    }
+
+
+def fetch_sina_fx_usdcnh() -> dict[str, Any]:
+    text = http_text(SINA_QUOTE_URL.format(symbols="fx_susdcnh"), encoding="gbk")
+    match = re.search(r'var hq_str_fx_susdcnh="([^"]*)";', text)
+    if not match:
+        raise RuntimeError("Sina USD/CNH quote not found")
+    fields = match.group(1).split(",")
+    if len(fields) < 13:
+        raise RuntimeError("Sina USD/CNH quote has unexpected fields")
+    as_of = f"{fields[17]}T{fields[0]}+08:00" if len(fields) > 17 and fields[17] and fields[0] else iso_now()
+    return {
+        "name": fields[9] or "USD/CNH",
+        "value": optional_number(fields[1]) or optional_number(fields[5]) or optional_number(fields[8]),
+        "change": optional_number(fields[11]),
+        "change_pct": (optional_number(fields[12]) or 0) * 100 if optional_number(fields[12]) is not None else None,
+        "data_source": "新浪财经外汇行情",
+        "as_of": as_of,
     }
 
 
@@ -1859,6 +1943,45 @@ def fetch_eastmoney_index_metrics() -> dict[str, dict[str, Any]]:
             "pe_ttm": optional_number(row.get("f162")),
             "pb": optional_number(row.get("f167")),
             "data_source": "东方财富行情中心",
+            "as_of": iso_now(),
+        }
+    return metrics
+
+
+def fetch_sina_index_metrics() -> dict[str, dict[str, Any]]:
+    configs = {
+        "CSI300": {"symbol": "s_sh000300", "name": "沪深300"},
+        "CSI1000": {"symbol": "s_sh000852", "name": "中证1000"},
+        "CHINEXT": {"symbol": "s_sz399006", "name": "创业板指"},
+        "HSTECH": {"symbol": "rt_hkHSTECH", "name": "恒生科技"},
+    }
+    text = http_text(SINA_QUOTE_URL.format(symbols=",".join(item["symbol"] for item in configs.values())), encoding="gbk")
+    metrics: dict[str, dict[str, Any]] = {}
+    for key, config in configs.items():
+        match = re.search(rf'var hq_str_{re.escape(config["symbol"])}="([^"]*)";', text)
+        if not match:
+            continue
+        fields = match.group(1).split(",")
+        if key == "HSTECH":
+            if len(fields) < 19:
+                continue
+            metrics[key] = {
+                "name": fields[1] or config["name"],
+                "value": optional_number(fields[6]) or optional_number(fields[3]),
+                "change_pct": optional_number(fields[8]),
+                "previous_close": optional_number(fields[3]),
+                "data_source": "新浪财经港股实时行情",
+                "as_of": f"{fields[17].replace('/', '-')}T{fields[18]}+08:00" if len(fields) > 18 and fields[17] and fields[18] else iso_now(),
+            }
+            continue
+        if len(fields) < 4:
+            continue
+        metrics[key] = {
+            "name": fields[0] or config["name"],
+            "value": optional_number(fields[1]),
+            "change_pct": optional_number(fields[3]),
+            "previous_close": None,
+            "data_source": "新浪财经指数实时行情",
             "as_of": iso_now(),
         }
     return metrics
@@ -2103,28 +2226,22 @@ def build_macro_payload() -> dict[str, Any]:
     ]
 
     try:
-        usd_cnh_quote = yahoo_latest_detail("USDCNH=X")
+        usd_cnh_quote = fetch_wscn_realtime("USDCNH.OTC")
     except Exception as exc:
-        print(f"warning: yahoo macro fetch failed for USDCNH=X: {exc}")
-        usd_cnh_quote = {
-            "value": previous_summary.get("usd_cnh"),
-            "change_pct": None,
-            "data_source": "previous macro snapshot",
-            "as_of": payload.get("meta", {}).get("as_of") or iso_now(),
-        }
-        observations.append({"level": "warning", "title": "USD/CNH 降级沿用上一值", "detail": f"Yahoo Finance 图表接口不可用：{exc}"})
+        print(f"warning: wscn macro fetch failed for USDCNH.OTC: {exc}")
+        try:
+            usd_cnh_quote = fetch_sina_fx_usdcnh()
+        except Exception as sina_exc:
+            print(f"warning: sina macro fetch failed for fx_susdcnh: {sina_exc}")
+            usd_cnh_quote = {"value": None, "change_pct": None, "data_source": "unavailable", "as_of": iso_now()}
+            observations.append({"level": "warning", "title": "USD/CNH 暂不可用", "detail": f"华尔街见闻与新浪外汇接口均不可用：{sina_exc}"})
 
     try:
-        us10y_quote = yahoo_latest_detail("^TNX")
+        us10y_quote = fetch_wscn_realtime("US10YR.OTC")
     except Exception as exc:
-        print(f"warning: yahoo macro fetch failed for ^TNX: {exc}")
-        us10y_quote = {
-            "value": previous_summary.get("us_ten_year_yield_pct"),
-            "change_pct": None,
-            "data_source": "previous macro snapshot",
-            "as_of": payload.get("meta", {}).get("as_of") or iso_now(),
-        }
-        observations.append({"level": "warning", "title": "美国 10Y 降级沿用上一值", "detail": f"Yahoo Finance 图表接口不可用：{exc}"})
+        print(f"warning: wscn macro fetch failed for US10YR.OTC: {exc}")
+        us10y_quote = {"value": None, "change_pct": None, "data_source": "unavailable", "as_of": iso_now()}
+        observations.append({"level": "warning", "title": "美国 10Y 暂不可用", "detail": f"华尔街见闻实时行情接口不可用：{exc}"})
     if us10y_quote.get("value") is not None:
         # Yahoo ^TNX is quoted in yield percentage points (e.g. 44.7 = 4.47%).
         raw_us10y = normalize_number(us10y_quote.get("value"))
@@ -2135,12 +2252,12 @@ def build_macro_payload() -> dict[str, Any]:
     except Exception as exc:
         print(f"warning: chinabond macro fetch failed: {exc}")
         china_curve = {}
-        observations.append({"level": "warning", "title": "中国国债收益率降级沿用上一值", "detail": f"财政部-中国国债收益率曲线/中债估值接口不可用：{exc}"})
+        observations.append({"level": "warning", "title": "中国国债收益率暂不可用", "detail": f"财政部-中国国债收益率曲线/中债估值接口不可用：{exc}"})
     china10y_quote = china_curve.get("10年") or {
-        "value": previous_summary.get("ten_year_yield_pct"),
+        "value": None,
         "change_bp": None,
-        "data_source": "previous macro snapshot",
-        "as_of": payload.get("meta", {}).get("as_of") or iso_now(),
+        "data_source": "unavailable",
+        "as_of": iso_now(),
     }
     china1y_quote = china_curve.get("1年")
     china10y = optional_number(china10y_quote.get("value"))
@@ -2151,24 +2268,16 @@ def build_macro_payload() -> dict[str, Any]:
         index_metrics = fetch_eastmoney_index_metrics()
     except Exception as exc:
         print(f"warning: eastmoney macro index fetch failed: {exc}")
-        index_metrics = {}
-        observations.append({"level": "warning", "title": "权益估值/指数降级沿用上一值", "detail": f"东方财富指数行情接口不可用：{exc}"})
-
-    try:
-        hstech_quote = yahoo_latest_detail("^HSTECH")
-    except Exception as exc:
-        print(f"warning: yahoo macro fetch failed for ^HSTECH: {exc}")
-        hstech_quote = {"value": None, "change_pct": None, "data_source": "Yahoo Finance chart", "as_of": iso_now()}
-        observations.append({"level": "warning", "title": "恒生科技指数暂不可用", "detail": f"Yahoo Finance 图表接口不可用：{exc}"})
+        index_metrics = fetch_sina_index_metrics()
+        observations.append({"level": "warning", "title": "权益估值降级为新浪指数行情", "detail": f"东方财富指数行情接口不可用：{exc}；指数点位/涨跌使用新浪实时行情，PE(TTM) 不可用。"})
 
     equity_bond_spread = compute_equity_bond_spread_pct(index_metrics, china10y)
     if equity_bond_spread is None:
-        equity_bond_spread = optional_number(previous_summary.get("equity_bond_spread_pct"))
-        observations.append({"level": "warning", "title": "股债利差降级沿用上一值", "detail": "缺少沪深300 PE(TTM) 或中国 10Y 收益率，无法按 100/PE_TTM-10Y 公式重算。"})
+        observations.append({"level": "warning", "title": "股债利差暂不可用", "detail": "缺少沪深300 PE(TTM) 或中国 10Y 收益率，无法按 100/PE_TTM-10Y 公式重算。"})
     risk_score = compute_risk_preference_score(index_metrics, equity_bond_spread, optional_number(china10y_quote.get("change_bp")), usd_cnh_quote.get("change_pct"))
     if risk_score is None:
-        risk_score = optional_number(previous_summary.get("risk_preference_score")) or 50
-        observations.append({"level": "warning", "title": "风险偏好分降级沿用上一值", "detail": "缺少指数涨跌或股债利差，无法按可复现公式重算。"})
+        risk_score = None
+        observations.append({"level": "warning", "title": "风险偏好分暂不可用", "detail": "缺少指数涨跌或股债利差，无法按可复现公式重算。"})
 
     risk_assets = []
     for key in ("CSI300", "CSI1000", "CHINEXT"):
@@ -2183,19 +2292,15 @@ def build_macro_payload() -> dict[str, Any]:
                     "as_of": metric.get("as_of"),
                 }
             )
-    if hstech_quote.get("value") is not None:
-        risk_assets.insert(2, {"name": "恒生科技", "value": hstech_quote.get("value"), "change_pct": hstech_quote.get("change_pct"), "data_source": hstech_quote.get("data_source"), "as_of": hstech_quote.get("as_of")})
-    if not risk_assets:
-        risk_assets = [
-            enrich_macro_row(row, "previous macro snapshot", payload.get("meta", {}).get("as_of") or iso_now())
-            for row in data.get("risk_assets", [])
-        ]
+    hstech_quote = index_metrics.get("HSTECH")
+    if hstech_quote and hstech_quote.get("value") is not None:
+        risk_assets.insert(2, {"name": hstech_quote.get("name") or "恒生科技", "value": hstech_quote.get("value"), "change_pct": hstech_quote.get("change_pct"), "data_source": hstech_quote.get("data_source"), "as_of": hstech_quote.get("as_of")})
 
     data["summary"] = {
         **previous_summary,
         "risk_preference_score": risk_score,
         "risk_preference_formula": "clip(50 + 6*CSI300_1D% + 4*CSI1000_1D% + 5*(equity_bond_spread_pct-3.0) - 0.15*CN10Y_daily_bp - 3*USDCNH_1D%)",
-        "label": "偏强" if risk_score >= 70 else "中性偏强" if risk_score >= 60 else "中性" if risk_score >= 40 else "偏弱",
+        "label": "不可用" if risk_score is None else "偏强" if risk_score >= 70 else "中性偏强" if risk_score >= 60 else "中性" if risk_score >= 40 else "偏弱",
         "ten_year_yield_pct": china10y,
         "us_ten_year_yield_pct": us10y,
         "usd_cnh": usd_cnh_quote.get("value"),
@@ -2206,12 +2311,11 @@ def build_macro_payload() -> dict[str, Any]:
         {"name": "中国 10Y 国债", "value": china10y, "unit": "%", "change_bp": china10y_quote.get("change_bp"), "data_source": china10y_quote.get("data_source"), "as_of": china10y_quote.get("as_of")},
         *([{"name": "中国 1Y 国债", "value": china1y_quote.get("value"), "unit": "%", "change_bp": china1y_quote.get("change_bp"), "data_source": china1y_quote.get("data_source"), "as_of": china1y_quote.get("as_of")}] if china1y_quote else []),
         {"name": "美国 10Y 国债", "value": us10y, "unit": "%", "change_bp": None if us10y_quote.get("change_pct") is None else round(us10y_quote["change_pct"] * 10, 1), "data_source": us10y_quote.get("data_source"), "as_of": us10y_quote.get("as_of")},
-        {"name": "中美 10Y 利差", "value": spread, "unit": "bp", "change_bp": None, "data_source": "ChinaBond + Yahoo Finance chart", "as_of": max(str(china10y_quote.get("as_of") or ""), str(us10y_quote.get("as_of") or ""))},
+        {"name": "中美 10Y 利差", "value": spread, "unit": "bp", "change_bp": None, "data_source": "ChinaBond + 华尔街见闻实时行情", "as_of": max(str(china10y_quote.get("as_of") or ""), str(us10y_quote.get("as_of") or ""))},
     ]
     data["fx"] = [
         {"name": "USD/CNH", "value": usd_cnh_quote.get("value"), "change_pct": usd_cnh_quote.get("change_pct"), "data_source": usd_cnh_quote.get("data_source"), "as_of": usd_cnh_quote.get("as_of")},
-        *[enrich_macro_row(row, "previous macro snapshot", payload.get("meta", {}).get("as_of") or iso_now()) for row in data.get("fx", []) if row.get("name") != "USD/CNH"],
-    ][:4]
+    ]
     data["risk_assets"] = risk_assets[:4]
     data["observations"] = observations
     update_meta(payload, "live-macro")
