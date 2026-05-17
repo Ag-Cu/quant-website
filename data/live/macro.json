@@ -18,7 +18,10 @@
       "usd_cnh": 6.783,
       "equity_bond_spread_pct": 3.84,
       "risk_preference_formula": "clip(50 + 6*CSI300_1D% + 4*CSI1000_1D% + 5*(equity_bond_spread_pct-3.0) - 0.15*CN10Y_daily_bp - 3*USDCNH_1D%)",
-      "equity_bond_spread_formula": "CSI300 earnings yield (100 / PE_TTM) - ChinaBond 10Y treasury yield"
+      "equity_bond_spread_formula": "CSI300 earnings yield (100 / PE_TTM) - ChinaBond 10Y treasury yield",
+      "one_year_yield_pct": 1.21,
+      "china_term_spread_bp": 56.0,
+      "china_us_spread_bp": -282.4
     },
     "rates": [
       {
@@ -156,6 +159,104 @@
         "level": "warning",
         "title": "风险偏好分降级沿用上一值",
         "detail": "缺少指数涨跌或股债利差，无法按可复现公式重算。"
+      }
+    ],
+    "indicators": [
+      {
+        "category": "利率",
+        "name": "中国 10Y 国债",
+        "value": 1.77,
+        "unit": "%",
+        "decimals": 2,
+        "display_value": "1.77%",
+        "change_text": "+0.7bp",
+        "tone": "negative",
+        "data_source": "财政部-中国国债收益率曲线/中债估值(CCDC)",
+        "as_of": "2026-05-17"
+      },
+      {
+        "category": "利率",
+        "name": "中国期限利差 10Y-1Y",
+        "value": 56.0,
+        "unit": "bp",
+        "decimals": 1,
+        "display_value": "56.0bp",
+        "change_text": "",
+        "tone": "",
+        "data_source": "财政部-中国国债收益率曲线/中债估值(CCDC)",
+        "as_of": "2026-05-17"
+      },
+      {
+        "category": "利率",
+        "name": "美国 10Y 国债",
+        "value": 4.594,
+        "unit": "%",
+        "decimals": 2,
+        "display_value": "4.59%",
+        "change_text": "",
+        "tone": "",
+        "data_source": "华尔街见闻实时行情",
+        "as_of": "2026-05-16T04:59:51+08:00"
+      },
+      {
+        "category": "利率",
+        "name": "中美 10Y 利差",
+        "value": -282.4,
+        "unit": "bp",
+        "decimals": 1,
+        "display_value": "-282.4bp",
+        "change_text": "",
+        "tone": "",
+        "data_source": "ChinaBond + 华尔街见闻实时行情",
+        "as_of": "2026-05-17"
+      },
+      {
+        "category": "汇率",
+        "name": "USD/CNH",
+        "value": 6.8122,
+        "unit": "",
+        "decimals": 4,
+        "display_value": "6.8122",
+        "change_text": "+0.38%",
+        "tone": "negative",
+        "data_source": "华尔街见闻实时行情",
+        "as_of": "2026-05-16T04:59:26+08:00"
+      },
+      {
+        "category": "权益",
+        "name": "沪深300涨跌",
+        "value": -1.12,
+        "unit": "%",
+        "decimals": 2,
+        "display_value": "-1.12%",
+        "change_text": "",
+        "tone": "negative",
+        "data_source": "新浪财经指数实时行情",
+        "as_of": "2026-05-17T22:18:30+08:00"
+      },
+      {
+        "category": "权益",
+        "name": "中证1000涨跌",
+        "value": -1.09,
+        "unit": "%",
+        "decimals": 2,
+        "display_value": "-1.09%",
+        "change_text": "",
+        "tone": "negative",
+        "data_source": "新浪财经指数实时行情",
+        "as_of": "2026-05-17T22:18:30+08:00"
+      },
+      {
+        "category": "权益",
+        "name": "创业板指涨跌",
+        "value": -0.56,
+        "unit": "%",
+        "decimals": 2,
+        "display_value": "-0.56%",
+        "change_text": "",
+        "tone": "negative",
+        "data_source": "新浪财经指数实时行情",
+        "as_of": "2026-05-17T22:18:30+08:00"
       }
     ]
   }

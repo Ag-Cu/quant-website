@@ -186,6 +186,7 @@ DATA_FIELD_TYPES: dict[str, dict[str, str]] = {
     },
     "macro.json": {
         "summary": "object",
+        "indicators": "array",
         "rates": "array",
         "fx": "array",
         "risk_assets": "array",

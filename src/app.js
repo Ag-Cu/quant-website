@@ -4,7 +4,6 @@ const API_BASE = window.QUANT_API_BASE || "";
 
 const PAGE_CONFIG = {
   overview: { endpoint: "/api/v1/dashboard/overview", refreshMs: 30_000, render: renderOverview },
-  watchlist: { endpoint: "/api/v1/watchlist", refreshMs: 15_000, render: renderWatchlist },
   picks: { endpoint: "/api/v1/strategies/picks", refreshMs: 300_000, render: renderPicks },
   holdings: { endpoint: "/api/v1/portfolio/holdings", refreshMs: 30_000, render: renderHoldings },
   performance: { endpoint: buildPerformanceEndpoint, refreshMs: 30_000, render: renderPerformance },
@@ -19,7 +18,6 @@ const PAGE_CONFIG = {
 
 const PAGE_LOADERS = {
   overview: () => import("./pages/overview.js"),
-  watchlist: () => import("./pages/watchlist.js"),
   picks: () => import("./pages/picks.js"),
   holdings: () => import("./pages/holdings.js"),
   performance: () => import("./pages/performance.js"),
@@ -37,8 +35,7 @@ Object.entries(PAGE_MODULES).forEach(([page, module]) => {
 
 const PAGE_META = {
   overview: ["Market Overview", "市场总览"],
-  watchlist: ["Watchlist", "自选股"],
-  picks: ["Daily Picks", "今日选股"],
+  picks: ["Quant Picks", "量化选股"],
   holdings: ["Portfolio", "当前持仓"],
   performance: ["Performance", "历史收益"],
   strategy: ["Quant Strategy", "量化策略"],
@@ -485,8 +482,7 @@ function icon(name) {
 function installShell() {
   const navItems = [
     ["overview", "index.html", "home", "市场总览"],
-    ["watchlist", "watchlist.html", "star", "自选股"],
-    ["picks", "picks.html", "picks", "今日选股"],
+    ["picks", "picks.html", "picks", "量化选股"],
     ["strategy", "strategy.html", "bot", "量化策略"],
     ["holdings", "holdings.html", "portfolio", "持仓信息"],
     ["performance", "performance.html", "chart", "历史收益"],
@@ -695,10 +691,17 @@ function scoreBlock(score, label, detail, bars = [], color = "var(--accent)") {
 }
 
 function heatColor(value) {
-  if (Number(value) >= 75) return "rgba(40,121,90,0.16)";
-  if (Number(value) >= 60) return "rgba(140,90,43,0.12)";
-  if (Number(value) >= 45) return "rgba(176,109,24,0.13)";
-  return "rgba(178,59,50,0.12)";
+  const safe = Math.max(0, Math.min(100, Number(value) || 0));
+  const hue = 130 - safe * 1.3;
+  const saturation = 64 + safe * 0.08;
+  const lightness = 42 + (100 - safe) * 0.05;
+  return `hsla(${hue.toFixed(1)}, ${saturation.toFixed(1)}%, ${lightness.toFixed(1)}%, 0.18)`;
+}
+
+function heatTextColor(value) {
+  const safe = Math.max(0, Math.min(100, Number(value) || 0));
+  const hue = 130 - safe * 1.3;
+  return `hsl(${hue.toFixed(1)}, 58%, 27%)`;
 }
 
 function heatmap(items, valueKey, label = "热度") {
@@ -706,7 +709,7 @@ function heatmap(items, valueKey, label = "热度") {
   return `<div class="heatmap-grid">${items.map((item) => {
     const value = item[valueKey];
     const change = item.change_pct ?? item.delta_pct ?? item.change;
-    return `<article class="heat-cell" style="background: ${heatColor(value)};"><strong>${escapeHtml(item.name)}</strong><span class="${toneClassByValue(change)}">${label} ${valueWithUnit(value, "%", 0)}${change !== undefined ? ` / ${pctText(change, 0)}` : ""}</span></article>`;
+    return `<article class="heat-cell" style="--heat-bg: ${heatColor(value)}; --heat-ink: ${heatTextColor(value)};"><strong>${escapeHtml(item.name)}</strong><span class="${toneClassByValue(change)}">${label} ${valueWithUnit(value, "%", 0)}${change !== undefined ? ` / ${pctText(change, 0)}` : ""}</span></article>`;
   }).join("")}</div>`;
 }
 
@@ -756,20 +759,36 @@ function pickRawMetrics(pick = {}) {
     : Number.isFinite(entry) && Number.isFinite(lowNear) && lowNear !== 0
     ? ((entry / lowNear) - 1) * 100
     : NaN;
-  const thresholdPct = Number.isFinite(Number(raw.entry_threshold_pct))
-    ? Number(raw.entry_threshold_pct)
-    : 1.5 - Number(raw.index_ret_pct ?? NaN);
   const rows = [
     ["量比", Number.isFinite(Number(raw.vol_ratio)) ? `${fixedText(raw.vol_ratio, 2)}x` : "--"],
     ["个股涨幅", pctText(raw.ret_pct, 2)],
-    ["沪深300", pctText(raw.index_ret_pct, 2)],
-    ["入池阈值", Number.isFinite(thresholdPct) ? `>${fixedText(thresholdPct, 2)}%` : "--"],
     ["MA12", fixedText(raw.ma12, 2)],
     ["MA26", fixedText(raw.ma26, 2)],
     ["较低均线", fixedText(raw.low_near, 2)],
     ["均线偏离", Number.isFinite(maGapPct) ? pctText(maGapPct, 2) : "--"],
+    ["候选池", raw.candidate_count === undefined ? "--" : `${intText(raw.candidate_count)} 只`],
   ];
   return `<div class="raw-metric-grid">${rows.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div>`;
+}
+
+function pickStrategyIntro(data = {}) {
+  const strategyId = String(data.strategy || pageState.picks.strategy || "").trim();
+  const label = data.strategy_label || pickStrategyLabel((data.strategies || []).find((item) => pickStrategyValue(item) === strategyId)) || strategyId || "量化选股策略";
+  const source = data.source && typeof data.source === "object" ? data.source : {};
+  const sourceText = [source.logic_file, source.data_source].filter(Boolean).join(" · ");
+  const method = strategyId === "khan-macd-volume"
+    ? "核心方法：复刻 khan-quant-data 的 macd.py 日频入池逻辑，先剔除 ST、停牌、上市不足一年等不可交易标的，再筛选价格贴近 MA12/MA26、量能放大且个股涨幅超过相对阈值的股票；最后按申万一级行业平均量比选前 5 个行业，并取各行业量比最高标的。"
+    : (data.method_summary || source.method_summary || "核心方法：按该策略上报的日频选股结果展示候选标的、原始指标、入场价、止损价和目标价；具体筛选规则以策略快照中的 source/method_summary 字段为准。");
+  return `
+    <section class="strategy-method-strip">
+      <div>
+        <p class="panel-kicker">${escapeHtml(strategyId || "quant-pick")}</p>
+        <h2>${escapeHtml(label)}</h2>
+        <span>${escapeHtml(method)}</span>
+      </div>
+      ${sourceText ? `<small>${escapeHtml(sourceText)}</small>` : ""}
+    </section>
+  `;
 }
 
 function chartPoint(item, index) {
@@ -1051,37 +1070,6 @@ function heatmapScale(value) {
   return "#28795a";
 }
 
-function flattenWatchlistGroups(watchlist = {}) {
-  return (watchlist.groups || []).flatMap((group) => (group.items || []).map((item) => ({ ...item, group: group.name })));
-}
-
-function watchlistOverviewPanel(watchlist = {}) {
-  const rows = flattenWatchlistGroups(watchlist).slice(0, 7);
-  return panel({
-    title: "自选股",
-    kicker: "Watchlist",
-    span: "span-4",
-    tools: `<a class="panel-link" href="watchlist.html">管理</a>`,
-    body: rows.length ? `
-      <div class="overview-watchlist">
-        ${rows.map((row) => {
-          const change = row.change_pct ?? row.change;
-          return `
-            <a class="overview-watch-row" href="watchlist.html">
-              <div class="stock-cell">
-                <span class="stock-logo">${escapeHtml(row.logo || row.symbol?.slice(0, 1) || "?")}</span>
-                <div><strong>${escapeHtml(row.name || row.symbol)}</strong><small>${escapeHtml(row.symbol)} · ${escapeHtml(row.group || "--")}</small></div>
-              </div>
-              <span class="mono">${valueText(row.price, 2)}</span>
-              <em class="${toneClassByValue(change)}">${pctText(change)}</em>
-            </a>
-          `;
-        }).join("")}
-      </div>
-    ` : `<div class="empty-state">暂无自选股，去自选页添加</div>`,
-  });
-}
-
 function sectorOverview(input = []) {
   const sectors = input || [];
   const best = sectors.length ? Math.max(...sectors.map((item) => Number(item.performance_pct || 0))) : null;
@@ -1147,7 +1135,6 @@ function renderOverview(payload) {
     sentiment_gauge = null,
     heatmap = {},
     sectors = [],
-    watchlist = {},
   } = payload.data || {};
 
   dom.app.innerHTML = `
@@ -1165,7 +1152,6 @@ function renderOverview(payload) {
     })}
     <section class="overview-grid">
       ${sentimentGauge(sentiment_gauge || market.sentiment_score)}
-      ${watchlistOverviewPanel(watchlist)}
       ${panel({
         title: "策略状态",
         kicker: "Strategy Hub",
@@ -1177,166 +1163,6 @@ function renderOverview(payload) {
     </section>
   `;
   bindOverviewInteractions();
-}
-
-function renderWatchlist(payload) {
-  const groupsSource = payload.data?.groups || [];
-  const selected = groupsSource[0]?.items?.[0] || null;
-  dom.app.innerHTML = `
-    <section class="watchlist-layout">
-      <div class="watchlist-main">
-        <div class="watch-toolbar">
-          <label class="search-input"><span>${icon("search")}</span><input type="search" placeholder="搜索股票 / ticker" data-watch-search /></label>
-          <div class="toolbar"><select><option>全部分组</option></select><select><option>按涨跌幅</option></select><button class="primary-button" type="button" data-add-watch>添加股票</button></div>
-        </div>
-        <div class="watch-add-panel" data-watch-add-panel>
-          <form class="watch-add-form" data-watch-add-form>
-            <label class="span-2"><span>操作令牌</span><input name="action_token" type="password" autocomplete="off" placeholder="可选；填写后保存到本机浏览器" /></label>
-            <label><span>市场</span><select name="market_region"><option value="cn">A股</option><option value="us">美股</option></select></label>
-            <label><span>代码</span><input name="symbol" autocomplete="off" placeholder="600519 / NVDA" required /></label>
-            <label><span>名称</span><input name="name" autocomplete="off" placeholder="可选" /></label>
-            <label><span>分组</span><input name="sector" autocomplete="off" placeholder="例如 AI 链" /></label>
-            <label class="checkbox-field"><input type="checkbox" name="is_personal_holding" value="true" data-watch-personal-toggle /><span>真实持有</span></label>
-            <label data-watch-personal-field><span>持仓金额</span><input name="personal_amount" inputmode="decimal" placeholder="例如 50000" /></label>
-            <label data-watch-personal-field><span>持仓数量</span><input name="quantity" inputmode="decimal" placeholder="可选" /></label>
-            <button class="primary-button" type="submit">保存</button>
-          </form>
-          <p class="form-status" data-watch-status></p>
-        </div>
-        <div class="watch-table">
-          ${groupsSource.length ? groupsSource.map((group) => `<div class="group-header">${escapeHtml(group.name)} · ${group.items.length}只</div>${group.items.map((row, index) => {
-            const change = row.change_pct ?? row.change;
-            const intradayLow = row.intraday_low ?? row.price * 0.98;
-            const intradayHigh = row.intraday_high ?? row.price * 1.02;
-            const intradayCurrent = row.intraday_current ?? row.price;
-            const amplitudePosition = ((intradayCurrent - intradayLow) / Math.max(0.01, intradayHigh - intradayLow)) * 100;
-            const weekPosition = row.week52_current !== undefined ? ((row.week52_current - row.week52_low) / Math.max(0.01, row.week52_high - row.week52_low)) * 100 : row.range;
-            const market = row.market_region || row.market || (String(row.symbol).match(/^\\d+$/) ? "cn" : "us");
-            return `<article class="watch-row ${index === 0 ? "selected" : ""}" data-watch-symbol="${escapeHtml(row.symbol)}" data-watch-market="${escapeHtml(market)}"><div class="stock-cell"><span class="stock-logo">${escapeHtml(row.logo || row.symbol.slice(0, 1))}</span><div><strong>${escapeHtml(row.symbol)}</strong><small>${escapeHtml(row.name)}</small></div></div><span class="mono price">${valueText(row.price, 2)}</span><span class="change-badge ${toneByValue(change)}">${pctText(change)}</span><div>${rangeBar(amplitudePosition, "range")}</div><div class="volume-bar"><i style="--bar:${row.volume_ratio ?? 0}%;"></i><span>${intText(row.volume_ratio)}%</span></div><span>${escapeHtml(row.market_cap || row.marketCap || "--")}</span>${rangeBar(weekPosition, "week")}<button class="row-action danger" type="button" data-watch-delete="${escapeHtml(row.symbol)}" data-watch-market="${escapeHtml(market)}">删除</button></article>`;
-          }).join("")}`).join("") : `<div class="empty-state">暂无自选股数据</div>`}
-        </div>
-      </div>
-      <aside class="stock-detail">
-        ${selected ? `
-        <div class="inline-between"><div><p class="panel-kicker">Selected Stock</p><h2>${escapeHtml(selected.symbol)}</h2><span>${escapeHtml(selected.name)}</span></div><button class="icon-button" type="button" aria-label="关闭详情">${icon("close")}</button></div>
-        ${equityChart((selected.price_series || selected.trend || []).map((item) => Number(item.return_pct ?? item.value ?? item)), (selected.benchmark_series || []).map((item) => Number(item.return_pct ?? item.value ?? item)))}
-        ${detailGrid([
-          { label: "最新价", value: valueText(selected.price, 2), detail: "Last" },
-          { label: "涨跌幅", value: pctText(selected.change_pct ?? selected.change), tone: toneByValue(selected.change_pct ?? selected.change), detail: "Today" },
-          { label: "成交量", value: `${intText(selected.volume_ratio ?? selected.volume)}%`, detail: "Relative" },
-          { label: "市值", value: selected.market_cap || selected.marketCap, detail: "Market cap" },
-        ])}
-        <div class="news-list"><strong>Recent News</strong>${(selected.news || []).length ? selected.news.map((item) => `<span>${escapeHtml(item.title || item)}</span>`).join("") : `<span>暂无新闻数据</span>`}</div>
-        ` : `<div class="empty-state">请选择一只股票</div>`}
-      </aside>
-    </section>
-  `;
-  bindWatchlistInteractions();
-}
-
-function setWatchlistStatus(message, tone = "") {
-  const node = document.querySelector("[data-watch-status]");
-  if (!node) return;
-  node.textContent = message || "";
-  node.className = `form-status ${tone}`;
-}
-
-function watchlistRefreshMessage(payload, fallback = "已保存，行情稍后刷新") {
-  const refreshError = payload?.data?.refresh_error || payload?.meta?.warning;
-  if (payload?.meta?.refresh_status === "scheduled") return fallback;
-  if (payload?.data?.personal_holding) return payload.data.refresh_error ? fallback : "已保存到自选和个人持仓";
-  return refreshError ? fallback : "";
-}
-
-function showWatchlistRefreshMessage(message, tone = "") {
-  if (!message) return;
-  const panel = document.querySelector("[data-watch-add-panel]");
-  panel?.classList.add("open");
-  setWatchlistStatus(message, tone);
-}
-
-function bindWatchlistInteractions() {
-  const panelNode = document.querySelector("[data-watch-add-panel]");
-  const personalToggle = document.querySelector("[data-watch-personal-toggle]");
-  const syncPersonalFields = () => {
-    const active = Boolean(personalToggle?.checked);
-    document.querySelectorAll("[data-watch-personal-field]").forEach((node) => {
-      node.classList.toggle("is-muted", !active);
-      node.querySelector("input")?.toggleAttribute("disabled", !active);
-    });
-  };
-  syncPersonalFields();
-  personalToggle?.addEventListener("change", syncPersonalFields);
-  document.querySelector("[data-add-watch]")?.addEventListener("click", () => {
-    panelNode?.classList.toggle("open");
-    panelNode?.querySelector("input[name='symbol']")?.focus();
-  });
-  document.querySelector("[data-watch-search]")?.addEventListener("input", (event) => {
-    const query = event.target.value.trim().toLowerCase();
-    document.querySelectorAll(".watch-row").forEach((row) => {
-      row.hidden = query && !row.textContent.toLowerCase().includes(query);
-    });
-  });
-  document.querySelector("[data-watch-add-form]")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const formData = new FormData(form);
-    const body = {
-      market_region: String(formData.get("market_region") || "cn"),
-      symbol: String(formData.get("symbol") || "").trim(),
-      name: String(formData.get("name") || "").trim(),
-      sector: String(formData.get("sector") || "").trim(),
-    };
-    const token = String(formData.get("action_token") || "").trim();
-    const isPersonalHolding = formData.get("is_personal_holding") === "true";
-    if (token) window.localStorage?.setItem("quant_action_token", token);
-    if (isPersonalHolding) {
-      body.is_personal_holding = true;
-      body.personal_amount = String(formData.get("personal_amount") || "").trim();
-      body.quantity = String(formData.get("quantity") || "").trim();
-      body.portfolio_type = "personal";
-    }
-    if (!body.symbol) {
-      setWatchlistStatus("请先输入股票代码", "negative");
-      return;
-    }
-    if (isPersonalHolding && !body.personal_amount && !body.quantity) {
-      setWatchlistStatus("真实持有至少需要填写持仓金额或持仓数量", "negative");
-      return;
-    }
-    setWatchlistStatus("正在保存并获取行情...");
-    form.querySelector("button[type='submit']")?.setAttribute("disabled", "disabled");
-    try {
-      const payload = await sendJson("/api/v1/watchlist", { method: "POST", headers: actionHeaders(), body: JSON.stringify(body) });
-      const refreshMessage = watchlistRefreshMessage(payload, isPersonalHolding ? "已保存到自选和个人持仓，行情稍后刷新" : "已保存，行情稍后刷新");
-      renderWatchlist(payload);
-      updateShell(payload.meta || {}, payload.meta?.source === "cache" ? "cache" : "live");
-      showWatchlistRefreshMessage(refreshMessage);
-    } catch (error) {
-      setWatchlistStatus(`保存失败：${error.message}`, "negative");
-      form.querySelector("button[type='submit']")?.removeAttribute("disabled");
-    }
-  });
-  document.querySelectorAll("[data-watch-delete]").forEach((button) => {
-    button.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      const symbol = button.dataset.watchDelete;
-      const market = button.dataset.watchMarket;
-      if (!symbol) return;
-      button.textContent = "删除中";
-      button.setAttribute("disabled", "disabled");
-      try {
-        const payload = await sendJson(`/api/v1/watchlist/${encodeURIComponent(symbol)}?market=${encodeURIComponent(market || "")}`, { method: "DELETE", headers: actionHeaders() });
-        const refreshMessage = watchlistRefreshMessage(payload, "已删除，行情稍后刷新");
-        renderWatchlist(payload);
-        updateShell(payload.meta || {}, payload.meta?.source === "cache" ? "cache" : "live");
-        showWatchlistRefreshMessage(refreshMessage);
-      } catch (error) {
-        button.textContent = "失败";
-        button.removeAttribute("disabled");
-      }
-    });
-  });
 }
 
 function picksEmptyMessage(data = {}) {
@@ -1387,7 +1213,8 @@ function renderPicks(payload) {
       const active = value === activeStrategy || label === strategy_label || label === activeStrategy;
       return `<button type="button" data-pick-strategy="${escapeHtml(value)}" class="${active ? "active" : ""}">${escapeHtml(label)}</button>`;
     }).join("")}</div><div class="toolbar"><button class="ghost-button icon-label" type="button" data-pick-date="prev">${icon("arrowLeft")}<span>昨日</span></button><button class="primary-button icon-label" type="button" data-pick-date="today"><span>今日</span>${icon("arrowRight")}</button><button class="ghost-button icon-label" type="button" data-pick-export>${icon("download")}<span>导出 CSV</span></button></div></section>
-    <div class="section-heading"><h2>今日选股结果</h2><span>${escapeHtml(trade_date || pageState.picks.date || "--")} · 共 ${items.length} 只</span></div>
+    ${pickStrategyIntro(data)}
+    <div class="section-heading"><h2>量化选股结果</h2><span>${escapeHtml(trade_date || pageState.picks.date || "--")} · 共 ${items.length} 只</span></div>
     <section class="pick-grid">
       ${items.length ? items.map((pick) => {
         const isFresh = pick.is_new ?? pick.fresh;
@@ -2117,7 +1944,7 @@ function marketHeatmapCard(history = {}) {
   const columns = history.columns || [];
   const rows = history.rows || [];
   if (!columns.length || !rows.length) return `<div class="empty-state">暂无热力数据</div>`;
-  return `<section class="market-heat-section"><div class="market-heat-title"><span class="heat-title-icon" aria-hidden="true"></span><h2>${escapeHtml(history.title || "近10日市场热力图")}</h2></div><div class="market-heat-scroll"><div class="market-heat-grid" style="--heat-cols: ${columns.length};"><div class="heat-corner"></div>${columns.map((column, index) => `<div class="heat-head${index === 0 ? " total-head" : ""}"><span>${escapeHtml(column).replace(/I$/, "")}</span></div>`).join("")}${rows.map((row) => `<div class="heat-date">${escapeHtml(row.date)}</div>${(row.values || []).map((value, index) => `<div class="heat-value${index === 0 ? " total-cell" : ""}" style="background:${heatColor(value)};">${intText(value)}</div>`).join("")}`).join("")}</div></div></section>`;
+  return `<section class="market-heat-section"><div class="market-heat-title"><span class="heat-title-icon" aria-hidden="true"></span><h2>${escapeHtml(history.title || "近10日市场热力图")}</h2></div><div class="market-heat-scroll"><div class="market-heat-grid" style="--heat-cols: ${columns.length};"><div class="heat-corner"></div>${columns.map((column, index) => `<div class="heat-head${index === 0 ? " total-head" : ""}"><span>${escapeHtml(column).replace(/I$/, "")}</span></div>`).join("")}${rows.map((row) => `<div class="heat-date">${escapeHtml(row.date)}</div>${(row.values || []).map((value, index) => `<div class="heat-value${index === 0 ? " total-cell" : ""}" style="--heat-bg:${heatColor(value)}; --heat-ink:${heatTextColor(value)};">${intText(value)}</div>`).join("")}`).join("")}</div></div></section>`;
 }
 
 function renderBreadth(payload) {
@@ -2143,8 +1970,15 @@ function renderSentiment(payload) {
 }
 
 function renderMacro(payload) {
-  const { summary = {}, rates = [], fx = [], risk_assets = [], calendar = [], observations = [] } = payload.data || {};
-  dom.app.innerHTML = `${pageDecisionBrief({ kicker: "Macro Regime", title: summary.title || `宏观环境 ${summary.label || "--"}`, detail: summary.detail || `中国 10Y ${valueWithUnit(summary.ten_year_yield_pct, "%")}，USD/CNH ${valueText(summary.usd_cnh, 2)}，股债利差 ${valueWithUnit(summary.equity_bond_spread_pct, "%")}。`, tone: summary.tone || "blue", metrics: [{ label: "风险偏好", value: valueWithUnit(summary.risk_preference_score, "/100", 0) }, { label: "中国 10Y", value: valueWithUnit(summary.ten_year_yield_pct, "%") }, { label: "USD/CNH", value: valueText(summary.usd_cnh, 2) }, { label: "股债利差", value: valueWithUnit(summary.equity_bond_spread_pct, "%") }] })}<section class="main-grid">${panel({ title: "利率", kicker: "Rates", span: "span-6", body: table(["指标", "数值", "变化"], rates.map((row) => `<tr><td>${escapeHtml(row.name)}</td><td>${valueWithUnit(row.value, row.unit, 2)}</td><td class="${toneClassByValue(-row.change_bp)}">${Number(row.change_bp) > 0 ? "+" : ""}${valueText(row.change_bp, 1)}bp</td></tr>`), 620) })}${panel({ title: "风险资产", kicker: "Risk Assets", span: "span-6", body: table(["资产", "点位", "涨跌"], risk_assets.map((row) => `<tr><td>${escapeHtml(row.name)}</td><td>${valueText(row.value, 2)}</td><td class="${toneClassByValue(row.change_pct)}">${pctText(row.change_pct)}</td></tr>`), 620) })}${panel({ title: "外汇", kicker: "FX", span: "span-4", body: barList(fx.map((row) => ({ name: row.name, value: row.value, detail: `变化 ${pctText(row.change_pct)}` })), { max: 110 }) })}${panel({ title: "日历", kicker: "Calendar", span: "span-4", body: table(["日期", "事件", "重要性"], calendar.map((row) => `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.event)}</td><td>${tag(row.importance === "high" ? "高" : "中", row.importance === "high" ? "warning" : "blue")}</td></tr>`), 560) })}${panel({ title: "观察", kicker: "Observations", span: "span-4", body: alertList(observations) })}</section>`;
+  const { summary = {}, indicators = [], rates = [], fx = [], risk_assets = [], calendar = [], observations = [] } = payload.data || {};
+  const visibleIndicators = indicators.length
+    ? indicators
+    : [
+        { name: "中国 10Y 国债", value: summary.ten_year_yield_pct, unit: "%", category: "利率" },
+        { name: "USD/CNH", value: summary.usd_cnh, unit: "", category: "汇率" },
+        { name: "股债利差", value: summary.equity_bond_spread_pct, unit: "%", category: "估值" },
+      ];
+  dom.app.innerHTML = `${pageDecisionBrief({ kicker: "Macro Regime", title: summary.title || `宏观环境 ${summary.label || "--"}`, detail: summary.detail || `中国 10Y ${valueWithUnit(summary.ten_year_yield_pct, "%")}，USD/CNH ${valueText(summary.usd_cnh, 2)}，股债利差 ${valueWithUnit(summary.equity_bond_spread_pct, "%")}。`, tone: summary.tone || "blue", metrics: [{ label: "风险偏好", value: valueWithUnit(summary.risk_preference_score, "/100", 0) }, { label: "中国 10Y", value: valueWithUnit(summary.ten_year_yield_pct, "%") }, { label: "USD/CNH", value: valueText(summary.usd_cnh, 2) }, { label: "股债利差", value: valueWithUnit(summary.equity_bond_spread_pct, "%") }] })}<section class="macro-indicator-grid">${visibleIndicators.map((row) => `<article class="macro-indicator-card"><span>${escapeHtml(row.category || "Macro")}</span><strong class="${row.tone ? `tone-${row.tone}` : ""}">${escapeHtml(row.display_value || valueWithUnit(row.value, row.unit || "", row.decimals ?? 2))}</strong><small>${escapeHtml(row.name || "--")}${row.change_text ? ` · ${escapeHtml(row.change_text)}` : ""}</small></article>`).join("")}</section><section class="main-grid">${panel({ title: "利率与曲线", kicker: "Rates", span: "span-6", body: table(["指标", "数值", "变化"], rates.map((row) => `<tr><td>${escapeHtml(row.name)}</td><td>${valueWithUnit(row.value, row.unit, 2)}</td><td class="${toneClassByValue(-row.change_bp)}">${Number(row.change_bp) > 0 ? "+" : ""}${valueText(row.change_bp, 1)}bp</td></tr>`), 620) })}${panel({ title: "风险资产", kicker: "Risk Assets", span: "span-6", body: table(["资产", "点位", "涨跌"], risk_assets.map((row) => `<tr><td>${escapeHtml(row.name)}</td><td>${valueText(row.value, 2)}</td><td class="${toneClassByValue(row.change_pct)}">${pctText(row.change_pct)}</td></tr>`), 620) })}${panel({ title: "外汇", kicker: "FX", span: "span-4", body: barList(fx.map((row) => ({ name: row.name, value: row.value, detail: `变化 ${pctText(row.change_pct)}` })), { max: 110 }) })}${panel({ title: "日历", kicker: "Calendar", span: "span-4", body: table(["日期", "事件", "重要性"], calendar.map((row) => `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.event)}</td><td>${tag(row.importance === "high" ? "高" : "中", row.importance === "high" ? "warning" : "blue")}</td></tr>`), 560) })}${panel({ title: "观察", kicker: "Observations", span: "span-4", body: alertList(observations) })}</section>`;
 }
 
 function updateShell(meta, mode, apiError = null) {
@@ -2243,16 +2077,7 @@ function showLoading() {
 }
 
 function shouldPauseAutoRefresh(page) {
-  if (page !== "watchlist") return false;
-  const active = document.activeElement;
-  const addPanel = document.querySelector("[data-watch-add-panel]");
-  const addForm = document.querySelector("[data-watch-add-form]");
-  const search = document.querySelector("[data-watch-search]");
-  return Boolean(
-    addPanel?.classList.contains("open")
-      || addForm?.contains(active)
-      || (search && search.value.trim())
-  );
+  return false;
 }
 
 async function init() {

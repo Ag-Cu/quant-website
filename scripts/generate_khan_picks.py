@@ -344,6 +344,7 @@ def build_payload(token: str, trade_date: str | None = None) -> dict[str, Any]:
                 "repo": "git@github.com:JustinWu00/khan-quant-data.git",
                 "logic_file": "src/backtest/stategy/macd.py",
                 "data_source": "Tushare daily + SW2021 index_member + stock_basic + CSI300 index_daily",
+                "method_summary": "剔除 ST/停牌/上市不足一年等不可交易标的，筛选价格贴近 MA12/MA26、量能放大且涨幅超过相对阈值的股票；按申万一级行业平均量比选前 5 个行业，并取各行业量比最高标的。",
                 "industry_source": "Tushare SW2021 index_member" if not industry_map.empty else "Tushare stock_basic.industry fallback",
                 "candidate_count": len(selected),
                 "selected_count": len(items),

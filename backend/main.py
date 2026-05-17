@@ -97,7 +97,6 @@ STATIC_PAGES = {
     "/": "index.html",
     "/index.html": "index.html",
     "/login.html": "login.html",
-    "/watchlist.html": "watchlist.html",
     "/picks.html": "picks.html",
     "/holdings.html": "holdings.html",
     "/performance.html": "performance.html",
@@ -1498,6 +1497,15 @@ def canonical_strategy_id(value: Any) -> str:
 
 def strategy_slug_from_id(value: str) -> str:
     return canonical_strategy_id(value).replace(".", "-")
+
+
+HIDDEN_PERFORMANCE_STRATEGIES = {
+    "momentum",
+    "etf_rotation",
+    "small_cap",
+    "small-cap-momentum",
+    MANUAL_PORTFOLIO_STRATEGY_ID,
+}
 
 
 BUILTIN_STRATEGY_DEFINITIONS = [
@@ -3364,6 +3372,14 @@ def load_strategy_picks_base(strategy: str | None, trade_date: str | None) -> di
                 normalized,
                 storage_path_text(path),
             )
+    owner_latest = BACKEND_DIR / "users" / "owner" / "strategies" / "picks.json"
+    if not auth_required() and owner_latest.exists():
+        normalized = normalize_payload(load_json(owner_latest), spec, "backend", owner_latest)
+        return validate_response_payload(
+            "/api/v1/strategies/picks",
+            normalized,
+            storage_path_text(owner_latest),
+        )
     return get_payload("/api/v1/strategies/picks")
 
 
@@ -5856,6 +5872,9 @@ def load_static_performance_strategies() -> tuple[list[dict[str, Any]], dict[str
     strategies_input = data.get("strategies") if isinstance(data.get("strategies"), dict) else {}
     rows: list[dict[str, Any]] = []
     for strategy_id, config in strategies_input.items():
+        strategy_id = str(strategy_id)
+        if strategy_id in HIDDEN_PERFORMANCE_STRATEGIES:
+            continue
         if not isinstance(config, dict):
             continue
         nav_rows = config.get("nav") if isinstance(config.get("nav"), list) else []
@@ -5864,14 +5883,18 @@ def load_static_performance_strategies() -> tuple[list[dict[str, Any]], dict[str
         last = nav_rows[-1]
         rows.append(
             {
-                "id": str(strategy_id),
+                "id": strategy_id,
                 "label": config.get("label") or strategy_id,
                 "last_seen": last.get("date") or last.get("trade_date"),
                 "stale_seconds": None,
                 "source": config.get("engine") or "static",
             }
         )
-    return rows, strategies_input, str(data.get("default_strategy") or "")
+    visible_config = {str(key): value for key, value in strategies_input.items() if str(key) not in HIDDEN_PERFORMANCE_STRATEGIES}
+    default_strategy = str(data.get("default_strategy") or "")
+    if default_strategy in HIDDEN_PERFORMANCE_STRATEGIES:
+        default_strategy = ""
+    return rows, visible_config, default_strategy
 
 
 def fetch_eastmoney_benchmark_nav(benchmark_id: str, days: int = 260) -> dict[str, Any]:
@@ -6038,17 +6061,22 @@ def crop_nav_ledger(rows: list[dict[str, Any]], start_date: date | None, end_dat
 
 def build_performance_payload(strategy: str | None, benchmark: str | None, start: str | None, to: str | None) -> dict[str, Any]:
     joinquant_ledger = load_joinquant_nav_ledger()
-    personal_ledger = build_personal_performance_ledger()
+    personal_ledger: list[dict[str, Any]] = []
     ledger = [*joinquant_ledger, *personal_ledger]
     all_strategy_events = load_strategy_events()
     static_strategies, static_strategy_config, default_static_strategy = load_static_performance_strategies()
-    registered_strategies = strategy_rows_from_definitions()
+    registered_strategies = [
+        item for item in strategy_rows_from_definitions()
+        if item["id"] not in HIDDEN_PERFORMANCE_STRATEGIES
+    ]
     ledger_strategies = strategy_rows_from_ledger(ledger)
     event_strategies = strategy_rows_from_events(all_strategy_events)
     strategy_map = {item["id"]: item for item in registered_strategies}
     strategy_map.update({item["id"]: item for item in static_strategies})
     strategy_map.update({item["id"]: item for item in ledger_strategies})
     strategy_map.update({item["id"]: item for item in event_strategies})
+    for hidden_id in HIDDEN_PERFORMANCE_STRATEGIES:
+        strategy_map.pop(hidden_id, None)
     strategies = list(strategy_map.values())
     benchmark_disabled = benchmark is not None and benchmark.lower() in {"", "none", "off", "false"}
     benchmarks = load_or_refresh_benchmarks()
@@ -6058,6 +6086,8 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
     now = now_hk()
     today = now.date()
     requested_strategy = canonical_strategy_id(strategy) if strategy else ""
+    if requested_strategy in HIDDEN_PERFORMANCE_STRATEGIES:
+        raise HTTPException(status_code=404, detail=f"策略净值不存在：{strategy}")
     selected_strategy = requested_strategy or default_static_strategy or (strategies[0]["id"] if strategies else "")
     if requested_strategy and requested_strategy not in {item["id"] for item in strategies}:
         raise HTTPException(status_code=404, detail=f"策略净值不存在：{strategy}")
@@ -6168,6 +6198,15 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
         else PERFORMANCE_JOINQUANT_NAV_PATH
     )
     snapshot_storage_path = None if source_state in {"static", "manual", "local-ledger"} else storage_path_text(PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH)
+    if source_state == "local-ledger":
+        performance_message = "当前策略曲线由交易事件台账、本地现金和持仓、交易日收盘价计算。"
+    elif not equity_curve:
+        performance_message = "当前策略还没有可用交易事件或净值快照，收益接口保持空曲线，不生成假收益。"
+    elif equity_frequency["synthetic"]:
+        performance_message = "当前策略曲线为日频代理，由低频净值锚点插值生成；接入 JoinQuant 每日净值后会替换为真实日频。"
+    else:
+        performance_message = "当前策略曲线使用真实日频/快照净值点。"
+
     payload = {
         "meta": {
             "version": "1.0",
@@ -6221,11 +6260,7 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
                 "synthetic": equity_frequency["synthetic"],
                 "benchmark_frequency": benchmark_frequency["frequency"],
                 "benchmark_point_count": benchmark_frequency["point_count"],
-                "message": "当前策略曲线由交易事件台账、本地现金和持仓、交易日收盘价计算。"
-                if source_state == "local-ledger"
-                else "当前策略曲线为日频代理，由低频净值锚点插值生成；接入 JoinQuant 每日净值后会替换为真实日频。"
-                if equity_frequency["synthetic"]
-                else "当前策略曲线使用真实日频/快照净值点。",
+                "message": performance_message,
             },
             "drawdowns": build_drawdowns(equity_curve),
             "metrics": calculate_metrics(equity_curve, benchmark_curve),

@@ -75,7 +75,6 @@ def test_health_endpoint(client: TestClient) -> None:
         "/breadth.html",
         "/sentiment.html",
         "/macro.html",
-        "/watchlist.html",
         "/picks.html",
         "/holdings.html",
         "/performance.html",
@@ -87,6 +86,12 @@ def test_health_endpoint(client: TestClient) -> None:
 def test_static_pages_and_assets_are_served(client: TestClient, path: str) -> None:
     response = client.get(path)
     assert response.status_code == 200, response.text
+
+
+def test_watchlist_page_is_not_user_visible(client: TestClient) -> None:
+    response = client.get("/watchlist.html")
+
+    assert response.status_code == 404
 
 
 def test_auth_blocks_private_pages_api_and_data(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
@@ -499,6 +504,59 @@ def test_strategy_picks_can_filter_khan_strategy(monkeypatch: pytest.MonkeyPatch
     assert "tags" not in payload["data"]["items"][0]
 
 
+def test_strategy_picks_uses_owner_khan_data_when_auth_disabled(monkeypatch: pytest.MonkeyPatch, tmp_path, client: TestClient) -> None:
+    root_picks_path = tmp_path / "data/backend/strategies/picks.json"
+    owner_picks_path = tmp_path / "data/backend/users/owner/strategies/picks.json"
+    root_picks_path.parent.mkdir(parents=True)
+    owner_picks_path.parent.mkdir(parents=True)
+    root_picks_path.write_text(
+        json.dumps(
+            {
+                "meta": {"version": "1.0", "source": "seed", "as_of": "2026-05-12T10:00:00+08:00", "trade_date": "2026-05-12", "timezone": "Asia/Hong_Kong", "market_session": "closed", "run_id": "old-picks"},
+                "data": {
+                    "strategy": "momentum",
+                    "strategy_label": "动量策略",
+                    "trade_date": "2026-05-12",
+                    "status": "ready",
+                    "strategies": ["动量策略"],
+                    "items": [{"symbol": "300476", "name": "胜宏科技", "score": 80, "tags": ["旧标签"]}],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    owner_picks_path.write_text(
+        json.dumps(
+            {
+                "meta": {"version": "1.0", "source": "tushare+khan-quant-data", "as_of": "2026-05-17T18:20:57+08:00", "trade_date": "2026-05-15", "timezone": "Asia/Hong_Kong", "market_session": "closed", "run_id": "khan-picks-test"},
+                "data": {
+                    "strategy": "khan-macd-volume",
+                    "strategy_label": "Khan MA 量价选股",
+                    "trade_date": "2026-05-15",
+                    "status": "ready",
+                    "strategies": [{"id": "khan-macd-volume", "label": "Khan MA 量价选股"}],
+                    "source": {"method_summary": "Khan 选股核心方法"},
+                    "items": [{"symbol": "002889", "name": "东方嘉盛", "score": 94, "strategy_id": "khan-macd-volume"}],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+
+    response = client.get("/api/v1/strategies/picks")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["meta"]["storage_path"] == "data/backend/users/owner/strategies/picks.json"
+    assert payload["data"]["strategy"] == "khan-macd-volume"
+    assert payload["data"]["source"]["method_summary"] == "Khan 选股核心方法"
+    assert [item["symbol"] for item in payload["data"]["items"]] == ["002889"]
+
+
 def test_khan_pick_generator_overwrites_old_pick_strategies(tmp_path) -> None:
     output = generate_khan_picks.output_path(tmp_path, "owner")
     output.parent.mkdir(parents=True)
@@ -637,6 +695,76 @@ def test_macro_payload_does_not_keep_sample_rows_when_sources_are_missing(monkey
     assert payload["data"]["fx"] == [{"name": "USD/CNH", "value": None, "change_pct": None, "data_source": "unavailable", "as_of": payload["data"]["fx"][0]["as_of"]}]
     assert payload["data"]["risk_assets"] == []
     assert payload["data"]["summary"]["risk_preference_score"] is None
+    assert payload["data"]["indicators"] == []
+
+
+def test_macro_payload_exposes_common_real_indicator_set(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    macro_path = tmp_path / "data/backend/macro.json"
+    macro_path.parent.mkdir(parents=True)
+    macro_path.write_text(
+        json.dumps(
+            {
+                "meta": {"version": "1.0", "source": "seed", "as_of": "2026-05-12T00:00:00+08:00", "trade_date": "2026-05-12", "timezone": "Asia/Hong_Kong", "market_session": "closed", "run_id": "macro-seed"},
+                "data": {"summary": {}, "rates": [], "fx": [], "risk_assets": [], "calendar": [], "observations": []},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(update_live_data, "ROOT", tmp_path)
+    monkeypatch.setattr(update_live_data, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(update_live_data, "LIVE_DIR", tmp_path / "data/live")
+    monkeypatch.setattr(update_live_data, "CONFIG_DIR", tmp_path / "data/config")
+    monkeypatch.setattr(update_live_data, "fetch_wscn_realtime", lambda code: {"value": 7.22 if code == "USDCNH.OTC" else 4.5, "change_pct": -0.12 if code == "USDCNH.OTC" else 0.02, "data_source": "stub", "as_of": "2026-05-15T15:00:00+08:00"})
+    monkeypatch.setattr(update_live_data, "fetch_chinabond_treasury_curve", lambda: {
+        "10年": {"value": 2.1, "change_bp": -1.2, "data_source": "chinabond", "as_of": "2026-05-15"},
+        "1年": {"value": 1.5, "change_bp": 0.2, "data_source": "chinabond", "as_of": "2026-05-15"},
+    })
+    monkeypatch.setattr(update_live_data, "fetch_eastmoney_index_metrics", lambda: {
+        "CSI300": {"name": "沪深300", "value": 3900, "change_pct": 1.0, "pe_ttm": 12.0, "data_source": "eastmoney", "as_of": "2026-05-15T15:00:00+08:00"},
+        "CSI1000": {"name": "中证1000", "value": 6200, "change_pct": 0.5, "data_source": "eastmoney", "as_of": "2026-05-15T15:00:00+08:00"},
+        "CHINEXT": {"name": "创业板指", "value": 2100, "change_pct": -0.2, "data_source": "eastmoney", "as_of": "2026-05-15T15:00:00+08:00"},
+    })
+
+    payload = update_live_data.build_macro_payload()
+    names = {row["name"] for row in payload["data"]["indicators"]}
+
+    assert {"中国 10Y 国债", "中国期限利差 10Y-1Y", "中美 10Y 利差", "USD/CNH", "沪深300 PE(TTM)", "沪深300股债利差", "沪深300涨跌", "中证1000涨跌", "创业板指涨跌"} <= names
+    assert payload["data"]["summary"]["china_term_spread_bp"] == 60.0
+    assert payload["data"]["summary"]["china_us_spread_bp"] == -240.0
+
+
+def test_overview_sentiment_gauge_matches_sentiment_summary(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    dashboard_path = tmp_path / "data/backend/dashboard/overview.json"
+    dashboard_path.parent.mkdir(parents=True)
+    dashboard_path.write_text(
+        json.dumps(
+            {
+                "meta": {"version": "1.0", "source": "seed", "as_of": "2026-05-15T00:00:00+08:00", "trade_date": "2026-05-15", "timezone": "Asia/Hong_Kong", "market_session": "closed", "run_id": "overview-seed"},
+                "data": {"market": {}, "sentiment_gauge": {"score": 88, "previous_day_score": 70}, "top_etfs": []},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(update_live_data, "ROOT", tmp_path)
+    monkeypatch.setattr(update_live_data, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(update_live_data, "LIVE_DIR", tmp_path / "data/live")
+    monkeypatch.setattr(update_live_data, "build_six_month_sentiment_trend", lambda series: ([{"date": "2026-05-14", "value": 11}, {"date": "2026-05-15", "value": 12}], "test-trend", "test note"))
+    monkeypatch.setattr(update_live_data, "build_account_from_holdings", lambda: {})
+    monkeypatch.setattr(update_live_data, "build_strategy_status_from_artifacts", lambda: ([], "test"))
+    monkeypatch.setattr(update_live_data, "build_timeline_from_strategy_artifacts", lambda: ([], "test"))
+    monkeypatch.setattr(update_live_data, "load_scheduler_status", lambda: {})
+
+    payload = update_live_data.build_overview_payload(
+        {"data": {"summary": {"score": 55}}},
+        {"data": {"summary": {"score": 37, "label": "低迷"}, "sentiment_trend": [{"date": "2026-05-15", "value": 12}]}},
+        {"data": {"summary": {"risk_preference_score": 50}}},
+    )
+
+    assert payload["data"]["market"]["sentiment_score"] == 37
+    assert payload["data"]["sentiment_gauge"]["score"] == 37
+    assert payload["data"]["sentiment_gauge"]["previous_day_score"] == 11
 
 
 def test_live_overview_ignores_non_real_strategy_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
@@ -1470,7 +1598,7 @@ def test_strategy_events_build_local_daily_performance_curve(
     assert holding["pnl_pct"] == 10.0
 
 
-def test_static_monthly_nav_is_expanded_to_daily_proxy(
+def test_static_hidden_performance_strategy_is_not_exposed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
     client: TestClient,
@@ -1481,13 +1609,8 @@ def test_static_monthly_nav_is_expanded_to_daily_proxy(
 
     response = client.get("/api/v1/performance?strategy=momentum&benchmark=none&from=2026-05-14&to=2026-05-15")
 
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    curve = payload["data"]["equity_curve"]
-    assert len(curve) == 2
-    assert payload["data"]["data_quality"]["frequency"] == "daily-proxy"
-    assert payload["data"]["data_quality"]["synthetic"] is True
-    assert payload["data"]["nav_source"]["frequency_label"] == "日频代理"
+    assert response.status_code == 404
+    assert "策略净值不存在" in response.text
 
 
 def test_performance_strategy_switch_does_not_fallback_to_static_seed(
@@ -1525,7 +1648,7 @@ def test_performance_uses_live_benchmark_cache(
     assert payload["data"]["benchmark_curve"][-1]["return_pct"] == 1.0
 
 
-def test_performance_lists_static_quant_and_personal_curves(
+def test_performance_hides_static_small_cap_and_personal_curves(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
     client: TestClient,
@@ -1561,11 +1684,14 @@ def test_performance_lists_static_quant_and_personal_curves(
 
     response = client.get("/api/v1/performance?strategy=personal-portfolio&benchmark=none&from=2026-05-14&to=2026-05-15")
 
+    assert response.status_code == 404
+    assert "策略净值不存在" in response.text
+
+    post_performance_snapshot(client, "jq-new-alpha-run-1", "2026-05-15T10:30:00+08:00", 100000)
+    response = client.get("/api/v1/performance?strategy=jq-new-alpha&benchmark=none&from=2026-05-15&to=2026-05-15")
+
     assert response.status_code == 200, response.text
     payload = response.json()
     strategy_ids = {item["id"] for item in payload["data"]["strategies"]}
-    assert {"momentum", "personal-portfolio"} <= strategy_ids
-    assert payload["data"]["strategy"] == "personal-portfolio"
-    assert payload["data"]["strategy_label"] == "个人持仓"
-    assert payload["data"]["equity_curve"][-1]["return_pct"] == 10.0
-    assert payload["data"]["nav_source"]["source"] == "manual"
+    assert "jq-new-alpha" in strategy_ids
+    assert {"momentum", "small-cap-momentum", "personal-portfolio"}.isdisjoint(strategy_ids)

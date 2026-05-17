@@ -85,6 +85,7 @@ class StrategyPicksData(ContractModel):
     trade_date: str
     status: str
     strategies: list[Any]
+    source: dict[str, Any] = {}
     items: list[StrategyPickItem]
 
 
@@ -179,6 +180,7 @@ class SentimentPayload(ApiPayload):
 
 class MacroData(ContractModel):
     summary: dict[str, Any]
+    indicators: list[Any] = []
     rates: list[Any]
     fx: list[Any]
     risk_assets: list[Any]

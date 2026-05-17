@@ -569,11 +569,9 @@ body.sidebar-collapsed .sidebar-toggle::before {
 .panel,
 .metric-card,
 .sentiment-card,
-.stock-detail,
 .pick-card,
 .perf-metric,
-.strategy-toolbar,
-.watchlist-main {
+.strategy-toolbar {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
@@ -581,9 +579,7 @@ body.sidebar-collapsed .sidebar-toggle::before {
 }
 
 .panel,
-.sentiment-card,
-.watchlist-main,
-.stock-detail {
+.sentiment-card {
   min-width: 0;
   padding: 18px;
 }
@@ -1087,8 +1083,7 @@ body.sidebar-collapsed .sidebar-toggle::before {
 .mini-tabs a,
 .ghost-button,
 .primary-button,
-.segmented select,
-.watch-toolbar select {
+.segmented select {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1219,38 +1214,9 @@ body.sidebar-collapsed .sidebar-toggle::before {
 .bar-list,
 .timeline,
 .alert-list,
-.overview-watchlist,
-.compact-action-list,
-.news-list {
+.compact-action-list {
   display: grid;
   gap: 10px;
-}
-
-.overview-watch-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 82px 72px;
-  gap: 10px;
-  align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: rgba(20, 20, 19, 0.025);
-  padding: 10px 12px;
-}
-
-.overview-watch-row:hover,
-.overview-watch-row:focus-visible {
-  border-color: rgba(140, 90, 43, 0.26);
-  background: rgba(140, 90, 43, 0.07);
-  outline: none;
-}
-
-.overview-watch-row .mono,
-.overview-watch-row em {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-style: normal;
-  font-weight: 700;
-  text-align: right;
 }
 
 .strategy-status-panel .compact-action-list {
@@ -1687,13 +1653,6 @@ body.sidebar-collapsed .sidebar-toggle::before {
     );
 }
 
-.watchlist-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(330px, 0.46fr);
-  gap: 16px;
-}
-
-.watch-toolbar,
 .strategy-toolbar {
   display: flex;
   align-items: center;
@@ -1714,6 +1673,36 @@ body.sidebar-collapsed .sidebar-toggle::before {
     var(--surface);
 }
 
+.strategy-method-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(20, 20, 19, 0.025);
+}
+
+.strategy-method-strip h2 {
+  margin: 1px 0 5px;
+  font-size: 18px;
+}
+
+.strategy-method-strip span,
+.strategy-method-strip small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.strategy-method-strip small {
+  justify-self: end;
+  max-width: 360px;
+  text-align: right;
+}
+
 .search-input {
   display: flex;
   align-items: center;
@@ -1731,62 +1720,6 @@ body.sidebar-collapsed .sidebar-toggle::before {
   border: 0;
   outline: none;
   background: transparent;
-}
-
-.watch-table {
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-}
-
-.watch-add-panel {
-  display: none;
-  margin: -2px 0 14px;
-  border: 1px solid rgba(140, 90, 43, 0.16);
-  border-radius: 10px;
-  background: rgba(140, 90, 43, 0.06);
-  padding: 12px;
-}
-
-.watch-add-panel.open {
-  display: block;
-}
-
-.watch-add-form {
-  display: grid;
-  grid-template-columns:
-    minmax(110px, 0.8fr) minmax(130px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr)
-    minmax(120px, 0.8fr);
-  gap: 10px;
-  align-items: end;
-}
-
-.watch-add-form .span-2 {
-  grid-column: span 2;
-}
-
-.watch-add-form label {
-  display: grid;
-  gap: 5px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.watch-add-form input,
-.watch-add-form select {
-  min-height: 34px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: rgba(255, 254, 250, 0.8);
-  padding: 7px 10px;
-  outline: none;
-}
-
-.watch-add-form input:focus,
-.watch-add-form select:focus {
-  border-color: rgba(140, 90, 43, 0.36);
 }
 
 .checkbox-field {
@@ -2054,36 +1987,6 @@ body.sidebar-collapsed .sidebar-toggle::before {
   color: var(--negative);
 }
 
-.group-header {
-  padding: 10px 16px;
-  background: var(--surface-2);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.watch-row {
-  display: grid;
-  grid-template-columns:
-    minmax(170px, 1.4fr) 90px 90px minmax(90px, 1fr)
-    minmax(110px, 1fr) 80px minmax(110px, 1fr) 58px;
-  gap: 14px;
-  align-items: center;
-  min-height: 56px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--line);
-  background: rgba(20, 20, 19, 0.012);
-}
-
-.watch-row:nth-child(odd) {
-  background: transparent;
-}
-
-.watch-row.selected {
-  border-left: 3px solid var(--accent);
-  background: rgba(140, 90, 43, 0.07);
-}
-
 .row-action {
   min-height: 28px;
   border: 1px solid var(--line);
@@ -2101,7 +2004,6 @@ body.sidebar-collapsed .sidebar-toggle::before {
     background 120ms ease;
 }
 
-.watch-row:hover .row-action,
 .row-action:focus-visible {
   opacity: 1;
 }
@@ -2183,16 +2085,6 @@ body.sidebar-collapsed .sidebar-toggle::before {
   place-items: center;
   font-family: var(--font-mono);
   font-size: 10px;
-}
-
-.stock-detail {
-  min-height: 620px;
-}
-
-.news-list {
-  margin-top: 16px;
-  color: var(--muted);
-  font-size: 13px;
 }
 
 .pick-grid {
@@ -2957,6 +2849,8 @@ body[data-page="performance"] .side-status small {
 .heat-value {
   border-radius: 5px;
   font-weight: 700;
+  background: var(--heat-bg);
+  color: var(--heat-ink);
 }
 
 .heatmap-grid {
@@ -2970,6 +2864,8 @@ body[data-page="performance"] .side-status small {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px;
+  background: var(--heat-bg);
+  color: var(--heat-ink);
 }
 
 .heat-cell strong,
@@ -2982,8 +2878,41 @@ body[data-page="performance"] .side-status small {
 
 .heat-cell span {
   margin-top: 4px;
-  color: var(--muted);
+  color: inherit;
   font-size: 12px;
+}
+
+.macro-indicator-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.macro-indicator-card {
+  min-width: 0;
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(var(--surface-rgb), 0.82);
+}
+
+.macro-indicator-card span,
+.macro-indicator-card small {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macro-indicator-card strong {
+  display: block;
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 20px;
 }
 
 .empty-sparkline {
@@ -3033,6 +2962,7 @@ body[data-page="performance"] .side-status small {
   .summary-grid,
   .source-status-grid,
   .chart-summary-bar,
+  .macro-indicator-grid,
   .pick-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -3042,13 +2972,14 @@ body[data-page="performance"] .side-status small {
   }
 
   .decision-hero,
-  .watchlist-layout,
-  .watch-add-form {
+  .strategy-method-strip {
     grid-template-columns: 1fr;
   }
 
-  .watch-add-form .span-2 {
-    grid-column: 1;
+  .strategy-method-strip small {
+    justify-self: start;
+    max-width: none;
+    text-align: left;
   }
 
   .sentiment-card,
@@ -3099,7 +3030,6 @@ body[data-page="performance"] .side-status small {
   .topbar-actions,
   .panel-header,
   .module-header,
-  .watch-toolbar,
   .strategy-toolbar,
   .inline-between,
   .signal-card-head {
@@ -3133,6 +3063,7 @@ body[data-page="performance"] .side-status small {
   .strategy-create-form,
   .split-detail,
   .heatmap-grid,
+  .macro-indicator-grid,
   .pick-grid,
   .allocation-panel {
     grid-template-columns: 1fr;
@@ -3155,11 +3086,6 @@ body[data-page="performance"] .side-status small {
 
   .decision-copy h2 {
     font-size: 23px;
-  }
-
-  .watch-row {
-    grid-template-columns: minmax(180px, 1fr) 80px 80px;
-    overflow-x: auto;
   }
 
   .score-block,
@@ -3258,14 +3184,6 @@ button.is-loading {
   text-align: right;
 }
 
-.watch-card-detail {
-  display: none;
-}
-
-.watch-desktop-detail {
-  min-width: 0;
-}
-
 .row-action,
 .icon-button,
 .mini-tabs button,
@@ -3350,118 +3268,6 @@ button.is-loading {
 
   .page-heading h1 {
     white-space: normal;
-  }
-
-  .watchlist-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .watchlist-main,
-  .stock-detail {
-    padding: 14px;
-  }
-
-  .watch-toolbar .toolbar {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    width: 100%;
-  }
-
-  .watch-toolbar .primary-button {
-    grid-column: 1 / -1;
-  }
-
-  .watch-table {
-    display: grid;
-    gap: 12px;
-    overflow: visible;
-    border: 0;
-    border-radius: 0;
-  }
-
-  .group-header {
-    border: 1px solid var(--line);
-    border-radius: 12px;
-  }
-
-  .watch-row {
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 12px;
-    align-items: start;
-    overflow: visible;
-    border: 1px solid var(--line);
-    border-radius: 16px;
-    background: var(--surface-2);
-    padding: 14px;
-  }
-
-  .watch-row:nth-child(odd) {
-    background: var(--surface-2);
-  }
-
-  .watch-row.selected {
-    border-left-width: 1px;
-    box-shadow: inset 3px 0 0 var(--accent);
-  }
-
-  .watch-row .stock-cell {
-    grid-column: 1;
-  }
-
-  .watch-price {
-    grid-column: 1;
-    font-size: 20px;
-  }
-
-  .watch-change {
-    grid-column: 2;
-    grid-row: 1;
-    align-self: center;
-    min-height: 32px;
-  }
-
-  .watch-row .row-action {
-    grid-column: 2;
-    grid-row: 2;
-    opacity: 1;
-  }
-
-  .watch-desktop-detail {
-    display: none;
-  }
-
-  .watch-card-detail {
-    display: block;
-    grid-column: 1 / -1;
-    border-top: 1px solid var(--line);
-    padding-top: 4px;
-  }
-
-  .watch-card-detail summary {
-    min-height: 40px;
-    color: var(--accent);
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 700;
-    line-height: 40px;
-  }
-
-  .watch-detail-grid {
-    display: grid;
-    grid-template-columns: 72px minmax(0, 1fr);
-    gap: 10px;
-    align-items: center;
-    color: var(--muted);
-    font-size: 12px;
-  }
-
-  .watch-detail-grid strong {
-    color: var(--ink);
-    font-family: var(--font-mono);
-  }
-
-  .stock-detail {
-    display: none;
   }
 
   body[data-page="holdings"] .table-scroll-hint {

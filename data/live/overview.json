@@ -2,12 +2,13 @@
   "meta": {
     "version": "1.0",
     "source": "live",
-    "as_of": "2026-05-14T22:22:32+08:00",
-    "trade_date": "2026-05-14",
+    "as_of": "2026-05-17T22:25:39+08:00",
+    "trade_date": "2026-05-17",
     "timezone": "Asia/Hong_Kong",
     "market_session": "closed",
-    "run_id": "live-overview-20260514-222232",
-    "stale_seconds": 0
+    "run_id": "live-overview-20260517-222539",
+    "stale_seconds": 0,
+    "source_quality": "real"
   },
   "data": {
     "health": {
@@ -29,82 +30,42 @@
       "source_as_of": "2026-05-12T14:56:00+08:00"
     },
     "market": {
-      "breadth_score": 16,
-      "sentiment_score": 26,
-      "ten_year_yield_pct": 2.31,
-      "usd_cnh": 6.783,
-      "risk_preference_score": 66
+      "breadth_score": 19,
+      "sentiment_score": 92,
+      "ten_year_yield_pct": 1.77,
+      "usd_cnh": 6.8122,
+      "risk_preference_score": null
     },
-    "strategy_status": [
-      {
-        "id": "joinquant-wufu-etf-v43",
-        "name": "五福闹新春 v4.3",
-        "page": "etf.html",
-        "status": "running",
-        "signal": "聚宽策略已更新",
-        "active_positions": 1,
-        "target_exposure_pct": 100.0,
-        "day_pnl_pct": 0,
-        "updated_at": "2026-05-14T13:10:00+08:00",
-        "source": "data/backend/strategies/etf.json"
-      },
-      {
-        "id": "small-cap-momentum",
-        "name": "小盘股动量",
-        "page": "small-cap.html",
-        "status": "running",
-        "signal": "2 个买入信号",
-        "active_positions": 4,
-        "target_exposure_pct": 55,
-        "day_pnl_pct": 0.91,
-        "updated_at": "2026-05-12T14:56:00+08:00",
-        "source": "data/backend/strategies/small-cap.json"
-      }
-    ],
+    "strategy_status": [],
     "alerts": [
       {
         "level": "info",
         "title": "真实行情已更新",
         "detail": "东方财富与 Yahoo 行情已写入 data/live，并由 API 对前端提供。"
-      }
-    ],
-    "timeline": [
-      {
-        "time": "13:10",
-        "label": "日志联调",
-        "status": "done",
-        "detail": "完整日志同步测试",
-        "source": "data/backend/strategies/etf.json",
-        "updated_at": "2026-05-14T13:10:00+08:00"
       },
       {
-        "time": "2026-05-14 13:10:00",
-        "label": "rank",
-        "status": "info",
-        "detail": "排名完成：159915.XSHE score=4.8 r2=0.72",
-        "source": "data/backend/strategies/etf.json",
-        "updated_at": "2026-05-14T22:05:06+08:00"
+        "level": "warning",
+        "title": "小盘风格波动率升高",
+        "detail": "中证1000 近 20 日实现波动率高于 60 日均值 18%。"
       },
       {
-        "time": "2026-05-14 13:10:01",
-        "label": "risk",
-        "status": "warning",
-        "detail": "示例风控日志：成交量过滤通过但需观察",
-        "source": "data/backend/strategies/etf.json",
-        "updated_at": "2026-05-14T22:05:06+08:00"
+        "level": "info",
+        "title": "ETF 轮动信号未触发风控降仓",
+        "detail": "当前组合回撤和成交量过滤均在允许范围内。"
       }
     ],
+    "timeline": [],
     "decision": {
       "tone": "negative",
       "title": "真实行情显示市场宽度偏弱",
-      "detail": "行业宽度 16/100，先观察扩散修复再提高仓位。",
+      "detail": "行业宽度 19/100，先观察扩散修复再提高仓位。",
       "action": "降低弱信号权重"
     },
     "sentiment_gauge": {
-      "score": 53.34,
-      "label": "低迷",
-      "previous_day_score": 78.9,
-      "previous_week_score": 81.76,
+      "score": 92,
+      "label": "活跃",
+      "previous_day_score": 53.34,
+      "previous_week_score": 63.91,
       "trend_30d": [
         {
           "date": "2026-04-14",
@@ -157,80 +118,76 @@
       ],
       "trend_6m": [
         {
-          "date": "2025-08-13",
-          "value": 68.53
-        },
-        {
           "date": "2025-08-14",
-          "value": 51.69
+          "value": 45.66
         },
         {
           "date": "2025-08-15",
-          "value": 69.99
+          "value": 64.09
         },
         {
           "date": "2025-08-18",
-          "value": 78.88
+          "value": 72.96
         },
         {
           "date": "2025-08-19",
-          "value": 60.81
+          "value": 58.74
         },
         {
           "date": "2025-08-20",
-          "value": 70.0
+          "value": 68.05
         },
         {
           "date": "2025-08-21",
-          "value": 60.37
+          "value": 58.48
         },
         {
           "date": "2025-08-22",
-          "value": 77.8
+          "value": 75.93
         },
         {
           "date": "2025-08-25",
-          "value": 87.85
+          "value": 85.91
         },
         {
           "date": "2025-08-26",
-          "value": 67.09
+          "value": 65.21
         },
         {
           "date": "2025-08-27",
-          "value": 61.01
+          "value": 59.1
         },
         {
           "date": "2025-08-28",
-          "value": 81.46
+          "value": 80.46
         },
         {
           "date": "2025-08-29",
-          "value": 71.18
+          "value": 69.33
         },
         {
           "date": "2025-09-01",
-          "value": 74.66
+          "value": 72.9
         },
         {
           "date": "2025-09-02",
-          "value": 58.84
+          "value": 57.02
         },
         {
           "date": "2025-09-03",
-          "value": 56.03
+          "value": 54.27
         },
         {
           "date": "2025-09-04",
-          "value": 37.1
+          "value": 35.4
         },
         {
           "date": "2025-09-05",
-          "value": 76.26
+          "value": 75.41
         },
         {
           "date": "2025-09-08",
-          "value": 61.0
+          "value": 59.28
         },
         {
           "date": "2025-09-09",
@@ -871,16 +828,150 @@
         {
           "date": "2026-05-14",
           "value": 53.34
+        },
+        {
+          "date": "2026-05-15",
+          "value": 50.99
         }
       ],
-      "calculation_note": "散户情绪曲线使用新浪上证指数、深证成指、创业板指最近约 180 个交易日的日 K 数据生成；每日分数综合当日涨跌、5 日/20 日动量、振幅和量能热度，归一化到 0-100。",
-      "trend_source": "sina-index-daily"
+      "trend_source": "sina-index-daily",
+      "calculation_note": "散户情绪曲线使用新浪上证指数、深证成指、创业板指最近约 180 个交易日的日 K 数据生成；每日分数综合当日涨跌、5 日/20 日动量、振幅和量能热度，归一化到 0-100。"
     },
     "heatmap": {
       "timeframe": "1D",
       "group_by": "sector",
-      "updated_at": "2026-05-14T22:22:28+08:00",
+      "updated_at": "2026-05-17T22:25:35+08:00",
       "cells": [
+        {
+          "symbol": "600519",
+          "name": "贵州茅台",
+          "sector": "消费",
+          "market": "cn",
+          "market_label": "A股",
+          "display_name": "贵州茅台",
+          "price": 1332.95,
+          "change_pct": -0.69,
+          "returns": {},
+          "index_memberships": [
+            "沪深300",
+            "上证50"
+          ],
+          "volume": 5818365,
+          "market_cap": null,
+          "weight": 14,
+          "data_source": "sina"
+        },
+        {
+          "symbol": "000858",
+          "name": "五粮液",
+          "sector": "消费",
+          "market": "cn",
+          "market_label": "A股",
+          "display_name": "五粮液",
+          "price": 86.87,
+          "change_pct": -2.38,
+          "returns": {},
+          "index_memberships": [
+            "沪深300"
+          ],
+          "volume": 36117869,
+          "market_cap": null,
+          "weight": 14,
+          "data_source": "sina"
+        },
+        {
+          "symbol": "601318",
+          "name": "中国平安",
+          "sector": "金融",
+          "market": "cn",
+          "market_label": "A股",
+          "display_name": "中国平安",
+          "price": 55.5,
+          "change_pct": -2.46,
+          "returns": {},
+          "index_memberships": [
+            "沪深300",
+            "上证50"
+          ],
+          "volume": 118190376,
+          "market_cap": null,
+          "weight": 14,
+          "data_source": "sina"
+        },
+        {
+          "symbol": "600036",
+          "name": "招商银行",
+          "sector": "金融",
+          "market": "cn",
+          "market_label": "A股",
+          "display_name": "招商银行",
+          "price": 37.65,
+          "change_pct": -0.42,
+          "returns": {},
+          "index_memberships": [
+            "沪深300",
+            "上证50"
+          ],
+          "volume": 82173796,
+          "market_cap": null,
+          "weight": 14,
+          "data_source": "sina"
+        },
+        {
+          "symbol": "300750",
+          "name": "宁德时代",
+          "sector": "新能源",
+          "market": "cn",
+          "market_label": "A股",
+          "display_name": "宁德时代",
+          "price": 423.6,
+          "change_pct": -0.8,
+          "returns": {},
+          "index_memberships": [
+            "沪深300",
+            "创业板指"
+          ],
+          "volume": 29704893,
+          "market_cap": null,
+          "weight": 14,
+          "data_source": "sina"
+        },
+        {
+          "symbol": "002594",
+          "name": "比亚迪",
+          "sector": "新能源",
+          "market": "cn",
+          "market_label": "A股",
+          "display_name": "比亚迪",
+          "price": 96.3,
+          "change_pct": -2.46,
+          "returns": {},
+          "index_memberships": [
+            "沪深300"
+          ],
+          "volume": 46621723,
+          "market_cap": null,
+          "weight": 14,
+          "data_source": "sina"
+        },
+        {
+          "symbol": "601012",
+          "name": "隆基绿能",
+          "sector": "新能源",
+          "market": "cn",
+          "market_label": "A股",
+          "display_name": "隆基绿能",
+          "price": 15.6,
+          "change_pct": -4.29,
+          "returns": {},
+          "index_memberships": [
+            "沪深300"
+          ],
+          "volume": 245767572,
+          "market_cap": null,
+          "weight": 14,
+          "data_source": "sina"
+        },
         {
           "symbol": "300308",
           "name": "中际旭创",
@@ -888,10 +979,14 @@
           "market": "cn",
           "market_label": "A股",
           "display_name": "中际旭创",
-          "price": 1078.0,
-          "change_pct": 2.74,
+          "price": 1049.87,
+          "change_pct": -2.61,
           "returns": {},
-          "volume": 30057134,
+          "index_memberships": [
+            "创业板指",
+            "中证1000"
+          ],
+          "volume": 27625280,
           "market_cap": null,
           "weight": 14,
           "data_source": "sina"
@@ -903,10 +998,13 @@
           "market": "cn",
           "market_label": "A股",
           "display_name": "沪电股份",
-          "price": 107.02,
-          "change_pct": -4.94,
+          "price": 102.99,
+          "change_pct": -3.77,
           "returns": {},
-          "volume": 73676104,
+          "index_memberships": [
+            "沪深300"
+          ],
+          "volume": 62758418,
           "market_cap": null,
           "weight": 14,
           "data_source": "sina"
@@ -918,25 +1016,196 @@
           "market": "cn",
           "market_label": "A股",
           "display_name": "胜宏科技",
-          "price": 354.83,
-          "change_pct": -8.41,
+          "price": 340.22,
+          "change_pct": -4.12,
           "returns": {},
-          "volume": 74711265,
+          "index_memberships": [
+            "创业板指",
+            "中证1000"
+          ],
+          "volume": 53579510,
           "market_cap": null,
           "weight": 14,
           "data_source": "sina"
         },
         {
-          "symbol": "600519",
-          "name": "贵州茅台",
+          "symbol": "688981",
+          "name": "中芯国际",
+          "sector": "半导体",
+          "market": "cn",
+          "market_label": "A股",
+          "display_name": "中芯国际",
+          "price": 119.02,
+          "change_pct": 0.95,
+          "returns": {},
+          "index_memberships": [
+            "科创50"
+          ],
+          "volume": 132810054,
+          "market_cap": null,
+          "weight": 14,
+          "data_source": "sina"
+        },
+        {
+          "symbol": "688256",
+          "name": "寒武纪",
+          "sector": "半导体",
+          "market": "cn",
+          "market_label": "A股",
+          "display_name": "寒武纪",
+          "price": 1209.0,
+          "change_pct": -4.09,
+          "returns": {},
+          "index_memberships": [
+            "科创50"
+          ],
+          "volume": 16174997,
+          "market_cap": null,
+          "weight": 14,
+          "data_source": "sina"
+        },
+        {
+          "symbol": "603501",
+          "name": "韦尔股份",
+          "sector": "半导体",
+          "market": "cn",
+          "market_label": "A股",
+          "display_name": "韦尔股份",
+          "price": 101.39,
+          "change_pct": 0.89,
+          "returns": {},
+          "index_memberships": [
+            "沪深300"
+          ],
+          "volume": 41659800,
+          "market_cap": null,
+          "weight": 14,
+          "data_source": "sina"
+        },
+        {
+          "symbol": "600276",
+          "name": "恒瑞医药",
+          "sector": "医药",
+          "market": "cn",
+          "market_label": "A股",
+          "display_name": "恒瑞医药",
+          "price": 53.99,
+          "change_pct": -0.61,
+          "returns": {},
+          "index_memberships": [
+            "沪深300"
+          ],
+          "volume": 76598895,
+          "market_cap": null,
+          "weight": 14,
+          "data_source": "sina"
+        },
+        {
+          "symbol": "300760",
+          "name": "迈瑞医疗",
+          "sector": "医药",
+          "market": "cn",
+          "market_label": "A股",
+          "display_name": "迈瑞医疗",
+          "price": 160.37,
+          "change_pct": -0.54,
+          "returns": {},
+          "index_memberships": [
+            "沪深300",
+            "创业板指"
+          ],
+          "volume": 7013694,
+          "market_cap": null,
+          "weight": 14,
+          "data_source": "sina"
+        },
+        {
+          "symbol": "601899",
+          "name": "紫金矿业",
+          "sector": "周期",
+          "market": "cn",
+          "market_label": "A股",
+          "display_name": "紫金矿业",
+          "price": 31.84,
+          "change_pct": -5.01,
+          "returns": {},
+          "index_memberships": [
+            "沪深300"
+          ],
+          "volume": 448282207,
+          "market_cap": null,
+          "weight": 14,
+          "data_source": "sina"
+        },
+        {
+          "symbol": "600030",
+          "name": "中信证券",
+          "sector": "金融",
+          "market": "cn",
+          "market_label": "A股",
+          "display_name": "中信证券",
+          "price": 26.35,
+          "change_pct": -1.16,
+          "returns": {},
+          "index_memberships": [
+            "沪深300",
+            "上证50"
+          ],
+          "volume": 132231766,
+          "market_cap": null,
+          "weight": 14,
+          "data_source": "sina"
+        },
+        {
+          "symbol": "000333",
+          "name": "美的集团",
+          "sector": "制造",
+          "market": "cn",
+          "market_label": "A股",
+          "display_name": "美的集团",
+          "price": 82.57,
+          "change_pct": 0.93,
+          "returns": {},
+          "index_memberships": [
+            "沪深300"
+          ],
+          "volume": 42660857,
+          "market_cap": null,
+          "weight": 14,
+          "data_source": "sina"
+        },
+        {
+          "symbol": "600887",
+          "name": "伊利股份",
           "sector": "消费",
           "market": "cn",
           "market_label": "A股",
-          "display_name": "贵州茅台",
-          "price": 1342.17,
-          "change_pct": -0.14,
+          "display_name": "伊利股份",
+          "price": 27.61,
+          "change_pct": -0.61,
           "returns": {},
-          "volume": 5524434,
+          "index_memberships": [
+            "沪深300"
+          ],
+          "volume": 48337165,
+          "market_cap": null,
+          "weight": 14,
+          "data_source": "sina"
+        },
+        {
+          "symbol": "002415",
+          "name": "海康威视",
+          "sector": "科技",
+          "market": "cn",
+          "market_label": "A股",
+          "display_name": "海康威视",
+          "price": 33.12,
+          "change_pct": -0.99,
+          "returns": {},
+          "index_memberships": [
+            "沪深300"
+          ],
+          "volume": 61854638,
           "market_cap": null,
           "weight": 14,
           "data_source": "sina"
@@ -945,52 +1214,52 @@
     },
     "top_etfs": [
       {
-        "symbol": "159915",
-        "name": "创业板ETF",
-        "return_pct": 3.61,
+        "symbol": "512100",
+        "name": "中证1000ETF",
+        "return_pct": 1.89,
         "aum": null,
-        "volume": 1471968793,
-        "turnover": 5906571388.606,
+        "volume": 1098945964,
+        "turnover": 3851089697.0,
         "sparkline": [
-          4.048,
-          4.092,
-          3.948,
-          3.961,
-          4.104
+          3.529,
+          3.526,
+          3.461,
+          3.488,
+          3.554
         ],
         "data_source": "sina",
         "rank": 1
       },
       {
-        "symbol": "512100",
-        "name": "中证1000ETF",
-        "return_pct": 2.38,
+        "symbol": "510300",
+        "name": "沪深300ETF",
+        "return_pct": 1.56,
         "aum": null,
-        "volume": 628072853,
-        "turnover": 2238207387.0,
+        "volume": 1047902445,
+        "turnover": 5135152285.0,
         "sparkline": [
-          3.598,
-          3.61,
-          3.525,
-          3.529,
-          3.613
+          4.941,
+          4.935,
+          4.852,
+          4.878,
+          4.954
         ],
         "data_source": "sina",
         "rank": 2
       },
       {
-        "symbol": "510300",
-        "name": "沪深300ETF",
-        "return_pct": 2.02,
+        "symbol": "159915",
+        "name": "创业板ETF",
+        "return_pct": 1.13,
         "aum": null,
-        "volume": 1028164563,
-        "turnover": 5118663487.0,
+        "volume": 1903600706,
+        "turnover": 7510651174.562,
         "sparkline": [
-          5.017,
-          5.037,
-          4.931,
-          4.941,
-          5.041
+          3.961,
+          3.961,
+          3.88,
+          3.97,
+          4.015
         ],
         "data_source": "sina",
         "rank": 3
@@ -998,12 +1267,12 @@
     ],
     "sectors": [
       {
-        "id": "proxy-2",
-        "name": "消费",
+        "id": "proxy-8",
+        "name": "制造",
         "icon": "◇",
-        "performance_pct": -0.14,
-        "up_count": 0,
-        "down_count": 1,
+        "performance_pct": 0.93,
+        "up_count": 1,
+        "down_count": 0,
         "flat_count": 0,
         "market_cap": null,
         "turnover": null,
@@ -1011,183 +1280,111 @@
         "data_source": "eastmoney"
       },
       {
-        "id": "proxy-1",
-        "name": "AI 链",
+        "id": "proxy-6",
+        "name": "医药",
         "icon": "◇",
-        "performance_pct": -3.54,
-        "up_count": 1,
+        "performance_pct": -0.57,
+        "up_count": 0,
         "down_count": 2,
         "flat_count": 0,
         "market_cap": null,
         "turnover": null,
         "rank": 2,
         "data_source": "eastmoney"
+      },
+      {
+        "id": "proxy-5",
+        "name": "半导体",
+        "icon": "◇",
+        "performance_pct": -0.75,
+        "up_count": 2,
+        "down_count": 1,
+        "flat_count": 0,
+        "market_cap": null,
+        "turnover": null,
+        "rank": 3,
+        "data_source": "eastmoney"
+      },
+      {
+        "id": "proxy-9",
+        "name": "科技",
+        "icon": "◇",
+        "performance_pct": -0.99,
+        "up_count": 0,
+        "down_count": 1,
+        "flat_count": 0,
+        "market_cap": null,
+        "turnover": null,
+        "rank": 4,
+        "data_source": "eastmoney"
+      },
+      {
+        "id": "proxy-1",
+        "name": "消费",
+        "icon": "◇",
+        "performance_pct": -1.23,
+        "up_count": 0,
+        "down_count": 3,
+        "flat_count": 0,
+        "market_cap": null,
+        "turnover": null,
+        "rank": 5,
+        "data_source": "eastmoney"
+      },
+      {
+        "id": "proxy-2",
+        "name": "金融",
+        "icon": "◇",
+        "performance_pct": -1.35,
+        "up_count": 0,
+        "down_count": 3,
+        "flat_count": 0,
+        "market_cap": null,
+        "turnover": null,
+        "rank": 6,
+        "data_source": "eastmoney"
+      },
+      {
+        "id": "proxy-3",
+        "name": "新能源",
+        "icon": "◇",
+        "performance_pct": -2.52,
+        "up_count": 0,
+        "down_count": 3,
+        "flat_count": 0,
+        "market_cap": null,
+        "turnover": null,
+        "rank": 7,
+        "data_source": "eastmoney"
+      },
+      {
+        "id": "proxy-4",
+        "name": "AI 链",
+        "icon": "◇",
+        "performance_pct": -3.5,
+        "up_count": 0,
+        "down_count": 3,
+        "flat_count": 0,
+        "market_cap": null,
+        "turnover": null,
+        "rank": 8,
+        "data_source": "eastmoney"
+      },
+      {
+        "id": "proxy-7",
+        "name": "周期",
+        "icon": "◇",
+        "performance_pct": -5.01,
+        "up_count": 0,
+        "down_count": 1,
+        "flat_count": 0,
+        "market_cap": null,
+        "turnover": null,
+        "rank": 9,
+        "data_source": "eastmoney"
       }
     ],
-    "watchlist": {
-      "groups": [
-        {
-          "name": "AI 链",
-          "items": [
-            {
-              "symbol": "300308",
-              "name": "中际旭创",
-              "logo": "中",
-              "market_region": "cn",
-              "market": "SZ",
-              "price": 1078.0,
-              "change_pct": 2.74,
-              "intraday_high": 1088.88,
-              "intraday_low": 1025.1,
-              "intraday_current": 1078.0,
-              "volume": 30057134,
-              "volume_ratio": null,
-              "market_cap": "--",
-              "week52_low": 1025.1,
-              "week52_high": 1088.88,
-              "week52_current": 1078.0,
-              "price_series": [
-                {
-                  "value": 1049.2
-                },
-                {
-                  "value": 1065.0
-                },
-                {
-                  "value": 1025.1
-                },
-                {
-                  "value": 1078.0
-                },
-                {
-                  "value": 1088.88
-                }
-              ],
-              "data_source": "sina"
-            },
-            {
-              "symbol": "002463",
-              "name": "沪电股份",
-              "logo": "沪",
-              "market_region": "cn",
-              "market": "SZ",
-              "price": 107.02,
-              "change_pct": -4.94,
-              "intraday_high": 114.46,
-              "intraday_low": 106.3,
-              "intraday_current": 107.02,
-              "volume": 73676104,
-              "volume_ratio": null,
-              "market_cap": "--",
-              "week52_low": 106.3,
-              "week52_high": 114.46,
-              "week52_current": 107.02,
-              "price_series": [
-                {
-                  "value": 112.58
-                },
-                {
-                  "value": 114.38
-                },
-                {
-                  "value": 106.3
-                },
-                {
-                  "value": 107.02
-                },
-                {
-                  "value": 114.46
-                }
-              ],
-              "data_source": "sina"
-            }
-          ]
-        },
-        {
-          "name": "消费股",
-          "items": [
-            {
-              "symbol": "600519",
-              "name": "贵州茅台",
-              "logo": "茅",
-              "market_region": "cn",
-              "market": "SH",
-              "price": 1342.17,
-              "change_pct": -0.14,
-              "intraday_high": 1369.06,
-              "intraday_low": 1335.18,
-              "intraday_current": 1342.17,
-              "volume": 5524434,
-              "volume_ratio": null,
-              "market_cap": "--",
-              "week52_low": 1335.18,
-              "week52_high": 1369.06,
-              "week52_current": 1342.17,
-              "price_series": [
-                {
-                  "value": 1344.09
-                },
-                {
-                  "value": 1338.0
-                },
-                {
-                  "value": 1335.18
-                },
-                {
-                  "value": 1342.17
-                },
-                {
-                  "value": 1369.06
-                }
-              ],
-              "data_source": "sina"
-            }
-          ]
-        },
-        {
-          "name": "AI",
-          "items": [
-            {
-              "symbol": "601138",
-              "name": "工业富联",
-              "logo": "工",
-              "market_region": "cn",
-              "market": "SH",
-              "price": 68.6,
-              "change_pct": -3.16,
-              "intraday_high": 74.0,
-              "intraday_low": 67.28,
-              "intraday_current": 68.6,
-              "volume": 401745179,
-              "volume_ratio": null,
-              "market_cap": "--",
-              "week52_low": 67.28,
-              "week52_high": 74.0,
-              "week52_current": 68.6,
-              "price_series": [
-                {
-                  "value": 70.84
-                },
-                {
-                  "value": 74.0
-                },
-                {
-                  "value": 67.28
-                },
-                {
-                  "value": 68.6
-                },
-                {
-                  "value": 74.0
-                }
-              ],
-              "data_source": "sina"
-            }
-          ]
-        }
-      ]
-    },
-    "strategy_status_source": "strategy-artifacts",
-    "timeline_source": "strategy-artifacts"
+    "strategy_status_source": "unavailable",
+    "timeline_source": "unavailable"
   }
 }

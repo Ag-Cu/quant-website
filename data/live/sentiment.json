@@ -2,25 +2,32 @@
   "meta": {
     "version": "1.0",
     "source": "live",
-    "as_of": "2026-05-14T23:20:25+08:00",
-    "trade_date": "2026-05-14",
+    "as_of": "2026-05-17T22:25:37+08:00",
+    "trade_date": "2026-05-17",
     "timezone": "Asia/Hong_Kong",
     "market_session": "closed",
-    "run_id": "live-sentiment-20260514-232025",
+    "run_id": "live-sentiment-20260517-222537",
     "stale_seconds": 0,
-    "source_quality": "proxy"
+    "source_quality": "real"
   },
   "data": {
     "source_algorithm": {
-      "name": "行业/指数宽度散户情绪代理指标",
-      "source_file": "scripts/update_live_data.py",
-      "data_source": "market breadth proxy from data/live/breadth.json",
-      "source_quality": "proxy",
-      "time_window": "daily snapshot",
-      "surge_rule": "强势行业/指数桶数量（宽度 >= 70）替代分钟成交激增次数",
-      "excluded_minutes": [],
-      "brilliant_window_minutes": null,
-      "volatility_formula": "sentiment_value = clipped((market_width * 0.72 + strong_industries * 1.5 + avg_industry_change * 2 + 18) / 650)",
+      "name": "真实 1 分钟耀眼波动率",
+      "source_file": "https://quotes.sina.cn/cn/api/openapi.php/CN_MarketDataService.getKLineData?symbol=sz159915&scale=1&ma=no&datalen=320",
+      "data_source": "sina cn 1m kline",
+      "source_quality": "real",
+      "time_window": "09:32 - 14:57",
+      "surge_rule": "volume.diff() > mean(volume.diff()) + std(volume.diff())，并排除开盘/午后首分钟/尾盘集合竞价分钟",
+      "excluded_minutes": [
+        "09:30",
+        "09:31",
+        "13:01",
+        "14:58",
+        "14:59",
+        "15:00"
+      ],
+      "brilliant_window_minutes": 5,
+      "volatility_formula": "成交量增量激增分钟及后续 4 分钟的 1 分钟收益率标准差均值",
       "warning_line": 0.15,
       "output_fields": [
         "daily_brilliant_vol",
@@ -30,40 +37,40 @@
       ]
     },
     "summary": {
-      "score": 26,
-      "label": "低迷",
-      "temperature": 26,
-      "daily_brilliant_vol": 0.04,
-      "surge_count": 0,
-      "tracked_symbol": "BREADTH_PROXY",
+      "score": 92,
+      "label": "活跃",
+      "temperature": 92,
+      "daily_brilliant_vol": 0.1414,
+      "surge_count": 32,
+      "tracked_symbol": "159915.XSHE",
       "turnover_vs_20d_pct": 118,
       "margin_heat_pct": 54,
-      "hot_topic_count": 0,
-      "source_quality": "proxy"
+      "hot_topic_count": 32,
+      "source_quality": "real"
     },
     "latest_snapshot": {
-      "updated_at": "2026-05-14T23:20:25+08:00",
-      "update_frequency": "真实源不可用时降级更新",
-      "symbol": "BREADTH_PROXY",
-      "name": "代理指标：全市场宽度热度",
-      "sentiment_value": 0.04,
+      "updated_at": "2026-05-17T22:25:37+08:00",
+      "update_frequency": "分钟源自动更新",
+      "symbol": "159915.XSHE",
+      "name": "创业板ETF",
+      "sentiment_value": 0.1414,
       "status": "淡定",
-      "last_count": 0,
+      "last_count": 32,
       "warning_line": 0.15,
-      "source_quality": "proxy"
+      "source_quality": "real"
     },
     "brilliant_volatility": {
-      "symbol": "BREADTH_PROXY",
-      "name": "代理指标：全市场宽度热度",
-      "close": 16.0,
-      "daily_brilliant_vol": 0.04,
-      "surge_count": 0,
-      "last_surge_time": "23:20",
+      "symbol": "159915.XSHE",
+      "name": "创业板ETF",
+      "close": 3.937,
+      "daily_brilliant_vol": 0.1414,
+      "surge_count": 32,
+      "last_surge_time": "14:53",
       "intraday_signal": "淡定",
-      "signal_detail": "真实散户情绪/耀眼波动率分钟源不可用，当前为全市场宽度代理指标。",
-      "baseline": "强势行业/指数桶数量（宽度 >= 70）替代分钟成交激增次数",
-      "window": "daily snapshot",
-      "source_quality": "proxy"
+      "signal_detail": "真实分钟源计算值 低于预警线 0.15。",
+      "baseline": "volume.diff() > mean(volume.diff()) + std(volume.diff())，并排除开盘/午后首分钟/尾盘集合竞价分钟",
+      "window": "09:32 - 14:57",
+      "source_quality": "real"
     },
     "sentiment_trend": [
       {
@@ -243,12 +250,8 @@
         "value": 0.1061
       },
       {
-        "date": "2026-05-13",
-        "value": 0.1092
-      },
-      {
-        "date": "2026-05-14",
-        "value": 0.04
+        "date": "2026-05-17",
+        "value": 0.1414
       }
     ],
     "brilliant_series": [
@@ -285,64 +288,300 @@
     ],
     "surge_events": [
       {
-        "time": "09:46",
-        "volume_increase_ratio": 1.62,
-        "return_std": 0.28,
-        "price_change_pct": 0.18
+        "time": "09:37",
+        "volume_increase_ratio": 1.91,
+        "volume_increase": 10521100.0,
+        "return_std": 0.2773,
+        "price_change_pct": 0.0
       },
       {
-        "time": "10:18",
-        "volume_increase_ratio": 1.48,
-        "return_std": 0.23,
-        "price_change_pct": 0.12
+        "time": "09:42",
+        "volume_increase_ratio": 1.59,
+        "volume_increase": 6852425.0,
+        "return_std": 0.1991,
+        "price_change_pct": -0.4786
       },
       {
-        "time": "13:37",
-        "volume_increase_ratio": 1.86,
-        "return_std": 0.41,
-        "price_change_pct": -0.22
+        "time": "09:48",
+        "volume_increase_ratio": 1.26,
+        "volume_increase": 4670300.0,
+        "return_std": 0.3012,
+        "price_change_pct": -0.1272
       },
       {
-        "time": "14:32",
-        "volume_increase_ratio": 1.74,
-        "return_std": 0.36,
-        "price_change_pct": 0.16
+        "time": "09:58",
+        "volume_increase_ratio": 1.73,
+        "volume_increase": 5300800.0,
+        "return_std": 0.0614,
+        "price_change_pct": -0.6651
+      },
+      {
+        "time": "10:02",
+        "volume_increase_ratio": 2.38,
+        "volume_increase": 11104100.0,
+        "return_std": 0.1756,
+        "price_change_pct": 0.8241
+      },
+      {
+        "time": "10:06",
+        "volume_increase_ratio": 2.56,
+        "volume_increase": 9675172.0,
+        "return_std": 0.1505,
+        "price_change_pct": 0.2299
+      },
+      {
+        "time": "10:12",
+        "volume_increase_ratio": 2.13,
+        "volume_increase": 5824700.0,
+        "return_std": 0.2552,
+        "price_change_pct": 0.1783
+      },
+      {
+        "time": "10:19",
+        "volume_increase_ratio": 2.18,
+        "volume_increase": 9727400.0,
+        "return_std": 0.1924,
+        "price_change_pct": -0.2031
+      },
+      {
+        "time": "10:36",
+        "volume_increase_ratio": 3.79,
+        "volume_increase": 7639800.0,
+        "return_std": 0.1363,
+        "price_change_pct": -0.4325
+      },
+      {
+        "time": "10:47",
+        "volume_increase_ratio": 3.37,
+        "volume_increase": 4671100.0,
+        "return_std": 0.0773,
+        "price_change_pct": 0.2536
+      },
+      {
+        "time": "10:56",
+        "volume_increase_ratio": 2.21,
+        "volume_increase": 7236200.0,
+        "return_std": 0.0998,
+        "price_change_pct": -0.2516
+      },
+      {
+        "time": "11:01",
+        "volume_increase_ratio": 3.97,
+        "volume_increase": 6492100.0,
+        "return_std": 0.1202,
+        "price_change_pct": 0.5283
+      },
+      {
+        "time": "11:08",
+        "volume_increase_ratio": 2.55,
+        "volume_increase": 7764400.0,
+        "return_std": 0.1682,
+        "price_change_pct": 0.0749
+      },
+      {
+        "time": "11:11",
+        "volume_increase_ratio": 2.51,
+        "volume_increase": 11847400.0,
+        "return_std": 0.1664,
+        "price_change_pct": 0.2002
+      },
+      {
+        "time": "11:16",
+        "volume_increase_ratio": 2.81,
+        "volume_increase": 6171700.0,
+        "return_std": 0.1364,
+        "price_change_pct": -0.3992
+      },
+      {
+        "time": "11:22",
+        "volume_increase_ratio": 3.35,
+        "volume_increase": 7065600.0,
+        "return_std": 0.1603,
+        "price_change_pct": 0.1006
+      },
+      {
+        "time": "13:02",
+        "volume_increase_ratio": 5.21,
+        "volume_increase": 8442600.0,
+        "return_std": 0.2919,
+        "price_change_pct": -0.101
+      },
+      {
+        "time": "13:03",
+        "volume_increase_ratio": 1.57,
+        "volume_increase": 5949700.0,
+        "return_std": 0.1361,
+        "price_change_pct": 0.1266
+      },
+      {
+        "time": "13:05",
+        "volume_increase_ratio": 2.66,
+        "volume_increase": 4973400.0,
+        "return_std": 0.0828,
+        "price_change_pct": 0.0
+      },
+      {
+        "time": "13:11",
+        "volume_increase_ratio": 4.36,
+        "volume_increase": 9007925.0,
+        "return_std": 0.0867,
+        "price_change_pct": 0.2281
+      },
+      {
+        "time": "13:18",
+        "volume_increase_ratio": 3.71,
+        "volume_increase": 10315400.0,
+        "return_std": 0.1047,
+        "price_change_pct": 0.3031
+      },
+      {
+        "time": "13:35",
+        "volume_increase_ratio": 3.37,
+        "volume_increase": 5338300.0,
+        "return_std": 0.0577,
+        "price_change_pct": -0.2276
+      },
+      {
+        "time": "13:42",
+        "volume_increase_ratio": 2.56,
+        "volume_increase": 10567000.0,
+        "return_std": 0.0718,
+        "price_change_pct": -0.127
+      },
+      {
+        "time": "13:55",
+        "volume_increase_ratio": 3.67,
+        "volume_increase": 5312300.0,
+        "return_std": 0.1856,
+        "price_change_pct": -0.2542
+      },
+      {
+        "time": "13:57",
+        "volume_increase_ratio": 2.21,
+        "volume_increase": 6334424.0,
+        "return_std": 0.0606,
+        "price_change_pct": -0.483
+      },
+      {
+        "time": "14:00",
+        "volume_increase_ratio": 2.29,
+        "volume_increase": 6904698.0,
+        "return_std": 0.0598,
+        "price_change_pct": -0.1531
+      },
+      {
+        "time": "14:01",
+        "volume_increase_ratio": 1.54,
+        "volume_increase": 6573802.0,
+        "return_std": 0.0529,
+        "price_change_pct": -0.0511
+      },
+      {
+        "time": "14:11",
+        "volume_increase_ratio": 2.89,
+        "volume_increase": 4666300.0,
+        "return_std": 0.1145,
+        "price_change_pct": -0.0254
+      },
+      {
+        "time": "14:14",
+        "volume_increase_ratio": 3.85,
+        "volume_increase": 12481200.0,
+        "return_std": 0.1679,
+        "price_change_pct": 0.1271
+      },
+      {
+        "time": "14:19",
+        "volume_increase_ratio": 5.14,
+        "volume_increase": 11673600.0,
+        "return_std": 0.175,
+        "price_change_pct": -0.482
+      },
+      {
+        "time": "14:31",
+        "volume_increase_ratio": 4.07,
+        "volume_increase": 11369500.0,
+        "return_std": 0.1303,
+        "price_change_pct": -0.2808
+      },
+      {
+        "time": "14:53",
+        "volume_increase_ratio": 1.96,
+        "volume_increase": 5959100.0,
+        "return_std": 0.0686,
+        "price_change_pct": 0.0763
       }
     ],
     "gauges": [
       {
-        "name": "总体行业/指数热度",
-        "value": 16.0,
-        "detail": "来自市场宽度 live 数据"
+        "name": "耀眼波动率",
+        "value": 91.91,
+        "detail": "预警线 0.15"
       },
       {
-        "name": "强势行业/指数数量",
-        "value": 0,
-        "detail": "0 个宽度 >= 70"
+        "name": "成交激增次数",
+        "value": 100,
+        "detail": "窗口 09:32 - 14:57"
       },
       {
-        "name": "平均涨跌",
-        "value": 32,
-        "detail": "-1.84%"
+        "name": "排除分钟",
+        "value": 60,
+        "detail": "09:30、09:31、13:01、14:58、14:59、15:00"
       },
       {
         "name": "数据质量",
-        "value": 35,
-        "detail": "代理指标"
+        "value": 100,
+        "detail": "真实分钟源"
       }
     ],
     "topics": [
       {
-        "name": "AI 链",
-        "heat": 33.0,
-        "change": 33.0,
-        "leader": "proxy-1"
+        "name": "制造",
+        "heat": 100.0,
+        "change": 100.0,
+        "leader": "proxy-8"
+      },
+      {
+        "name": "半导体",
+        "heat": 67.0,
+        "change": 67.0,
+        "leader": "proxy-5"
       },
       {
         "name": "消费",
         "heat": 0.0,
         "change": 0.0,
+        "leader": "proxy-1"
+      },
+      {
+        "name": "金融",
+        "heat": 0.0,
+        "change": 0.0,
         "leader": "proxy-2"
+      },
+      {
+        "name": "新能源",
+        "heat": 0.0,
+        "change": 0.0,
+        "leader": "proxy-3"
+      },
+      {
+        "name": "AI 链",
+        "heat": 0.0,
+        "change": 0.0,
+        "leader": "proxy-4"
+      },
+      {
+        "name": "医药",
+        "heat": 0.0,
+        "change": 0.0,
+        "leader": "proxy-6"
+      },
+      {
+        "name": "周期",
+        "heat": 0.0,
+        "change": 0.0,
+        "leader": "proxy-7"
       }
     ],
     "flows": [
@@ -374,8 +613,8 @@
     "warnings": [
       {
         "level": "info",
-        "title": "当前为代理指标",
-        "detail": "当前情绪值 0.0400，预警线 0.15。真实散户情绪/耀眼波动率分钟源不可用，当前为全市场宽度代理指标。"
+        "title": "情绪指标已自动更新",
+        "detail": "当前情绪值 0.1414，预警线 0.15。真实分钟源计算值 低于预警线 0.15。"
       }
     ]
   }

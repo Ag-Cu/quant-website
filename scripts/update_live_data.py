@@ -408,6 +408,34 @@ def optional_number(value: Any) -> float | None:
     return number
 
 
+def value_text(value: Any, digits: int = 2) -> str:
+    number = optional_number(value)
+    if number is None:
+        return "--"
+    return f"{number:+.{digits}f}" if number > 0 else f"{number:.{digits}f}"
+
+
+def pct_text(value: Any, digits: int = 2) -> str:
+    number = optional_number(value)
+    if number is None:
+        return "--"
+    return f"{number:+.{digits}f}%"
+
+
+def tone_for_value(value: Any) -> str:
+    number = optional_number(value)
+    if number is None:
+        return "neutral"
+    return "positive" if number > 0 else "negative" if number < 0 else "neutral"
+
+
+def tone_for_inverse(value: Any) -> str:
+    number = optional_number(value)
+    if number is None:
+        return "neutral"
+    return "positive" if number < 0 else "negative" if number > 0 else "neutral"
+
+
 def eastmoney_market_id(symbol: str, market: str | None = None) -> str:
     if market:
         prefix = "1" if market.upper() in {"SH", "SSE", "XSHG"} else "0"
@@ -2292,8 +2320,10 @@ def build_macro_payload() -> dict[str, Any]:
     }
     china1y_quote = china_curve.get("1年")
     china10y = optional_number(china10y_quote.get("value"))
+    china1y = optional_number(china1y_quote.get("value")) if china1y_quote else None
     us10y = optional_number(us10y_quote.get("value"))
     spread = round((china10y - us10y) * 100, 1) if china10y is not None and us10y is not None else None
+    term_spread = round((china10y - china1y) * 100, 1) if china10y is not None and china1y is not None else None
 
     try:
         index_metrics = fetch_eastmoney_index_metrics()
@@ -2333,7 +2363,10 @@ def build_macro_payload() -> dict[str, Any]:
         "risk_preference_formula": "clip(50 + 6*CSI300_1D% + 4*CSI1000_1D% + 5*(equity_bond_spread_pct-3.0) - 0.15*CN10Y_daily_bp - 3*USDCNH_1D%)",
         "label": "不可用" if risk_score is None else "偏强" if risk_score >= 70 else "中性偏强" if risk_score >= 60 else "中性" if risk_score >= 40 else "偏弱",
         "ten_year_yield_pct": china10y,
+        "one_year_yield_pct": china1y,
+        "china_term_spread_bp": term_spread,
         "us_ten_year_yield_pct": us10y,
+        "china_us_spread_bp": spread,
         "usd_cnh": usd_cnh_quote.get("value"),
         "equity_bond_spread_pct": equity_bond_spread,
         "equity_bond_spread_formula": "CSI300 earnings yield (100 / PE_TTM) - ChinaBond 10Y treasury yield",
@@ -2348,6 +2381,51 @@ def build_macro_payload() -> dict[str, Any]:
         {"name": "USD/CNH", "value": usd_cnh_quote.get("value"), "change_pct": usd_cnh_quote.get("change_pct"), "data_source": usd_cnh_quote.get("data_source"), "as_of": usd_cnh_quote.get("as_of")},
     ]
     data["risk_assets"] = risk_assets[:4]
+    indicators: list[dict[str, Any]] = []
+
+    def add_indicator(
+        category: str,
+        name: str,
+        value: Any,
+        unit: str = "",
+        decimals: int = 2,
+        change_text: str = "",
+        tone: str = "",
+        data_source: str | None = None,
+        as_of: str | None = None,
+    ) -> None:
+        if value is None:
+            return
+        indicators.append(
+            {
+                "category": category,
+                "name": name,
+                "value": value,
+                "unit": unit,
+                "decimals": decimals,
+                "display_value": f"{normalize_number(value):.{decimals}f}{unit}" if isinstance(value, (int, float)) else str(value),
+                "change_text": change_text,
+                "tone": tone,
+                "data_source": data_source,
+                "as_of": as_of,
+            }
+        )
+
+    csi300 = index_metrics.get("CSI300") or {}
+    csi1000 = index_metrics.get("CSI1000") or {}
+    chinext = index_metrics.get("CHINEXT") or {}
+    add_indicator("增长/风险偏好", "A股风险偏好分", risk_score, "/100", 0, tone="positive" if risk_score is not None and risk_score >= 60 else "warning" if risk_score is not None and risk_score < 40 else "neutral", data_source="东方财富 + ChinaBond + FX", as_of=iso_now())
+    add_indicator("利率", "中国 10Y 国债", china10y, "%", 2, f"{value_text(china10y_quote.get('change_bp'), 1)}bp" if china10y_quote.get("change_bp") is not None else "", tone=tone_for_inverse(china10y_quote.get("change_bp")), data_source=china10y_quote.get("data_source"), as_of=china10y_quote.get("as_of"))
+    add_indicator("利率", "中国期限利差 10Y-1Y", term_spread, "bp", 1, data_source="财政部-中国国债收益率曲线/中债估值(CCDC)", as_of=china10y_quote.get("as_of"))
+    add_indicator("利率", "美国 10Y 国债", us10y, "%", 2, data_source=us10y_quote.get("data_source"), as_of=us10y_quote.get("as_of"))
+    add_indicator("利率", "中美 10Y 利差", spread, "bp", 1, data_source="ChinaBond + 华尔街见闻实时行情", as_of=max(str(china10y_quote.get("as_of") or ""), str(us10y_quote.get("as_of") or "")))
+    add_indicator("汇率", "USD/CNH", usd_cnh_quote.get("value"), "", 4, pct_text(usd_cnh_quote.get("change_pct")), tone=tone_for_inverse(usd_cnh_quote.get("change_pct")), data_source=usd_cnh_quote.get("data_source"), as_of=usd_cnh_quote.get("as_of"))
+    add_indicator("估值", "沪深300 PE(TTM)", csi300.get("pe_ttm"), "x", 2, data_source=csi300.get("data_source"), as_of=csi300.get("as_of"))
+    add_indicator("估值", "沪深300股债利差", equity_bond_spread, "%", 2, data_source="东方财富 PE(TTM) + ChinaBond 10Y", as_of=max(str(csi300.get("as_of") or ""), str(china10y_quote.get("as_of") or "")))
+    add_indicator("权益", "沪深300涨跌", csi300.get("change_pct"), "%", 2, tone=tone_for_value(csi300.get("change_pct")), data_source=csi300.get("data_source"), as_of=csi300.get("as_of"))
+    add_indicator("权益", "中证1000涨跌", csi1000.get("change_pct"), "%", 2, tone=tone_for_value(csi1000.get("change_pct")), data_source=csi1000.get("data_source"), as_of=csi1000.get("as_of"))
+    add_indicator("权益", "创业板指涨跌", chinext.get("change_pct"), "%", 2, tone=tone_for_value(chinext.get("change_pct")), data_source=chinext.get("data_source"), as_of=chinext.get("as_of"))
+    data["indicators"] = indicators[:12]
     data["observations"] = observations
     update_meta(payload, "live-macro")
     return payload
@@ -2360,7 +2438,6 @@ def build_overview_payload(
     heatmap: dict[str, Any] | None = None,
     etf_rankings: dict[str, Any] | None = None,
     sectors: dict[str, Any] | None = None,
-    watchlist: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload = base_payload("overview")
     data = payload.setdefault("data", {})
@@ -2382,12 +2459,13 @@ def build_overview_payload(
         data["top_etfs"] = etf_rankings.get("data", {}).get("items", [])
     if sectors:
         data["sectors"] = sectors.get("data", {}).get("sectors", [])
-    if watchlist:
-        data["watchlist"] = watchlist.get("data", {})
+    data.pop("watchlist", None)
     sentiment_trend = sentiment.get("data", {}).get("sentiment_trend", [])
     if isinstance(data.get("sentiment_gauge"), dict):
         trend_6m, trend_source, trend_note = build_six_month_sentiment_trend(sentiment_trend)
-        latest_score = trend_value_from_end(trend_6m, 0, sentiment_summary.get("score") or data["sentiment_gauge"].get("score"))
+        latest_score = sentiment_summary.get("score")
+        if latest_score is None:
+            latest_score = trend_value_from_end(trend_6m, 0, data["sentiment_gauge"].get("score"))
         previous_day_score = trend_value_from_end(trend_6m, 1, data["sentiment_gauge"].get("previous_day_score"))
         previous_week_score = trend_value_from_end(trend_6m, 5, data["sentiment_gauge"].get("previous_week_score"))
         data["sentiment_gauge"] = {
@@ -2526,7 +2604,7 @@ def main() -> None:
     breadth = build_breadth_payload(breadth_source)
     sentiment = build_sentiment_payload(breadth)
     macro = build_macro_payload()
-    overview = build_overview_payload(breadth, sentiment, macro, heatmap, etf_rankings, sectors, watchlist)
+    overview = build_overview_payload(breadth, sentiment, macro, heatmap, etf_rankings, sectors)
 
     write_json(LIVE_DIR / "watchlist.json", watchlist)
     write_json(LIVE_DIR / "heatmap.json", heatmap)
