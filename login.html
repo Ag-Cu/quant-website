@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>登录 - Quant Desk</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="login-page">
+    <main class="login-shell" aria-live="polite">
+      <section class="login-panel">
+        <div class="login-brand">
+          <span class="brand-mark">QD</span>
+          <div>
+            <p class="eyebrow">Private Console</p>
+            <h1>Quant Desk</h1>
+          </div>
+        </div>
+        <form class="login-form" data-login-form>
+          <label>
+            <span>用户名</span>
+            <input name="username" autocomplete="username" required autofocus />
+          </label>
+          <label>
+            <span>密码</span>
+            <input name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button class="primary-button" type="submit">登录</button>
+          <p class="login-status" data-login-status></p>
+        </form>
+      </section>
+    </main>
+    <script type="module" src="login.js"></script>
+  </body>
+</html>

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import base64
+import contextvars
 import json
 import hmac
 import io
@@ -13,6 +15,7 @@ import tempfile
 import urllib.parse
 import urllib.request
 import hashlib
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -22,7 +25,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.schemas import PAYLOAD_SCHEMAS, SchemaValidationError, validate_payload
@@ -85,6 +88,7 @@ TARGET_POSITION_ACTIONS = {"buy", "add", "hold"}
 STATIC_PAGES = {
     "/": "index.html",
     "/index.html": "index.html",
+    "/login.html": "login.html",
     "/watchlist.html": "watchlist.html",
     "/picks.html": "picks.html",
     "/holdings.html": "holdings.html",
@@ -97,9 +101,36 @@ STATIC_PAGES = {
     "/sentiment.html": "sentiment.html",
     "/macro.html": "macro.html",
 }
-STATIC_FILES = {"app.js", "styles.css"}
+STATIC_FILES = {"app.js", "styles.css", "login.js"}
 HK_TZ = ZoneInfo("Asia/Hong_Kong")
 SourceKind = Literal["realtime", "daily", "strategy", "portfolio", "performance"]
+USER_CONTEXT: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar("USER_CONTEXT", default=None)
+AUTH_COOKIE_NAME = "quant_session"
+AUTH_SESSION_TTL_SECONDS = 60 * 60 * 24 * 7
+AUTH_LOGIN_FAILURE_WINDOW_SECONDS = 5 * 60
+AUTH_LOGIN_MAX_FAILURES = 8
+AUTH_PUBLIC_PATHS = {"/login.html", "/login.js", "/styles.css", "/api/v1/auth/login", "/api/v1/auth/logout", "/api/v1/auth/session"}
+AUTH_STATIC_PREFIXES = ("/src/", "/assets/")
+AUTH_WEBHOOK_PATHS = {
+    "/api/v1/joinquant/signals",
+    "/api/v1/crypto/funding/heartbeat",
+    "/api/v1/crypto/funding/signals",
+    "/api/v1/crypto/funding/trades",
+    "/api/v1/crypto/funding/events",
+}
+AUTH_WEBHOOK_PREFIXES = ("/api/v1/quant/strategies/",)
+PRIVATE_BACKEND_PREFIXES = (
+    "actions/",
+    "dashboard/",
+    "exports/",
+    "performance/",
+    "portfolio/",
+    "strategies/",
+    "watchlist/",
+)
+PRIVATE_LIVE_FILES = {"overview.json", "watchlist.json"}
+PRIVATE_CONFIG_FILES = {"watchlist.json", "strategies.json"}
+AUTH_LOGIN_FAILURES: dict[str, list[float]] = {}
 
 
 @dataclass(frozen=True)
@@ -113,13 +144,13 @@ class EndpointSpec:
 
     @property
     def backend_path(self) -> Path:
-        return BACKEND_DIR / f"{self.storage_key}.json"
+        return effective_path(BACKEND_DIR / f"{self.storage_key}.json")
 
     @property
     def live_path(self) -> Path | None:
         if not self.live_key:
             return None
-        return LIVE_DIR / f"{self.live_key}.json"
+        return effective_path(LIVE_DIR / f"{self.live_key}.json")
 
 
 ENDPOINTS: dict[str, EndpointSpec] = {
@@ -251,14 +282,415 @@ def env_csv(name: str) -> list[str]:
     return [value.strip() for value in os.getenv(name, "").split(",") if value.strip()]
 
 
+def pbkdf2_hash_password(password: str, salt: bytes | None = None, iterations: int = 260_000) -> str:
+    salt = salt or os.urandom(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    salt_text = base64.urlsafe_b64encode(salt).decode("ascii").rstrip("=")
+    digest_text = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    return f"pbkdf2_sha256${iterations}${salt_text}${digest_text}"
+
+
+def verify_password_hash(password: str, stored_hash: str) -> bool:
+    try:
+        algorithm, iterations_text, salt_text, digest_text = stored_hash.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        padding = "=" * (-len(salt_text) % 4)
+        salt = base64.urlsafe_b64decode(f"{salt_text}{padding}")
+        expected_padding = "=" * (-len(digest_text) % 4)
+        expected = base64.urlsafe_b64decode(f"{digest_text}{expected_padding}")
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, int(iterations_text))
+    except (ValueError, TypeError):
+        return False
+    return hmac.compare_digest(actual, expected)
+
+
+def auth_secret() -> str:
+    secret = os.getenv("QUANT_AUTH_SECRET", "").strip()
+    if not secret and not auth_required():
+        secret = "dev-only-quant-auth-secret"
+    if not secret:
+        raise HTTPException(status_code=503, detail="服务端未配置 QUANT_AUTH_SECRET")
+    return secret
+
+
+def auth_required() -> bool:
+    return env_flag("QUANT_AUTH_ENABLED", default=False)
+
+
+def auth_cookie_secure() -> bool:
+    return env_flag("QUANT_AUTH_COOKIE_SECURE", default=True)
+
+
+def auth_users() -> dict[str, dict[str, Any]]:
+    users: dict[str, dict[str, Any]] = {}
+    raw_json = os.getenv("QUANT_AUTH_USERS_JSON", "").strip()
+    if raw_json:
+        try:
+            payload = json.loads(raw_json)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=503, detail="QUANT_AUTH_USERS_JSON 格式错误") from exc
+        source = payload.get("users") if isinstance(payload, dict) else payload
+        if isinstance(source, list):
+            for item in source:
+                if not isinstance(item, dict):
+                    continue
+                username = str(item.get("username") or "").strip()
+                password_hash = str(item.get("password_hash") or "").strip()
+                if username and password_hash:
+                    users[username] = {
+                        "username": username,
+                        "password_hash": password_hash,
+                        "display_name": str(item.get("display_name") or username),
+                        "role": str(item.get("role") or "user"),
+                    }
+        elif isinstance(source, dict):
+            for username, item in source.items():
+                if not isinstance(item, dict):
+                    continue
+                password_hash = str(item.get("password_hash") or "").strip()
+                if str(username).strip() and password_hash:
+                    users[str(username).strip()] = {
+                        "username": str(username).strip(),
+                        "password_hash": password_hash,
+                        "display_name": str(item.get("display_name") or username),
+                        "role": str(item.get("role") or "user"),
+                    }
+    username = os.getenv("QUANT_AUTH_USERNAME", "").strip()
+    password_hash = os.getenv("QUANT_AUTH_PASSWORD_HASH", "").strip()
+    if username and password_hash and username not in users:
+        users[username] = {
+            "username": username,
+            "password_hash": password_hash,
+            "display_name": os.getenv("QUANT_AUTH_DISPLAY_NAME", "").strip() or username,
+            "role": os.getenv("QUANT_AUTH_ROLE", "").strip() or "owner",
+        }
+    if auth_required() and not users:
+        raise HTTPException(status_code=503, detail="服务端未配置登录用户")
+    return users
+
+
+def sign_session(payload: dict[str, Any]) -> str:
+    body = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    encoded = base64.urlsafe_b64encode(body.encode("utf-8")).decode("ascii").rstrip("=")
+    signature = hmac.new(auth_secret().encode("utf-8"), encoded.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{encoded}.{signature}"
+
+
+def decode_session(token: str | None) -> dict[str, Any] | None:
+    if not token or "." not in token:
+        return None
+    encoded, signature = token.rsplit(".", 1)
+    expected = hmac.new(auth_secret().encode("utf-8"), encoded.encode("ascii"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        return None
+    try:
+        padding = "=" * (-len(encoded) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(f"{encoded}{padding}").decode("utf-8"))
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if to_int(payload.get("exp"), 0) < int(time.time()):
+        return None
+    username = str(payload.get("sub") or "").strip()
+    users = auth_users()
+    user = users.get(username)
+    if not user:
+        return None
+    return {
+        "username": username,
+        "display_name": user.get("display_name") or username,
+        "role": user.get("role") or "user",
+        "exp": to_int(payload.get("exp"), 0),
+    }
+
+
+def session_payload(user: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "authenticated": bool(user),
+        "user": {
+            "username": user.get("username"),
+            "display_name": user.get("display_name") or user.get("username"),
+            "role": user.get("role") or "user",
+        }
+        if user
+        else None,
+        "auth_enabled": auth_required(),
+    }
+
+
+def current_user() -> dict[str, Any] | None:
+    return USER_CONTEXT.get()
+
+
+def session_user_from_config(username: str) -> dict[str, Any] | None:
+    user = auth_users().get(username)
+    if not user:
+        return None
+    return {
+        "username": username,
+        "display_name": user.get("display_name") or username,
+        "role": user.get("role") or "user",
+    }
+
+
+def webhook_owner_user() -> dict[str, Any] | None:
+    if not auth_required():
+        return None
+    users = auth_users()
+    username = os.getenv("QUANT_WEBHOOK_USER", "").strip() or os.getenv("QUANT_AUTH_USERNAME", "").strip()
+    if not username and len(users) == 1:
+        username = next(iter(users))
+    user = users.get(username)
+    if not user:
+        raise HTTPException(status_code=503, detail="服务端未配置 webhook 归属用户")
+    return {
+        "username": username,
+        "display_name": user.get("display_name") or username,
+        "role": user.get("role") or "owner",
+    }
+
+
+def use_webhook_owner_context() -> None:
+    user = webhook_owner_user()
+    if user:
+        USER_CONTEXT.set(user)
+
+
+def current_user_id(default: str = "default") -> str:
+    user = current_user()
+    username = str((user or {}).get("username") or "").strip()
+    if not auth_required() or not username:
+        return default
+    return safe_storage_slug(username)
+
+
+def safe_storage_slug(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    text = re.sub(r"[^a-z0-9_.-]+", "-", text)
+    return text.strip(".-") or "default"
+
+
+def user_data_base(user_id: str | None = None) -> Path:
+    return BACKEND_DIR / "users" / safe_storage_slug(user_id or current_user_id())
+
+
+def user_backend_path(base_path: Path, user_id: str | None = None) -> Path:
+    try:
+        rel = base_path.relative_to(BACKEND_DIR)
+    except ValueError:
+        return base_path
+    parts = rel.parts
+    if parts and parts[0] == "users":
+        return base_path
+    if rel.as_posix().startswith(PRIVATE_BACKEND_PREFIXES):
+        return user_data_base(user_id) / rel
+    return base_path
+
+
+def user_live_path(base_path: Path, user_id: str | None = None) -> Path:
+    try:
+        rel = base_path.relative_to(LIVE_DIR)
+    except ValueError:
+        return base_path
+    if rel.as_posix() in PRIVATE_LIVE_FILES:
+        return user_data_base(user_id) / "live" / rel
+    return base_path
+
+
+def user_config_path(base_path: Path, user_id: str | None = None) -> Path:
+    try:
+        rel = base_path.relative_to(CONFIG_DIR)
+    except ValueError:
+        return base_path
+    if rel.as_posix() in PRIVATE_CONFIG_FILES:
+        return user_data_base(user_id) / "config" / rel
+    return base_path
+
+
+def effective_path(base_path: Path) -> Path:
+    if not auth_required() or not current_user():
+        return base_path
+    if base_path.is_relative_to(BACKEND_DIR):
+        return user_backend_path(base_path)
+    if base_path.is_relative_to(LIVE_DIR):
+        return user_live_path(base_path)
+    if base_path.is_relative_to(CONFIG_DIR):
+        return user_config_path(base_path)
+    return base_path
+
+
+def storage_path_text(path: Path) -> str:
+    path = effective_path(path)
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
+def path_is_auth_exempt(path: str, method: str = "GET") -> bool:
+    if path in AUTH_PUBLIC_PATHS:
+        return True
+    if any(path.startswith(prefix) for prefix in AUTH_STATIC_PREFIXES):
+        return True
+    if method.upper() == "POST" and path in AUTH_WEBHOOK_PATHS:
+        return True
+    if method.upper() == "POST" and path.startswith(AUTH_WEBHOOK_PREFIXES) and (path.endswith("/events") or path.endswith("/snapshot")):
+        return True
+    return path in {"/favicon.ico"}
+
+
+def wants_json_response(request: Request) -> bool:
+    accept = request.headers.get("accept", "")
+    return request.url.path.startswith(("/api/", "/data/")) or "application/json" in accept
+
+
+def unauthorized_response(request: Request) -> Response:
+    if wants_json_response(request):
+        return JSONResponse(status_code=401, content={"detail": "请先登录"})
+    login_url = f"/login.html?next={urllib.parse.quote(str(request.url.path))}"
+    if request.url.query:
+        login_url = f"{login_url}{urllib.parse.quote('?' + request.url.query)}"
+    return RedirectResponse(login_url, status_code=303)
+
+
+def set_session_cookie(response: Response, user: dict[str, Any]) -> None:
+    expires_at = int(time.time()) + AUTH_SESSION_TTL_SECONDS
+    token = sign_session({"sub": user["username"], "role": user.get("role") or "user", "exp": expires_at})
+    response.set_cookie(
+        AUTH_COOKIE_NAME,
+        token,
+        max_age=AUTH_SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=auth_cookie_secure(),
+        samesite="lax",
+        path="/",
+    )
+
+
+def clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(AUTH_COOKIE_NAME, path="/")
+
+
+def login_failure_key(request: Request, username: str) -> str:
+    host = request.client.host if request.client else "unknown"
+    return f"{host}|{username}"
+
+
+def check_login_rate_limit(request: Request, username: str) -> None:
+    key = login_failure_key(request, username)
+    now = time.time()
+    recent = [stamp for stamp in AUTH_LOGIN_FAILURES.get(key, []) if now - stamp < AUTH_LOGIN_FAILURE_WINDOW_SECONDS]
+    AUTH_LOGIN_FAILURES[key] = recent
+    if len(recent) >= AUTH_LOGIN_MAX_FAILURES:
+        raise HTTPException(status_code=429, detail="登录失败次数过多，请稍后再试")
+
+
+def record_login_failure(request: Request, username: str) -> None:
+    key = login_failure_key(request, username)
+    now = time.time()
+    recent = [stamp for stamp in AUTH_LOGIN_FAILURES.get(key, []) if now - stamp < AUTH_LOGIN_FAILURE_WINDOW_SECONDS]
+    recent.append(now)
+    AUTH_LOGIN_FAILURES[key] = recent
+
+
+def clear_login_failures(request: Request, username: str) -> None:
+    AUTH_LOGIN_FAILURES.pop(login_failure_key(request, username), None)
+
+
 app = FastAPI(title="Quant Dashboard API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=env_csv("QUANT_ALLOWED_ORIGINS"),
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    token = USER_CONTEXT.set(None)
+    try:
+        path = request.url.path
+        if not auth_required() or path_is_auth_exempt(path, request.method):
+            return await call_next(request)
+        user = decode_session(request.cookies.get(AUTH_COOKIE_NAME))
+        if not user:
+            return unauthorized_response(request)
+        context_token = USER_CONTEXT.set(user)
+        try:
+            return await call_next(request)
+        finally:
+            USER_CONTEXT.reset(context_token)
+    finally:
+        USER_CONTEXT.reset(token)
+
+
+@app.post("/api/v1/auth/login")
+def auth_login(request: Request, response: Response, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    users = auth_users()
+    username = str(payload.get("username") or "").strip()
+    password = str(payload.get("password") or "")
+    check_login_rate_limit(request, username)
+    user = users.get(username)
+    if not user or not verify_password_hash(password, str(user.get("password_hash") or "")):
+        record_login_failure(request, username)
+        raise HTTPException(status_code=401, detail="用户名或密码不正确")
+    clear_login_failures(request, username)
+    session_user = {
+        "username": username,
+        "display_name": user.get("display_name") or username,
+        "role": user.get("role") or "user",
+    }
+    set_session_cookie(response, session_user)
+    return {
+        "meta": {
+            "version": "1.0",
+            "source": "auth",
+            "as_of": now_hk().isoformat(),
+            "trade_date": now_hk().strftime("%Y-%m-%d"),
+            "timezone": "Asia/Hong_Kong",
+            "market_session": market_session(),
+            "run_id": f"auth-login-{now_hk().strftime('%Y%m%d-%H%M%S')}",
+        },
+        "data": session_payload(session_user),
+    }
+
+
+@app.post("/api/v1/auth/logout")
+def auth_logout(response: Response) -> dict[str, Any]:
+    clear_session_cookie(response)
+    return {
+        "meta": {
+            "version": "1.0",
+            "source": "auth",
+            "as_of": now_hk().isoformat(),
+            "trade_date": now_hk().strftime("%Y-%m-%d"),
+            "timezone": "Asia/Hong_Kong",
+            "market_session": market_session(),
+            "run_id": f"auth-logout-{now_hk().strftime('%Y%m%d-%H%M%S')}",
+        },
+        "data": session_payload(None),
+    }
+
+
+@app.get("/api/v1/auth/session")
+def auth_session(request: Request) -> dict[str, Any]:
+    user = decode_session(request.cookies.get(AUTH_COOKIE_NAME)) if auth_required() else None
+    return {
+        "meta": {
+            "version": "1.0",
+            "source": "auth",
+            "as_of": now_hk().isoformat(),
+            "trade_date": now_hk().strftime("%Y-%m-%d"),
+            "timezone": "Asia/Hong_Kong",
+            "market_session": market_session(),
+            "run_id": f"auth-session-{now_hk().strftime('%Y%m%d-%H%M%S')}",
+        },
+        "data": session_payload(user),
+    }
 
 
 def now_hk() -> datetime:
@@ -280,23 +712,24 @@ def market_session(now: datetime | None = None) -> str:
 
 
 def load_json(path: Path) -> dict[str, Any]:
+    path = effective_path(path)
     try:
         with path.open("r", encoding="utf-8") as file:
             payload = json.load(file)
     except FileNotFoundError as exc:
-        storage_path = str(path.relative_to(ROOT))
+        storage_path = storage_path_text(path)
         raise HTTPException(
             status_code=503,
             detail={"message": "数据文件不存在", "storage_path": storage_path, "missing_fields": []},
         ) from exc
     except json.JSONDecodeError as exc:
-        storage_path = str(path.relative_to(ROOT))
+        storage_path = storage_path_text(path)
         raise HTTPException(
             status_code=500,
             detail={"message": "数据文件格式错误", "storage_path": storage_path, "missing_fields": []},
         ) from exc
     if not isinstance(payload, dict):
-        storage_path = str(path.relative_to(ROOT))
+        storage_path = storage_path_text(path)
         raise HTTPException(
             status_code=500,
             detail={"message": "数据文件根节点必须是对象", "storage_path": storage_path, "missing_fields": []},
@@ -305,6 +738,7 @@ def load_json(path: Path) -> dict[str, Any]:
 
 
 def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path = effective_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as file:
         json.dump(payload, file, ensure_ascii=False, indent=2)
@@ -314,6 +748,7 @@ def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
 
 
 def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    path = effective_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as file:
         file.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
@@ -321,6 +756,7 @@ def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
+    path = effective_path(path)
     if not path.exists():
         return []
     rows: list[dict[str, Any]] = []
@@ -339,6 +775,7 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def write_jsonl_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
+    path = effective_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as file:
         for row in rows:
@@ -349,6 +786,7 @@ def write_jsonl_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def read_jsonl_tail(path: Path, limit: int = 100) -> list[dict[str, Any]]:
+    path = effective_path(path)
     if not path.exists():
         return []
     rows: list[dict[str, Any]] = []
@@ -485,6 +923,7 @@ def verify_joinquant_token(request: Request, payload: dict[str, Any]) -> None:
     ).strip()
     if not provided or not hmac.compare_digest(provided, expected):
         raise HTTPException(status_code=401, detail="JoinQuant webhook token 不正确")
+    use_webhook_owner_context()
 
 
 def get_crypto_webhook_token() -> str:
@@ -506,6 +945,7 @@ def verify_crypto_token(request: Request, payload: dict[str, Any]) -> None:
         provided = provided[7:].strip()
     if not provided or not hmac.compare_digest(provided, expected):
         raise HTTPException(status_code=401, detail="Crypto webhook token 不正确")
+    use_webhook_owner_context()
 
 
 def to_float(value: Any, default: float | None = None) -> float | None:
@@ -1074,7 +1514,7 @@ BUILTIN_STRATEGY_DEFINITIONS = [
 
 
 def load_strategy_config() -> dict[str, Any]:
-    if not STRATEGY_CONFIG_PATH.exists():
+    if not effective_path(STRATEGY_CONFIG_PATH).exists():
         return {"strategies": []}
     try:
         payload = load_json(STRATEGY_CONFIG_PATH)
@@ -1171,7 +1611,7 @@ def definition_public_row(definition: dict[str, Any], payload: dict[str, Any] | 
         "endpoint": f"/api/v1/quant/strategies/{strategy_id}",
         "snapshot_endpoint": f"/api/v1/quant/strategies/{strategy_id}/snapshot",
         "events_endpoint": f"/api/v1/quant/strategies/{strategy_id}/events",
-        "storage_path": str(strategy_path_from_definition(definition).relative_to(ROOT)),
+        "storage_path": storage_path_text(strategy_path_from_definition(definition)),
         "updated_at": str(meta.get("as_of") or definition.get("updated_at") or ""),
         "trade_date": str(meta.get("trade_date") or ""),
         "run_id": str(meta.get("run_id") or ""),
@@ -1420,7 +1860,7 @@ def portfolio_symbol_key(value: Any) -> str:
 
 def load_strategy_payload_for_holdings(definition: dict[str, Any]) -> dict[str, Any] | None:
     path = strategy_path_from_definition(definition)
-    if not path.exists():
+    if not effective_path(path).exists():
         return None
     try:
         payload = load_json(path)
@@ -2389,7 +2829,7 @@ def normalize_watchlist_item(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_watchlist_config() -> dict[str, Any]:
-    if not WATCHLIST_CONFIG_PATH.exists():
+    if not effective_path(WATCHLIST_CONFIG_PATH).exists():
         return {"items": []}
     payload = load_json(WATCHLIST_CONFIG_PATH)
     items = payload.get("items") if isinstance(payload.get("items"), list) else []
@@ -2406,7 +2846,7 @@ def load_watchlist_config() -> dict[str, Any]:
 
 def save_watchlist_items(items: list[dict[str, Any]]) -> None:
     existing: dict[str, Any] = {}
-    if WATCHLIST_CONFIG_PATH.exists():
+    if effective_path(WATCHLIST_CONFIG_PATH).exists():
         try:
             existing = load_json(WATCHLIST_CONFIG_PATH)
         except HTTPException:
@@ -2418,7 +2858,7 @@ def save_watchlist_items(items: list[dict[str, Any]]) -> None:
 def invalidate_watchlist_live_data() -> None:
     for path in (LIVE_DIR / "watchlist.json", LIVE_DIR / "overview.json"):
         try:
-            path.unlink()
+            effective_path(path).unlink()
         except FileNotFoundError:
             pass
 
@@ -2492,9 +2932,12 @@ def watchlist_mutation_payload(
 
 
 def run_live_data_refresh(timeout: int = 45) -> tuple[bool, str]:
+    command = [sys.executable, str(ROOT / "scripts" / "update_live_data.py"), "--root", str(ROOT)]
+    if auth_required() and current_user():
+        command.extend(["--user", current_user_id()])
     try:
         result = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "update_live_data.py"), "--root", str(ROOT)],
+            command,
             cwd=ROOT,
             check=True,
             timeout=timeout,
@@ -2511,8 +2954,29 @@ def run_live_data_refresh(timeout: int = 45) -> tuple[bool, str]:
     return True, result.stdout.strip()
 
 
+def private_data_path(rel_path: str) -> Path:
+    cleaned = rel_path.strip("/")
+    if not cleaned:
+        raise HTTPException(status_code=404, detail="Not found")
+    raw_path = DATA_DIR / cleaned
+    resolved = effective_path(raw_path).resolve()
+    allowed_roots = [DATA_DIR.resolve()]
+    if auth_required() and current_user():
+        user_root = user_data_base().resolve()
+        all_users_root = (BACKEND_DIR / "users").resolve()
+        if resolved == all_users_root or all_users_root in resolved.parents:
+            if not (resolved == user_root or user_root in resolved.parents):
+                raise HTTPException(status_code=404, detail="Not found")
+        allowed_roots.append(user_root)
+    if not any(resolved == root or root in resolved.parents for root in allowed_roots):
+        raise HTTPException(status_code=404, detail="Not found")
+    if not resolved.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+    return resolved
+
+
 def unavailable_detail(message: str, path: Path) -> dict[str, Any]:
-    return {"message": message, "storage_path": str(path.relative_to(ROOT)), "missing_fields": []}
+    return {"message": message, "storage_path": storage_path_text(path), "missing_fields": []}
 
 
 def available_path(spec: EndpointSpec) -> tuple[Path, str]:
@@ -2535,6 +2999,7 @@ def parse_iso_datetime(value: str | None) -> datetime | None:
 
 
 def live_data_is_stale(path: Path, max_age_seconds: int) -> bool:
+    path = effective_path(path)
     if not path.exists():
         return True
     try:
@@ -2577,7 +3042,7 @@ def normalize_payload(payload: dict[str, Any], spec: EndpointSpec, source: str, 
         "run_id": meta.get("run_id") or f"{spec.refresh_policy}-{now_hk().strftime('%Y%m%d-%H%M%S')}",
         "refresh_policy": spec.refresh_policy,
         "refresh_seconds": spec.refresh_seconds,
-        "storage_path": str(path.relative_to(ROOT)),
+        "storage_path": storage_path_text(path),
         "source_quality": meta.get("source_quality") or algorithm.get("source_quality") or "real",
     }
     return {"meta": normalized_meta, "data": data}
@@ -2608,7 +3073,7 @@ def get_payload(path: str) -> dict[str, Any]:
     data_path, source = available_path(spec)
     payload = load_json(data_path)
     normalized = normalize_payload(payload, spec, source, data_path)
-    return validate_response_payload(path, normalized, str(data_path.relative_to(ROOT)))
+    return validate_response_payload(path, normalized, storage_path_text(data_path))
 
 
 def verify_action_permission(request: Request) -> None:
@@ -2650,7 +3115,7 @@ def standard_action_payload(action_type: str, detail: dict[str, Any], persist: b
             "timezone": "Asia/Hong_Kong",
             "market_session": market_session(now),
             "run_id": record["action_id"],
-            "storage_path": str(ACTION_LOG_PATH.relative_to(ROOT)),
+            "storage_path": storage_path_text(ACTION_LOG_PATH),
         },
         "data": record,
     }
@@ -2745,12 +3210,13 @@ def pick_partition_candidates(strategy: str | None, trade_date: str | None) -> l
 def load_strategy_picks_base(strategy: str | None, trade_date: str | None) -> dict[str, Any]:
     spec = ENDPOINTS["/api/v1/strategies/picks"]
     for path in pick_partition_candidates(strategy, trade_date):
-        if path.exists() and path.is_file():
+        data_path = effective_path(path)
+        if data_path.exists() and data_path.is_file():
             normalized = normalize_payload(load_json(path), spec, "backend", path)
             return validate_response_payload(
                 "/api/v1/strategies/picks",
                 normalized,
-                str(path.relative_to(ROOT)),
+                storage_path_text(path),
             )
     return get_payload("/api/v1/strategies/picks")
 
@@ -2848,7 +3314,7 @@ def crypto_trade_date(value: Any = None) -> str:
 
 
 def crypto_read_snapshot() -> dict[str, Any]:
-    if CRYPTO_FUNDING_STRATEGY_PATH.exists():
+    if effective_path(CRYPTO_FUNDING_STRATEGY_PATH).exists():
         try:
             return load_json(CRYPTO_FUNDING_STRATEGY_PATH)
         except HTTPException:
@@ -3391,7 +3857,7 @@ def action_log(limit: int = Query(default=50, ge=1, le=500)) -> dict[str, Any]:
             "timezone": "Asia/Hong_Kong",
             "market_session": market_session(),
             "run_id": f"actions-{now_hk().strftime('%Y%m%d-%H%M%S')}",
-            "storage_path": str(ACTION_LOG_PATH.relative_to(ROOT)),
+            "storage_path": storage_path_text(ACTION_LOG_PATH),
         },
         "data": {"count": len(rows), "items": rows},
     }
@@ -3441,8 +3907,8 @@ def export_strategy_picks_action(request: Request, payload: dict[str, Any] | Non
     csv_text = strategy_picks_csv(picks_payload)
     now = now_hk()
     filename = f"picks-{now.strftime('%Y%m%d-%H%M%S')}.csv"
-    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    export_path = EXPORT_DIR / filename
+    export_path = effective_path(EXPORT_DIR / filename)
+    export_path.parent.mkdir(parents=True, exist_ok=True)
     export_path.write_text(csv_text, encoding="utf-8")
     return action_response("picks_export", {"filename": filename, "rows": len(items), "csv": csv_text, "message": f"已导出 {len(items)} 条选股记录"})
 
@@ -3467,7 +3933,7 @@ def health() -> dict[str, Any]:
         try:
             data_path, source = available_path(spec)
             status = "ready"
-            storage_path = str(data_path.relative_to(ROOT))
+            storage_path = storage_path_text(data_path)
         except HTTPException:
             source = None
             status = "missing"
@@ -4500,8 +4966,8 @@ def build_local_strategy_nav_ledger(
                 "source": "local-ledger",
                 "frequency": "daily",
                 "trace": {
-                    "storage_path": str(PERFORMANCE_EVENTS_PATH.relative_to(ROOT)),
-                    "price_cache_path": str(PERFORMANCE_PRICE_CACHE_PATH.relative_to(ROOT)),
+                    "storage_path": storage_path_text(PERFORMANCE_EVENTS_PATH),
+                    "price_cache_path": storage_path_text(PERFORMANCE_PRICE_CACHE_PATH),
                     "calculation": "cash + local positions marked by daily close; net_value=total_value/initial_cash",
                     "initial_cash": round(initial_cash, 4),
                 },
@@ -4755,7 +5221,7 @@ def normalize_joinquant_account_snapshot(
         "strategy_id": strategy_id,
         "strategy_label": strategy_label_from_payload(strategy_id, normalized_payload),
         "endpoint": endpoint,
-        "storage_path": str(storage_path.relative_to(ROOT)),
+        "storage_path": storage_path_text(storage_path),
         "run_id": run_id,
         "as_of": as_of,
         "trade_date": trade_date,
@@ -4772,9 +5238,9 @@ def normalize_joinquant_account_snapshot(
         },
         "trace": {
             "raw_webhook_hash": snapshot_hash,
-            "raw_webhook_log": str(JOINQUANT_SIGNAL_LOG_PATH.relative_to(ROOT)),
-            "normalized_snapshot_path": str(PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH.relative_to(ROOT)),
-            "nav_ledger_path": str(PERFORMANCE_JOINQUANT_NAV_PATH.relative_to(ROOT)),
+            "raw_webhook_log": storage_path_text(JOINQUANT_SIGNAL_LOG_PATH),
+            "normalized_snapshot_path": storage_path_text(PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH),
+            "nav_ledger_path": storage_path_text(PERFORMANCE_JOINQUANT_NAV_PATH),
         },
         "raw_webhook": redact_secret_fields(payload),
     }
@@ -4909,7 +5375,7 @@ def load_joinquant_nav_ledger() -> list[dict[str, Any]]:
     rows = load_jsonl(PERFORMANCE_JOINQUANT_NAV_PATH)
     if rows:
         return rows
-    if PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH.exists():
+    if effective_path(PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH).exists():
         return rebuild_joinquant_nav_ledger()
     return []
 
@@ -4958,7 +5424,7 @@ def strategy_rows_from_definitions() -> list[dict[str, Any]]:
 
 
 def load_static_performance_strategies() -> tuple[list[dict[str, Any]], dict[str, Any], str]:
-    if not PERFORMANCE_NAV_PATH.exists():
+    if not effective_path(PERFORMANCE_NAV_PATH).exists():
         return [], {}, ""
     payload = load_json(PERFORMANCE_NAV_PATH)
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
@@ -5204,7 +5670,7 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
                 "frequency": row.get("frequency") or ("daily-proxy" if row.get("synthetic") else "static"),
                 "synthetic": bool(row.get("synthetic")),
                 "trace": {
-                    "storage_path": str(PERFORMANCE_NAV_PATH.relative_to(ROOT)),
+                    "storage_path": storage_path_text(PERFORMANCE_NAV_PATH),
                     "calculation": "daily proxy from static nav anchors" if row.get("synthetic") else "static net_value seed",
                 },
             }
@@ -5268,14 +5734,14 @@ def build_performance_payload(strategy: str | None, benchmark: str | None, start
     monthly_returns = monthly_returns_from_curve(equity_curve, query_start, end_date)
     last_seen = latest.get("as_of") if latest else None
     stale = latest_stale_seconds
-    nav_storage_path = str(
-        PERFORMANCE_EVENTS_PATH.relative_to(ROOT)
+    nav_storage_path = storage_path_text(
+        PERFORMANCE_EVENTS_PATH
         if source_state == "local-ledger"
-        else PERFORMANCE_NAV_PATH.relative_to(ROOT)
+        else PERFORMANCE_NAV_PATH
         if source_state in {"static", "manual"}
-        else PERFORMANCE_JOINQUANT_NAV_PATH.relative_to(ROOT)
+        else PERFORMANCE_JOINQUANT_NAV_PATH
     )
-    snapshot_storage_path = None if source_state in {"static", "manual", "local-ledger"} else str(PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH.relative_to(ROOT))
+    snapshot_storage_path = None if source_state in {"static", "manual", "local-ledger"} else storage_path_text(PERFORMANCE_JOINQUANT_SNAPSHOTS_PATH)
     payload = {
         "meta": {
             "version": "1.0",
@@ -5387,7 +5853,7 @@ def performance(
 
 def load_quant_strategy_payload(definition: dict[str, Any]) -> dict[str, Any]:
     path = strategy_path_from_definition(definition)
-    if not path.exists():
+    if not effective_path(path).exists():
         return normalize_payload(default_strategy_snapshot(definition), strategy_endpoint_spec(definition), "manual", path)
     payload = load_json(path)
     meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
@@ -5421,7 +5887,7 @@ def quant_strategies() -> dict[str, Any]:
             "timezone": "Asia/Hong_Kong",
             "market_session": market_session(now),
             "run_id": f"quant-strategies-{now.strftime('%Y%m%d-%H%M%S')}",
-            "storage_path": str(STRATEGY_CONFIG_PATH.relative_to(ROOT)),
+            "storage_path": storage_path_text(STRATEGY_CONFIG_PATH),
         },
         "data": {
             "strategies": rows,
@@ -5451,7 +5917,7 @@ def create_quant_strategy(request: Request, payload: dict[str, Any] = Body(...))
     rows.append(definition)
     save_strategy_config(rows)
     storage_path = strategy_path_from_definition(definition)
-    if not storage_path.exists():
+    if not effective_path(storage_path).exists():
         write_json_atomic(storage_path, default_strategy_snapshot(definition))
     result = action_response(
         "strategy_create",
@@ -5459,7 +5925,7 @@ def create_quant_strategy(request: Request, payload: dict[str, Any] = Body(...))
             "strategy_id": definition["id"],
             "strategy_name": definition["name"],
             "message": "策略已创建",
-            "storage_path": str(storage_path.relative_to(ROOT)),
+            "storage_path": storage_path_text(storage_path),
         },
     )
     result["data"]["strategy"] = definition_public_row(definition, load_quant_strategy_payload(definition))
@@ -5602,8 +6068,8 @@ def receive_quant_strategy_events(strategy_id: str, request: Request, payload: d
             "event_count": len(events),
             "trade_count": trade_count,
             "signal_count": signal_count,
-            "events_storage_path": str(PERFORMANCE_EVENTS_PATH.relative_to(ROOT)),
-            "strategy_storage_path": str(storage_path.relative_to(ROOT)),
+            "events_storage_path": storage_path_text(PERFORMANCE_EVENTS_PATH),
+            "strategy_storage_path": storage_path_text(storage_path),
             "performance_url": f"/performance.html?strategy={urllib.parse.quote(definition['id'])}",
             "holdings_url": f"/holdings.html?type=quant&strategy_id={urllib.parse.quote(definition['id'])}",
         },
@@ -5633,7 +6099,7 @@ def quant_strategy_events(
             "timezone": "Asia/Hong_Kong",
             "market_session": market_session(now),
             "run_id": f"strategy-events-{definition['id']}-{now.strftime('%Y%m%d-%H%M%S')}",
-            "storage_path": str(PERFORMANCE_EVENTS_PATH.relative_to(ROOT)),
+            "storage_path": storage_path_text(PERFORMANCE_EVENTS_PATH),
         },
         "data": {
             "strategy": definition_public_row(definition),
@@ -5664,7 +6130,7 @@ def quant_strategy_logs(
             "timezone": "Asia/Hong_Kong",
             "market_session": market_session(now),
             "run_id": f"strategy-logs-{definition['id']}-{now.strftime('%Y%m%d-%H%M%S')}",
-            "storage_path": str(JOINQUANT_FULL_LOG_PATH.relative_to(ROOT)),
+            "storage_path": storage_path_text(JOINQUANT_FULL_LOG_PATH),
         },
         "data": {
             "strategy": definition_public_row(definition),
@@ -5857,7 +6323,7 @@ def strategy_crypto_funding() -> dict[str, Any]:
     data["logs"] = crypto_recent_rows(CRYPTO_FUNDING_LOG_PATH, 160)
     snapshot["data"] = data
     normalized = normalize_payload(snapshot, ENDPOINTS["/api/v1/strategies/crypto-funding"], "crypto-webhook", CRYPTO_FUNDING_STRATEGY_PATH)
-    return validate_response_payload("/api/v1/strategies/crypto-funding", normalized, str(CRYPTO_FUNDING_STRATEGY_PATH.relative_to(ROOT)))
+    return validate_response_payload("/api/v1/strategies/crypto-funding", normalized, storage_path_text(CRYPTO_FUNDING_STRATEGY_PATH))
 
 
 @app.post("/api/v1/crypto/funding/heartbeat")
@@ -5877,7 +6343,7 @@ def receive_crypto_funding_heartbeat(request: Request, payload: dict[str, Any] =
     )
     snapshot = crypto_build_snapshot(data, "heartbeat")
     normalized = crypto_persist_snapshot(snapshot)
-    return validate_response_payload("/api/v1/strategies/crypto-funding", normalized, str(CRYPTO_FUNDING_STRATEGY_PATH.relative_to(ROOT)))
+    return validate_response_payload("/api/v1/strategies/crypto-funding", normalized, storage_path_text(CRYPTO_FUNDING_STRATEGY_PATH))
 
 
 @app.post("/api/v1/crypto/funding/signals")
@@ -5983,7 +6449,7 @@ def receive_joinquant_signals(request: Request, payload: dict[str, Any] = Body(.
             validate_payload(
                 schema,
                 normalized_next_payload,
-                str(storage_path.relative_to(ROOT)),
+                storage_path_text(storage_path),
             )
         except SchemaValidationError as exc:
             raise HTTPException(status_code=500, detail=schema_error_detail(exc)) from exc
@@ -6006,7 +6472,7 @@ def receive_joinquant_signals(request: Request, payload: dict[str, Any] = Body(.
     return validate_response_payload(
         target_path,
         normalized_next_payload,
-        str(storage_path.relative_to(ROOT)),
+        storage_path_text(storage_path),
     )
 
 
@@ -6026,7 +6492,7 @@ def strategy_etf_logs(
             "timezone": "Asia/Hong_Kong",
             "market_session": market_session(),
             "run_id": f"joinquant-logs-{now_hk().strftime('%Y%m%d-%H%M%S')}",
-            "storage_path": str(JOINQUANT_FULL_LOG_PATH.relative_to(ROOT)),
+            "storage_path": storage_path_text(JOINQUANT_FULL_LOG_PATH),
         },
         "data": {
             "count": len(rows),
@@ -6071,10 +6537,14 @@ def macro() -> dict[str, Any]:
     return get_payload("/api/v1/macro")
 
 
-app.mount("/data", StaticFiles(directory=DATA_DIR), name="data")
 app.mount("/src", StaticFiles(directory=ROOT / "src"), name="src")
 if (ROOT / "assets").exists():
     app.mount("/assets", StaticFiles(directory=ROOT / "assets"), name="assets")
+
+
+@app.get("/data/{data_path:path}", include_in_schema=False)
+def private_data_file(data_path: str) -> FileResponse:
+    return FileResponse(private_data_path(data_path))
 
 
 @app.get("/", include_in_schema=False)

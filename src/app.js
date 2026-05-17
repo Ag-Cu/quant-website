@@ -137,8 +137,18 @@ function withCacheBust(url) {
   return `${url}${url.includes("?") ? "&" : "?"}_=${Date.now()}`;
 }
 
+function redirectToLogin() {
+  if (window.location.pathname.endsWith("/login.html")) return;
+  const next = `${window.location.pathname}${window.location.search}`;
+  window.location.href = `login.html?next=${encodeURIComponent(next)}`;
+}
+
 async function requestJson(url) {
-  const response = await fetch(withCacheBust(url), { cache: "no-store", headers: { Accept: "application/json" } });
+  const response = await fetch(withCacheBust(url), { cache: "no-store", credentials: "same-origin", headers: { Accept: "application/json" } });
+  if (response.status === 401) {
+    redirectToLogin();
+    throw new Error("401 Unauthorized");
+  }
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
   return response.json();
 }
@@ -165,6 +175,7 @@ function pageEndpoint(config) {
 async function sendJson(path, options = {}) {
   const response = await fetch(joinUrl(API_BASE, path), {
     cache: "no-store",
+    credentials: "same-origin",
     ...options,
     headers: {
       Accept: "application/json",
@@ -173,6 +184,9 @@ async function sendJson(path, options = {}) {
     },
   });
   if (!response.ok) {
+    if (response.status === 401) {
+      redirectToLogin();
+    }
     let detail = `${response.status} ${response.statusText}`;
     try {
       const payload = await response.json();
@@ -501,9 +515,11 @@ function installShell() {
       <h1>--</h1>
     </div>
     <div class="topbar-actions">
+      <span class="user-chip" id="userChip" hidden></span>
       <span class="connection-badge" id="connectionBadge">连接中</span>
       <div class="market-clock" aria-label="市场时间"><span id="marketDate">--</span><strong id="marketClock">--:--:--</strong></div>
       <button class="icon-button" id="refreshButton" type="button" title="刷新" aria-label="刷新">${icon("refresh")}</button>
+      <button class="icon-button" id="logoutButton" type="button" title="退出登录" aria-label="退出登录">${icon("close")}</button>
     </div>
   `;
 
@@ -516,6 +532,29 @@ function installShell() {
 
   document.querySelector(".sidebar-toggle").addEventListener("click", () => {
     document.body.classList.toggle("sidebar-collapsed");
+  });
+}
+
+async function installAuthShell() {
+  try {
+    const payload = await requestJson(joinUrl(API_BASE, "/api/v1/auth/session"));
+    const data = payload.data || {};
+    const userChip = document.querySelector("#userChip");
+    if (userChip && data.authenticated && data.user) {
+      userChip.hidden = false;
+      userChip.textContent = data.user.display_name || data.user.username || "已登录";
+    }
+  } catch (error) {
+    if (!String(error?.message || "").includes("401")) {
+      console.warn("auth session check failed", error);
+    }
+  }
+  document.querySelector("#logoutButton")?.addEventListener("click", async () => {
+    try {
+      await sendJson("/api/v1/auth/logout", { method: "POST", body: JSON.stringify({}) });
+    } finally {
+      window.location.href = "login.html";
+    }
   });
 }
 
@@ -2128,6 +2167,7 @@ function shouldPauseAutoRefresh(page) {
 async function init() {
   const pageModule = PAGE_LOADERS[activePage] ? await PAGE_LOADERS[activePage]() : null;
   installShell();
+  await installAuthShell();
   const page = pageModule?.pageKey && PAGE_CONFIG[pageModule.pageKey] ? pageModule.pageKey : activePage;
   const config = PAGE_CONFIG[page] || PAGE_CONFIG.overview;
   if (page === "performance" && !performanceState.from && performanceState.range !== "ALL") syncPerformanceRange(performanceState.range);

@@ -12,6 +12,7 @@ export function withCacheBust(url) {
 export async function requestJson(url) {
   const response = await fetch(withCacheBust(url), {
     cache: "no-store",
+    credentials: "same-origin",
     headers: { Accept: "application/json" },
   });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
@@ -21,6 +22,7 @@ export async function requestJson(url) {
 export async function sendJson(path, options = {}, apiBase = DEFAULT_API_BASE) {
   const response = await fetch(joinUrl(apiBase, path), {
     cache: "no-store",
+    credentials: "same-origin",
     ...options,
     headers: {
       Accept: "application/json",

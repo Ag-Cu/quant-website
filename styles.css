@@ -362,6 +362,7 @@ body.sidebar-collapsed .sidebar-toggle::before {
 }
 
 .connection-badge,
+.user-chip,
 .pill,
 .tag {
   display: inline-flex;
@@ -378,6 +379,16 @@ body.sidebar-collapsed .sidebar-toggle::before {
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.user-chip {
+  min-height: 32px;
+  padding: 5px 11px;
+  border: 1px solid rgba(20, 20, 19, 0.14);
+  background: #141413;
+  color: #faf9f5;
   font-size: 11px;
   font-weight: 700;
 }
@@ -3038,6 +3049,7 @@ body[data-page="performance"] .side-status small {
   }
 
   .topbar-actions,
+  .user-chip,
   .connection-badge,
   .market-clock,
   .icon-button,
@@ -3640,4 +3652,85 @@ button.is-loading {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }
+}
+
+.login-page {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  background:
+    linear-gradient(180deg, rgba(255, 254, 250, 0.96), rgba(240, 238, 230, 0.98)),
+    var(--bg);
+}
+
+.login-shell {
+  width: min(420px, calc(100vw - 32px));
+}
+
+.login-panel {
+  display: grid;
+  gap: 28px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 28px;
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.login-brand h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.login-form {
+  display: grid;
+  gap: 14px;
+}
+
+.login-form label {
+  display: grid;
+  gap: 7px;
+}
+
+.login-form label span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.login-form input {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(247, 245, 238, 0.62);
+  padding: 8px 11px;
+  outline: none;
+}
+
+.login-form input:focus {
+  border-color: rgba(140, 90, 43, 0.42);
+  background: var(--surface);
+}
+
+.login-status {
+  min-height: 20px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.login-status.success {
+  color: var(--positive);
+}
+
+.login-status.error {
+  color: var(--negative);
 }

@@ -37,6 +37,9 @@ HK_TZ = ZoneInfo("Asia/Hong_Kong")
 BACKEND_DIR = ROOT / "data" / "backend"
 LIVE_DIR = ROOT / "data" / "live"
 CONFIG_DIR = ROOT / "data" / "config"
+ROOT_BACKEND_DIR = BACKEND_DIR
+ROOT_LIVE_DIR = LIVE_DIR
+ROOT_CONFIG_DIR = CONFIG_DIR
 MARKET_WIDTH_ZIP_PATH = ROOT.parent / "market_width.zip"
 
 EASTMONEY_BOARD_URL = "https://push2.eastmoney.com/api/qt/clist/get"
@@ -276,11 +279,37 @@ def load_json(path: Path) -> dict[str, Any]:
         return json.load(file)
 
 
+def fallback_path(path: Path) -> Path | None:
+    for scoped_dir, root_dir in ((BACKEND_DIR, ROOT_BACKEND_DIR), (LIVE_DIR, ROOT_LIVE_DIR), (CONFIG_DIR, ROOT_CONFIG_DIR)):
+        try:
+            rel = path.relative_to(scoped_dir)
+        except ValueError:
+            continue
+        candidate = root_dir / rel
+        if candidate != path:
+            return candidate
+    return None
+
+
+def load_json_with_fallback(path: Path) -> dict[str, Any]:
+    if path.exists():
+        return load_json(path)
+    candidate = fallback_path(path)
+    if candidate and candidate.exists():
+        return load_json(candidate)
+    return load_json(path)
+
+
 def load_watchlist_config() -> list[dict[str, Any]]:
     path = CONFIG_DIR / "watchlist.json"
     if not path.exists():
-        return WATCHLIST_CONFIG
-    payload = load_json(path)
+        fallback = fallback_path(path)
+        if fallback and fallback.exists():
+            payload = load_json(fallback)
+        else:
+            return WATCHLIST_CONFIG
+    else:
+        payload = load_json(path)
     items = payload.get("items") if isinstance(payload.get("items"), list) else []
     cleaned = [normalize_watchlist_item(item) for item in items if isinstance(item, dict)]
     return [item for item in cleaned if item.get("symbol")]
@@ -319,7 +348,7 @@ def validate_live_payload(path: Path, payload: dict[str, Any]) -> None:
     if not model:
         return
     try:
-        validate_payload(model, payload, str(path.relative_to(ROOT)))
+        validate_payload(model, payload, str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else str(path))
     except SchemaValidationError as exc:
         fields = ", ".join(exc.missing_fields)
         raise RuntimeError(
@@ -343,7 +372,7 @@ def base_payload(name: str) -> dict[str, Any]:
     if live_path.exists():
         return load_json(live_path)
     backend_path = BACKEND_DIR / backend_payload_name(name)
-    return load_json(backend_path)
+    return load_json_with_fallback(backend_path)
 
 
 def backend_payload_name(name: str) -> str:
@@ -1866,12 +1895,13 @@ def enrich_macro_row(row: dict[str, Any], data_source: str, as_of: str) -> dict[
 
 
 def load_optional_json(path: Path) -> dict[str, Any] | None:
-    if not path.exists():
+    read_path = path if path.exists() else fallback_path(path)
+    if not read_path or not read_path.exists():
         return None
     try:
-        return load_json(path)
+        return load_json(read_path)
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"warning: failed to load {path}: {exc}")
+        print(f"warning: failed to load {read_path}: {exc}")
         return None
 
 
@@ -1944,6 +1974,7 @@ def build_strategy_status_from_artifacts() -> tuple[list[dict[str, Any]], str]:
     ]
     statuses: list[dict[str, Any]] = []
     for path, page in configs:
+        source_path = path if path.exists() else (fallback_path(path) or path)
         payload = load_optional_json(path)
         if not payload or payload_source(payload) in {"mock", "sample", "unavailable"}:
             continue
@@ -1968,7 +1999,7 @@ def build_strategy_status_from_artifacts() -> tuple[list[dict[str, Any]], str]:
             "target_exposure_pct": target_exposure,
             "day_pnl_pct": day_pnl,
             "updated_at": payload_as_of(payload),
-            "source": str(path.relative_to(ROOT)),
+            "source": str(source_path.relative_to(ROOT) if source_path.is_relative_to(ROOT) else source_path),
         })
     return statuses, "strategy-artifacts" if statuses else "unavailable"
 
@@ -1980,11 +2011,12 @@ def build_timeline_from_strategy_artifacts(limit: int = 6) -> tuple[list[dict[st
         BACKEND_DIR / "strategies" / "small-cap.json",
     )
     for path in artifact_paths:
+        source_path = path if path.exists() else (fallback_path(path) or path)
         payload = load_optional_json(path)
         if not payload or payload_source(payload) in {"mock", "sample", "unavailable"}:
             continue
         data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-        source = str(path.relative_to(ROOT))
+        source = str(source_path.relative_to(ROOT) if source_path.is_relative_to(ROOT) else source_path)
         events = data.get("events") if isinstance(data.get("events"), list) else []
         logs = data.get("logs") if isinstance(data.get("logs"), list) else []
         for item in events:
@@ -2037,7 +2069,7 @@ def load_scheduler_status() -> dict[str, Any]:
             "next_run_at": data.get("next_run_at"),
             "latest_job": data.get("latest_job"),
             "latest_job_status": data.get("latest_job_status"),
-            "source": str(path.relative_to(ROOT)),
+            "source": str((path if path.exists() else (fallback_path(path) or path)).relative_to(ROOT)),
         }
     return {"status": "unavailable", "next_run_at": None, "source": "unavailable"}
 
@@ -2317,15 +2349,31 @@ def market_session() -> str:
     return "closed"
 
 
+def safe_user_slug(value: str) -> str:
+    text = re.sub(r"[^a-z0-9_.-]+", "-", value.strip().lower())
+    return text.strip(".-") or "default"
+
+
 def main() -> None:
     global LIVE_DIR, BACKEND_DIR, CONFIG_DIR, ROOT
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=ROOT)
+    parser.add_argument("--user", default="")
     args = parser.parse_args()
     ROOT = args.root.resolve()
     BACKEND_DIR = ROOT / "data" / "backend"
     LIVE_DIR = ROOT / "data" / "live"
     CONFIG_DIR = ROOT / "data" / "config"
+    if args.user:
+        user_dir = BACKEND_DIR / "users" / safe_user_slug(args.user)
+        BACKEND_DIR = user_dir
+        LIVE_DIR = user_dir / "live"
+        CONFIG_DIR = user_dir / "config"
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        root_config = ROOT / "data" / "config" / "watchlist.json"
+        user_config = CONFIG_DIR / "watchlist.json"
+        if root_config.exists() and not user_config.exists():
+            user_config.write_text(root_config.read_text(encoding="utf-8"), encoding="utf-8")
 
     watchlist_config = load_watchlist_config()
     watched_symbols = {config["symbol"] for config in watchlist_config}

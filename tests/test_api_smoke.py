@@ -9,6 +9,19 @@ import backend.main as backend_main
 from backend.main import ENDPOINTS, app
 
 
+@pytest.fixture(autouse=True)
+def clear_auth_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "QUANT_AUTH_ENABLED",
+        "QUANT_AUTH_USERNAME",
+        "QUANT_AUTH_PASSWORD_HASH",
+        "QUANT_AUTH_USERS_JSON",
+        "QUANT_AUTH_SECRET",
+        "QUANT_AUTH_COOKIE_SECURE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def client() -> TestClient:
     return TestClient(app)
@@ -17,6 +30,19 @@ def client() -> TestClient:
 def assert_api_payload(payload: dict) -> None:
     assert isinstance(payload.get("meta"), dict)
     assert isinstance(payload.get("data"), dict)
+
+
+def enable_auth(monkeypatch: pytest.MonkeyPatch, username: str = "owner", password: str = "correct-password") -> None:
+    monkeypatch.setenv("QUANT_AUTH_ENABLED", "true")
+    monkeypatch.setenv("QUANT_AUTH_USERNAME", username)
+    monkeypatch.setenv("QUANT_AUTH_PASSWORD_HASH", backend_main.pbkdf2_hash_password(password, salt=b"0123456789abcdef", iterations=10_000))
+    monkeypatch.setenv("QUANT_AUTH_SECRET", "test-auth-secret")
+    monkeypatch.setenv("QUANT_AUTH_COOKIE_SECURE", "false")
+
+
+def login(client: TestClient, username: str = "owner", password: str = "correct-password") -> None:
+    response = client.post("/api/v1/auth/login", json={"username": username, "password": password})
+    assert response.status_code == 200, response.text
 
 
 def test_health_endpoint(client: TestClient) -> None:
@@ -54,6 +80,118 @@ def test_health_endpoint(client: TestClient) -> None:
 def test_static_pages_and_assets_are_served(client: TestClient, path: str) -> None:
     response = client.get(path)
     assert response.status_code == 200, response.text
+
+
+def test_auth_blocks_private_pages_api_and_data(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    enable_auth(monkeypatch)
+
+    page_response = client.get("/holdings.html", follow_redirects=False)
+    assert page_response.status_code == 303
+    assert page_response.headers["location"].startswith("/login.html")
+
+    api_response = client.get("/api/v1/portfolio/holdings")
+    assert api_response.status_code == 401
+
+    data_response = client.get("/data/backend/portfolio/holdings.json")
+    assert data_response.status_code == 401
+
+
+def test_auth_login_grants_session(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    enable_auth(monkeypatch)
+    bad = client.post("/api/v1/auth/login", json={"username": "owner", "password": "wrong"})
+    assert bad.status_code == 401
+
+    login(client)
+    page_response = client.get("/holdings.html")
+    assert page_response.status_code == 200
+    api_response = client.get("/api/v1/health")
+    assert api_response.status_code == 200, api_response.text
+    session_response = client.get("/api/v1/auth/session")
+    assert session_response.json()["data"]["user"]["username"] == "owner"
+
+
+def test_auth_uses_user_scoped_data(monkeypatch: pytest.MonkeyPatch, tmp_path, client: TestClient) -> None:
+    enable_auth(monkeypatch)
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    monkeypatch.setattr(backend_main, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+    owner_path = tmp_path / "data/backend/users/owner/portfolio/holdings.json"
+    root_path = tmp_path / "data/backend/portfolio/holdings.json"
+    owner_path.parent.mkdir(parents=True)
+    root_path.parent.mkdir(parents=True)
+    root_path.write_text(
+        json.dumps({"meta": {"source": "root"}, "data": {"summary": {}, "holdings": [{"symbol": "ROOT", "portfolio_type": "personal"}], "allocation": []}}),
+        encoding="utf-8",
+    )
+    owner_path.write_text(
+        json.dumps({"meta": {"source": "owner"}, "data": {"summary": {}, "holdings": [{"symbol": "600519", "name": "贵州茅台", "market_value": 1, "portfolio_type": "personal"}], "allocation": []}}),
+        encoding="utf-8",
+    )
+
+    login(client)
+    response = client.get("/api/v1/portfolio/holdings?type=personal")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["meta"]["storage_path"] == "data/backend/users/owner/portfolio/holdings.json"
+    assert [row["symbol"] for row in payload["data"]["personal_holdings"]] == ["600519"]
+
+
+def test_auth_keeps_joinquant_webhook_token_path_available(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    enable_auth(monkeypatch)
+    monkeypatch.setenv("JOINQUANT_WEBHOOK_TOKEN", "test-joinquant-token")
+
+    response = client.post("/api/v1/joinquant/signals", json={"data": {}})
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "JoinQuant webhook token 不正确"
+
+
+def test_auth_keeps_dynamic_strategy_ingest_path_available(monkeypatch: pytest.MonkeyPatch, tmp_path, client: TestClient) -> None:
+    enable_auth(monkeypatch)
+    monkeypatch.setenv("QUANT_ACTION_TOKEN", "test-action-token")
+    monkeypatch.setenv("JOINQUANT_WEBHOOK_TOKEN", "test-joinquant-token")
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    monkeypatch.setattr(backend_main, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(backend_main, "CONFIG_DIR", tmp_path / "data/config")
+    monkeypatch.setattr(backend_main, "STRATEGY_CONFIG_PATH", tmp_path / "data/config/strategies.json")
+    monkeypatch.setattr(backend_main, "CUSTOM_STRATEGY_DIR", tmp_path / "data/backend/strategies/custom")
+    monkeypatch.setattr(backend_main, "ACTION_LOG_PATH", tmp_path / "data/backend/actions/action-log.jsonl")
+    monkeypatch.setattr(backend_main, "JOINQUANT_SIGNAL_LOG_PATH", tmp_path / "data/backend/strategies/joinquant-signals.jsonl")
+    monkeypatch.setattr(backend_main, "JOINQUANT_FULL_LOG_PATH", tmp_path / "data/backend/strategies/joinquant-full-logs.jsonl")
+    login(client)
+    create = client.post(
+        "/api/v1/quant/strategies",
+        headers={"X-Action-Token": "test-action-token"},
+        json={"id": "webhook-alpha", "name": "Webhook Alpha"},
+    )
+    assert create.status_code == 200, create.text
+    logout = client.post("/api/v1/auth/logout")
+    assert logout.status_code == 200
+
+    response = client.post(
+        "/api/v1/quant/strategies/webhook-alpha/events",
+        headers={"X-Action-Token": "test-action-token", "X-Webhook-Token": "test-joinquant-token"},
+        json={"events": [{"event_type": "signal", "symbol": "600519.XSHG", "action": "buy", "trade_date": "2026-05-17"}]},
+    )
+
+    assert response.status_code == 200, response.text
+
+
+def test_auth_forbids_explicit_other_user_data_paths(monkeypatch: pytest.MonkeyPatch, tmp_path, client: TestClient) -> None:
+    enable_auth(monkeypatch)
+    monkeypatch.setattr(backend_main, "ROOT", tmp_path)
+    monkeypatch.setattr(backend_main, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+    other_path = tmp_path / "data/backend/users/other/portfolio/holdings.json"
+    other_path.parent.mkdir(parents=True)
+    other_path.write_text("{}", encoding="utf-8")
+    login(client)
+
+    response = client.get("/data/backend/users/other/portfolio/holdings.json")
+
+    assert response.status_code == 404
 
 
 @pytest.mark.parametrize("path", sorted(ENDPOINTS))
@@ -165,6 +303,7 @@ def test_small_cap_endpoint_hides_seed_signals_until_joinquant_snapshot(
 
     monkeypatch.setattr(backend_main, "ROOT", tmp_path)
     monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(backend_main, "PERFORMANCE_EVENTS_PATH", tmp_path / "data/backend/performance/strategy-events.jsonl")
     monkeypatch.setattr(backend_main, "SMALL_CAP_STRATEGY_PATH", small_cap_path)
     monkeypatch.setattr(backend_main, "JOINQUANT_FULL_LOG_PATH", full_log_path)
 
@@ -314,6 +453,7 @@ def test_portfolio_holdings_include_joinquant_strategy_outputs(
 
     monkeypatch.setattr(backend_main, "ROOT", tmp_path)
     monkeypatch.setattr(backend_main, "BACKEND_DIR", tmp_path / "data/backend")
+    monkeypatch.setattr(backend_main, "PERFORMANCE_EVENTS_PATH", tmp_path / "data/backend/performance/strategy-events.jsonl")
     monkeypatch.setattr(backend_main, "SMALL_CAP_STRATEGY_PATH", small_cap_path)
     monkeypatch.setattr(backend_main, "ETF_STRATEGY_PATH", etf_path)
     monkeypatch.setattr(backend_main, "JOINQUANT_FULL_LOG_PATH", full_log_path)
