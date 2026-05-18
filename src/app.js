@@ -492,9 +492,10 @@ function installShell() {
   ];
 
   document.querySelector(".sidebar").innerHTML = `
+    <div class="site-notice"><span>交易日 17:30-18:00 更新网站数据</span><button type="button" aria-label="关闭公告" data-dismiss-notice>${icon("close")}</button></div>
     <a class="brand" href="index.html" aria-label="Quant Desk">
-      <span class="brand-mark">QD</span>
-      <span class="brand-copy"><strong>Quant Desk</strong><small>Signal Console</small></span>
+      <span class="brand-mark">ETF</span>
+      <span class="brand-copy"><strong>ETFQuant</strong><small>Quant Desk</small></span>
     </a>
     <nav class="side-nav" aria-label="主导航">
       ${navItems.map(([key, href, iconName, label]) => `<a href="${href}" data-nav="${key}">${icon(iconName)}<span>${label}</span></a>`).join("")}
@@ -527,6 +528,10 @@ function installShell() {
   dom.refreshButton = document.querySelector("#refreshButton");
   dom.marketDate = document.querySelector("#marketDate");
   dom.marketClock = document.querySelector("#marketClock");
+
+  document.querySelector("[data-dismiss-notice]")?.addEventListener("click", (event) => {
+    event.currentTarget.closest(".site-notice")?.remove();
+  });
 
   document.querySelector(".sidebar-toggle").addEventListener("click", () => {
     document.body.classList.toggle("sidebar-collapsed");
@@ -1133,25 +1138,37 @@ function renderOverview(payload) {
     alerts = [],
     decision = null,
     sentiment_gauge = null,
+    breadth_heatmap = {},
     heatmap = {},
     sectors = [],
   } = payload.data || {};
+  const marketCards = [
+    {
+      kicker: "ETF 策略",
+      title: decision?.action || "等待信号",
+      date: payload.meta?.trade_date || "--",
+      body: `<div class="overview-focus-box"><span>今日建议</span><strong>${escapeHtml(decision?.title || "观察市场")}</strong><small>${escapeHtml(decision?.detail || "等待策略数据更新")}</small></div><div class="overview-card-row"><span>市场宽度</span><strong class="${toneClassByValue((market.breadth_score || 0) - 50)}">${valueWithUnit(market.breadth_score, "/100", 0)}</strong></div>`,
+    },
+    {
+      kicker: "每日市场总结",
+      title: "散户情绪",
+      date: payload.meta?.trade_date || "--",
+      body: `<div class="overview-gauge-card">${sentimentGauge(sentiment_gauge || market.sentiment_score)}</div>`,
+    },
+    {
+      kicker: "市场行情",
+      title: "市场状态",
+      date: payload.meta?.trade_date || "--",
+      body: `<div class="overview-market-list"><div><span>市场宽度</span><strong>${valueWithUnit(market.breadth_score, "/100", 0)}</strong></div><div><span>情绪温度</span><strong>${valueWithUnit(market.sentiment_score, "/100", 0)}</strong></div><div><span>首要提醒</span><strong>${escapeHtml(alerts[0]?.title || "真实行情已更新")}</strong></div></div>`,
+    },
+  ];
 
   dom.app.innerHTML = `
-    ${pageDecisionBrief({
-      kicker: "Market Command",
-      title: decision?.title || "暂无市场结论",
-      detail: decision?.detail || "后端暂未返回首页决策摘要。",
-      tone: decision?.tone || "blue",
-      metrics: [
-        { label: "执行动作", value: decision?.action || "--" },
-        { label: "市场宽度", value: valueWithUnit(market.breadth_score, "/100", 0) },
-        { label: "情绪温度", value: valueWithUnit(market.sentiment_score, "/100", 0) },
-        { label: "首要提醒", value: alerts[0]?.title || "--" },
-      ],
-    })}
+    <section class="overview-top-cards">
+      ${marketCards.map((card) => `<article class="overview-daily-card"><div class="overview-daily-head"><div><p class="panel-kicker">${escapeHtml(card.kicker)}</p><h2>${escapeHtml(card.title)}</h2></div><span>${escapeHtml(card.date)}</span></div>${card.body}</article>`).join("")}
+    </section>
+    ${marketHeatmapCard(breadth_heatmap)}
     <section class="overview-grid">
-      ${sentimentGauge(sentiment_gauge || market.sentiment_score)}
       ${panel({
         title: "策略状态",
         kicker: "Strategy Hub",

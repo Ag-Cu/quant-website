@@ -3226,6 +3226,20 @@ def normalize_overview_sentiment(payload: dict[str, Any]) -> dict[str, Any]:
                 "score": score,
                 "label": summary.get("label") or gauge.get("label"),
             }
+    breadth_path = ENDPOINTS["/api/v1/market/breadth"].live_path
+    if breadth_path and breadth_path.exists():
+        try:
+            breadth_payload = load_json(breadth_path)
+        except HTTPException:
+            breadth_payload = {}
+        breadth_data = breadth_payload.get("data") if isinstance(breadth_payload.get("data"), dict) else {}
+        heatmap_history = breadth_data.get("heatmap_history") if isinstance(breadth_data.get("heatmap_history"), dict) else {}
+        summary = breadth_data.get("summary") if isinstance(breadth_data.get("summary"), dict) else {}
+        if heatmap_history:
+            data["breadth_heatmap"] = heatmap_history
+        if summary.get("score") is not None:
+            market = data.get("market") if isinstance(data.get("market"), dict) else {}
+            data["market"] = {**market, "breadth_score": summary.get("score")}
     data.pop("watchlist", None)
     return {**payload, "data": data}
 
