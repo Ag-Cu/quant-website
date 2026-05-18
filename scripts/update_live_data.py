@@ -41,6 +41,8 @@ ROOT_BACKEND_DIR = BACKEND_DIR
 ROOT_LIVE_DIR = LIVE_DIR
 ROOT_CONFIG_DIR = CONFIG_DIR
 MARKET_WIDTH_ZIP_PATH = ROOT.parent / "market_width.zip"
+DEFAULT_ENV_FILE = Path("/etc/quant-website.env")
+TUSHARE_TOKEN_KEYS = ("TUSHARE_TOKEN", "TUSHARE_PRO_TOKEN", "TS_TOKEN")
 
 EASTMONEY_BOARD_URL = "https://push2.eastmoney.com/api/qt/clist/get"
 EASTMONEY_QUOTE_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get"
@@ -747,8 +749,44 @@ def fetch_industry_boards() -> list[BoardRecord]:
     return records
 
 
+def env_file_paths() -> list[Path]:
+    raw_paths = os.getenv("QUANT_WEBSITE_ENV_FILE", str(DEFAULT_ENV_FILE))
+    return [Path(value).expanduser() for value in raw_paths.split(os.pathsep) if value.strip()]
+
+
+def read_env_file_value(path: Path, key: str) -> str:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        name, value = stripped.split("=", 1)
+        name = name.strip()
+        if name.startswith("export "):
+            name = name.removeprefix("export ").strip()
+        if name != key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        return value.strip()
+    return ""
+
+
 def tushare_token() -> str:
-    return (os.getenv("TUSHARE_TOKEN") or os.getenv("TUSHARE_PRO_TOKEN") or os.getenv("TS_TOKEN") or "").strip()
+    for key in TUSHARE_TOKEN_KEYS:
+        token = os.getenv(key, "").strip()
+        if token:
+            return token
+    for path in env_file_paths():
+        for key in TUSHARE_TOKEN_KEYS:
+            token = read_env_file_value(path, key)
+            if token:
+                return token
+    return ""
 
 
 def load_market_width_industry_df() -> Any:
@@ -769,7 +807,7 @@ def tushare_trade_days(pro: Any, end_date: str, need_count: int) -> list[str]:
     calendar = pro.query("trade_cal", exchange="SSE", start_date=start, end_date=end_date)
     if calendar is None or calendar.empty:
         raise RuntimeError("Tushare trade_cal 无返回")
-    days = calendar[(calendar["is_open"] == 1)]["cal_date"].astype(str).tolist()
+    days = sorted(calendar[(calendar["is_open"] == 1)]["cal_date"].astype(str).tolist())
     return days[-need_count:]
 
 

@@ -778,6 +778,37 @@ def test_breadth_payload_rebuilds_heatmap_when_source_history_is_stale(monkeypat
     assert payload["data"]["summary"]["market_width_pct"] == 55
 
 
+def test_tushare_trade_days_handles_descending_calendar() -> None:
+    class FakePro:
+        def query(self, name: str, **kwargs):
+            import pandas as pd
+
+            assert name == "trade_cal"
+            return pd.DataFrame(
+                [
+                    {"cal_date": "20260518", "is_open": 1},
+                    {"cal_date": "20260517", "is_open": 0},
+                    {"cal_date": "20260515", "is_open": 1},
+                    {"cal_date": "20260514", "is_open": 1},
+                    {"cal_date": "20260513", "is_open": 1},
+                    {"cal_date": "20260512", "is_open": 1},
+                ]
+            )
+
+    assert update_live_data.tushare_trade_days(FakePro(), "20260518", 3) == ["20260514", "20260515", "20260518"]
+
+
+def test_tushare_token_loads_from_env_file(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    env_file = tmp_path / "quant.env"
+    env_file.write_text("OTHER=value\nTUSHARE_TOKEN=from-file\n", encoding="utf-8")
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    monkeypatch.delenv("TUSHARE_PRO_TOKEN", raising=False)
+    monkeypatch.delenv("TS_TOKEN", raising=False)
+    monkeypatch.setenv("QUANT_WEBSITE_ENV_FILE", str(env_file))
+
+    assert update_live_data.tushare_token() == "from-file"
+
+
 def test_macro_payload_does_not_keep_sample_rows_when_sources_are_missing(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     macro_path = tmp_path / "data/backend/macro.json"
     macro_path.parent.mkdir(parents=True)
